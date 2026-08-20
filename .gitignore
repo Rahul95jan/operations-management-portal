@@ -1,6 +1,15 @@
 venv/
+.venv/
 __pycache__/
 .env
+.env.save
 node_modules/
 .next/
 *.pyc
+backend/uploads/
+backend/pdfs/
+*.xlsx
+backend/error.txt
+backend/mentor.py
+backend/package-lock.json
+backend/models/assets/

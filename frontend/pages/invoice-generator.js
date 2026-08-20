@@ -1,122 +1,160 @@
 import { useEffect, useState } from "react";
+import Sidebar from "../components/Sidebar";
+import ProtectedRoute from "../components/ProtectedRoute";
+
+const inputStyle = {
+  width: "100%",
+  padding: "11px 14px",
+  borderRadius: "10px",
+  border: "1px solid #e2e8f0",
+  fontSize: "14px",
+  background: "#f8fafc",
+  boxSizing: "border-box",
+  outline: "none",
+};
+
+const fieldLabelStyle = {
+  display: "block",
+  fontSize: "12px",
+  fontWeight: 700,
+  letterSpacing: "0.03em",
+  color: "#64748b",
+  marginBottom: "6px",
+};
+
+function Field({ label, children }) {
+  return (
+    <div>
+      <label style={fieldLabelStyle}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function KPITile({ title, value, color }) {
+  return (
+    <div className="kpi-tile" style={{ borderLeft: `4px solid ${color}` }}>
+      <h4 style={{ margin: "0 0 8px", fontSize: "12px", fontWeight: 700, letterSpacing: "0.03em", textTransform: "uppercase", color: "#94a3b8" }}>
+        {title}
+      </h4>
+      <h1 style={{ color, margin: 0, fontSize: "26px", fontVariantNumeric: "tabular-nums" }}>{value}</h1>
+    </div>
+  );
+}
+
+function PaymentBadge({ status }) {
+  const paid = status === "Paid";
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        background: paid ? "#dcfce7" : "#fef3c7",
+        color: paid ? "#15803d" : "#b45309",
+        fontSize: "12px",
+        fontWeight: 700,
+        padding: "5px 12px",
+        borderRadius: "999px",
+      }}
+    >
+      <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: paid ? "#22c55e" : "#f59e0b" }} />
+      {status}
+    </span>
+  );
+}
 
 export default function InvoiceGenerator() {
   const [mentorName, setMentorName] = useState("");
-const [mentorEmail, setMentorEmail] = useState("");
+  const [mentorEmail, setMentorEmail] = useState("");
 
-const [batchName, setBatchName] = useState("");
-const [month, setMonth] = useState("");
-const [sessions, setSessions] = useState("");
-const [hours, setHours] = useState("");
-const [rate, setRate] = useState("");
-const [amount, setAmount] = useState("");
+  const [batchName, setBatchName] = useState("");
+  const [month, setMonth] = useState("");
+  const [sessions, setSessions] = useState("");
+  const [hours, setHours] = useState("");
+  const [rate, setRate] = useState("");
+  const [amount, setAmount] = useState("");
 
-const [mentors, setMentors] = useState([]);
-const [batches, setBatches] = useState([]);
-const [invoices, setInvoices] = useState([]);
-const [currentPage, setCurrentPage] = useState(1);
-const invoicesPerPage = 5;
+  const [mentors, setMentors] = useState([]);
+  const [batches, setBatches] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const invoicesPerPage = 5;
 
-const handleMentorChange = (e) => {
-  const selected = e.target.value;
+  const handleMentorChange = (e) => {
+    const selected = e.target.value;
 
-  setMentorName(selected);
+    setMentorName(selected);
 
-  const mentor = mentors.find((m) => m.name === selected);
+    const mentor = mentors.find((m) => m.name === selected);
 
-  if (mentor) {
-    setMentorEmail(mentor.email);
+    if (mentor) {
+      setMentorEmail(mentor.email);
 
-    setRate(mentor.hourly_rate);
+      setRate(mentor.hourly_rate);
 
-    const total =
-      Number(hours || 0) * Number(mentor.hourly_rate || 0);
+      const total = Number(hours || 0) * Number(mentor.hourly_rate || 0);
 
-    setAmount(total);
-  }
-};
+      setAmount(total);
+    }
+  };
 
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
 
+  const [batchFilter, setBatchFilter] = useState("All");
+  const [monthFilter, setMonthFilter] = useState("All");
 
-const [search, setSearch] = useState("");
-const [statusFilter, setStatusFilter] = useState("All");
+  const filteredInvoices = invoices.filter((invoice) => {
+    const matchesSearch =
+      invoice.mentor_name.toLowerCase().includes(search.toLowerCase()) ||
+      invoice.batch_name.toLowerCase().includes(search.toLowerCase()) ||
+      invoice.month.toLowerCase().includes(search.toLowerCase());
 
-const [batchFilter, setBatchFilter] = useState("All");
-const [monthFilter, setMonthFilter] = useState("All");
+    const matchesStatus = statusFilter === "All" || invoice.payment_status === statusFilter;
 
+    const matchesBatch = batchFilter === "All" || invoice.batch_name === batchFilter;
 
-const filteredInvoices = invoices.filter((invoice) => {
-  const matchesSearch =
-    invoice.mentor_name.toLowerCase().includes(search.toLowerCase()) ||
-    invoice.batch_name.toLowerCase().includes(search.toLowerCase()) ||
-    invoice.month.toLowerCase().includes(search.toLowerCase());
+    const matchesMonth = monthFilter === "All" || invoice.month === monthFilter;
 
-  const matchesStatus =
-    statusFilter === "All" ||
-    invoice.payment_status === statusFilter;
+    return matchesSearch && matchesStatus && matchesBatch && matchesMonth;
+  });
 
-  const matchesBatch =
-    batchFilter === "All" ||
-    invoice.batch_name === batchFilter;
+  // Pagination
+  const indexOfLastInvoice = currentPage * invoicesPerPage;
+  const indexOfFirstInvoice = indexOfLastInvoice - invoicesPerPage;
 
-  const matchesMonth =
-    monthFilter === "All" ||
-    invoice.month === monthFilter;
+  const currentInvoices = filteredInvoices.slice(indexOfFirstInvoice, indexOfLastInvoice);
 
-    
-  return (
-    matchesSearch &&
-    matchesStatus &&
-    matchesBatch &&
-    matchesMonth
-  );
-});
-
-// Pagination
-const indexOfLastInvoice = currentPage * invoicesPerPage;
-const indexOfFirstInvoice = indexOfLastInvoice - invoicesPerPage;
-
-const currentInvoices = filteredInvoices.slice(
-  indexOfFirstInvoice,
-  indexOfLastInvoice
-);
-
-const totalPages = Math.ceil(
-  filteredInvoices.length / invoicesPerPage
-);
-
-
+  const totalPages = Math.ceil(filteredInvoices.length / invoicesPerPage);
 
   const [loading, setLoading] = useState(false);
- const [summary, setSummary] = useState({
-  total_amount: 0,
-  pending_amount: 0,
-  total_hours: 0,
-  total_sessions: 0,
-  total_invoices: 0,
-});
+  const [summary, setSummary] = useState({
+    total_amount: 0,
+    pending_amount: 0,
+    total_hours: 0,
+    total_sessions: 0,
+    total_invoices: 0,
+  });
 
-const [editId, setEditId] = useState(null);
+  const [editId, setEditId] = useState(null);
   useEffect(() => {
-  fetchMentors();
-  fetchInvoices();
-  fetchBatches();
-  fetchSummary();
-}, []);
+    fetchMentors();
+    fetchInvoices();
+    fetchBatches();
+    fetchSummary();
+  }, []);
 
-const fetchSummary = async () => {
-  try {
-    const res = await fetch("http://127.0.0.1:8000/invoice-summary");
-    const data = await res.json();
+  const fetchSummary = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/invoice-summary");
+      const data = await res.json();
 
-    setSummary(data);
-  } catch (err) {
-    console.log(err);
-  }
-};
-  // ----------------------------
-  // Fetch Data
-  // ----------------------------
+      setSummary(data);
+    } catch (err) {
+      console.log(err);
+    }
+  };
 
   const fetchMentors = async () => {
     try {
@@ -137,737 +175,760 @@ const fetchSummary = async () => {
       console.log(err);
     }
   };
+
   const editInvoice = (invoice) => {
-  setEditId(invoice.id);
+    setEditId(invoice.id);
 
-  setMentorName(invoice.mentor_name);
-  setMentorEmail(invoice.mentor_email || "");
+    setMentorName(invoice.mentor_name);
+    setMentorEmail(invoice.mentor_email || "");
 
-  setBatchName(invoice.batch_name);
-  setMonth(invoice.month);
+    setBatchName(invoice.batch_name);
+    setMonth(invoice.month);
 
-  setSessions(invoice.total_sessions);
-  setHours(invoice.total_hours);
-  setRate(invoice.hourly_rate);
-  setAmount(invoice.total_amount);
+    setSessions(invoice.total_sessions);
+    setHours(invoice.total_hours);
+    setRate(invoice.hourly_rate);
+    setAmount(invoice.total_amount);
 
-  window.scrollTo({
-    top: 0,
-    behavior: "smooth",
-  });
-};
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  };
 
-const markAsPaid = async (id) => {
-  try {
-    const res = await fetch(
-      `http://127.0.0.1:8000/invoice-paid/${id}`,
-      {
+  const markAsPaid = async (id) => {
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/invoice-paid/${id}`, {
         method: "PUT",
+      });
+
+      if (res.ok) {
+        alert("Invoice marked as Paid");
+        fetchInvoices();
+        fetchSummary();
+      } else {
+        alert("Failed to update invoice");
       }
-    );
-
-    if (res.ok) {
-      alert("Invoice marked as Paid");
-      fetchInvoices();
-      fetchSummary();
-    } else {
-      alert("Failed to update invoice");
+    } catch (err) {
+      console.log(err);
+      alert("Server Error");
     }
-  } catch (err) {
-    console.log(err);
-    alert("Server Error");
-  }
-};
-const deleteInvoice = async (id) => {
+  };
 
-const confirmDelete = window.confirm(
-    "Are you sure you want to delete this invoice?"
-  );
+  const deleteInvoice = async (id) => {
+    const confirmDelete = window.confirm("Are you sure you want to delete this invoice?");
 
-  if (!confirmDelete) return;
+    if (!confirmDelete) return;
 
-  try {
-
-    const res = await fetch(
-      `http://127.0.0.1:8000/invoices/${id}`,
-      {
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/invoices/${id}`, {
         method: "DELETE",
+      });
+
+      if (res.ok) {
+        alert("Invoice Deleted Successfully");
+        fetchInvoices();
+        fetchSummary();
       }
-    );
-
-    if(res.ok){
-      alert("Invoice Deleted Successfully");
-      fetchInvoices();
-      fetchSummary();
+    } catch (err) {
+      console.log(err);
+      alert("Server Error");
     }
+  };
 
-  } catch (err) {
-    console.log(err);
-    alert("Server Error");
-  }
-};
-
-const sendInvoiceEmail = async (id) => {
-  try {
-    const res = await fetch(
-      `http://127.0.0.1:8000/send-invoice/${id}`,
-      {
+  const sendInvoiceEmail = async (id) => {
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/send-invoice/${id}`, {
         method: "POST",
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        alert("Invoice sent successfully.");
+      } else {
+        alert(data.message);
       }
-    );
-
-    const data = await res.json();
-
-    if (data.success) {
-      alert("Invoice sent successfully.");
-    } else {
-      alert(data.message);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to send email.");
     }
-  } catch (err) {
-    console.error(err);
-    alert("Failed to send email.");
-  }
-};
+  };
 
-const fetchInvoices = async () => {
-  try {
-    const res = await fetch("http://127.0.0.1:8000/invoices");
-    const data = await res.json();
-    setInvoices(data);
-  } catch (err) {
-    console.log(err);
-  }
-};
-  // ----------------------------
-  // Hours Change
-  // ----------------------------
+  const fetchInvoices = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/invoices");
+      const data = await res.json();
+      setInvoices(data);
+    } catch (err) {
+      console.log(err);
+    }
+  };
 
   const handleHoursChange = (e) => {
     const value = e.target.value;
 
     setHours(value);
 
-    const total =
-      Number(value || 0) * Number(rate || 0);
+    const total = Number(value || 0) * Number(rate || 0);
 
     setAmount(total);
   };
 
-  // ----------------------------
-  // Save Invoice
-  // ----------------------------
-
   const saveInvoice = async () => {
-  if (
-    !mentorName ||
-    !batchName ||
-    !month ||
-    !sessions ||
-    !hours
-  ) {
-    alert("Please fill all fields");
-    return;
-  }
-
-  const payload = {
-  mentor_name: mentorName,
-  mentor_email: mentorEmail,
-
-  batch_name: batchName,
-  month,
-
-  total_sessions: Number(sessions),
-  total_hours: String(hours),
-
-  hourly_rate: String(rate),
-  total_amount: String(amount),
-
-  // Change this as needed
-  payment_status: "Paid",
-};
-
-  const url = editId
-    ? `http://127.0.0.1:8000/invoice/${editId}`
-    : "http://127.0.0.1:8000/invoices";
-
-  const method = editId ? "PUT" : "POST";
-
-  try {
-    setLoading(true);
-
-    const res = await fetch(url, {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      alert(data.detail || "Failed");
+    if (!mentorName || !batchName || !month || !sessions || !hours) {
+      alert("Please fill all fields");
       return;
     }
 
-    alert(
-      editId
-        ? "Invoice Updated Successfully"
-        : "Invoice Created Successfully"
-    );
+    const payload = {
+      mentor_name: mentorName,
+      mentor_email: mentorEmail,
 
-    // Refresh table and summary
-    await fetchInvoices();
-    await fetchSummary();
+      batch_name: batchName,
+      month,
 
-    // Reset form
-    setMentorName("");
-    setMentorEmail("");
-    setBatchName("");
-    setMonth("");
-    setSessions("");
-    setHours("");
-    setRate("");
-    setAmount("");
+      total_sessions: Number(sessions),
+      total_hours: String(hours),
 
-    // Exit edit mode
-    setEditId(null);
+      hourly_rate: String(rate),
+      total_amount: String(amount),
 
-  } catch (err) {
-    console.error(err);
-    alert("Server Error");
-  } finally {
-    setLoading(false);
-  }
-};
-  // ----------------------------
-  // UI
-  // ----------------------------
+      payment_status: "Paid",
+    };
+
+    const url = editId ? `http://127.0.0.1:8000/invoice/${editId}` : "http://127.0.0.1:8000/invoices";
+
+    const method = editId ? "PUT" : "POST";
+
+    try {
+      setLoading(true);
+
+      const res = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.detail || "Failed");
+        return;
+      }
+
+      alert(editId ? "Invoice Updated Successfully" : "Invoice Created Successfully");
+
+      await fetchInvoices();
+      await fetchSummary();
+
+      setMentorName("");
+      setMentorEmail("");
+      setBatchName("");
+      setMonth("");
+      setSessions("");
+      setHours("");
+      setRate("");
+      setAmount("");
+
+      setEditId(null);
+    } catch (err) {
+      console.error(err);
+      alert("Server Error");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <div style={containerStyle}>
-      <h1>💰 Invoice Generator</h1>
-      <div
-  style={{
-    display: "grid",
-    gridTemplateColumns: "repeat(4, 1fr)",
-    gap: "20px",
-    marginTop: "25px",
-    marginBottom: "35px",
-  }}
->
-  <div style={cardStyle}>
-    <h3>💰 Total Amount</h3>
-    <h2>₹{summary.total_amount}</h2>
-  </div>
+    <ProtectedRoute>
+      <>
+        <Sidebar />
 
-  <div style={cardStyle}>
-    <h3>⏳ Pending Amount</h3>
-    <h2>₹{summary.pending_amount}</h2>
-  </div>
-
-  <div style={cardStyle}>
-    <h3>📄 Total Invoices</h3>
-    <h2>{summary.total_invoices}</h2>
-  </div>
-
-  <div style={cardStyle}>
-    <h3>⏱ Total Hours</h3>
-    <h2>{summary.total_hours}</h2>
-  </div>
-</div>
-       
-      <div style={gridStyle}>
-
-        <div>
-          <label>Mentor</label>
-
-          <select
-            value={mentorName}
-            onChange={handleMentorChange}
-            style={inputStyle}
-          >
-            <option value="">Select Mentor</option>
-
-            {mentors.map((mentor) => (
-              <option key={mentor.id} value={mentor.name}>
-                {mentor.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label>Batch</label>
-
-          <select
-            value={batchName}
-            onChange={(e) => setBatchName(e.target.value)}
-            style={inputStyle}
-          >
-            <option value="">Select Batch</option>
-
-            {batches.map((batch) => (
-              <option key={batch.id} value={batch.batch_name}>
-                {batch.batch_name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label>Month</label>
-
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            style={inputStyle}
-          />
-        </div>
-
-        <div>
-          <label>Total Sessions</label>
-
-          <input
-            type="number"
-            value={sessions}
-            onChange={(e) => setSessions(e.target.value)}
-            style={inputStyle}
-          />
-        </div>
-
-        <div>
-          <label>Total Hours</label>
-
-          <input
-            type="number"
-            value={hours}
-            onChange={handleHoursChange}
-            style={inputStyle}
-          />
-        </div>
-
-        <div>
-          <label>Hourly Rate</label>
-
-          <input
-            value={rate}
-            readOnly
-            style={{
-              ...inputStyle,
-              background: "#f3f4f6",
-            }}
-          />
-        </div>
-
-        <div>
-          <label>Total Amount</label>
-
-          <input
-            value={amount}
-            readOnly
-            style={{
-              ...inputStyle,
-              background: "#f3f4f6",
-            }}
-          />
-        </div>
-      </div>
-
-      <div
-  style={{
-    display: "flex",
-    gap: "10px",
-    marginTop: "20px",
-  }}
->
-  <button
-    onClick={saveInvoice}
-    style={buttonStyle}
-    disabled={loading}
-  >
-    {loading
-      ? "Saving..."
-      : editId
-      ? "Update Invoice"
-      : "Generate Invoice"}
-  </button>
-
-  {editId && (
-    <button
-      onClick={() => {
-        setEditId(null);
-        setMentorName("");
-        setMentorEmail("");
-        setBatchName("");
-        setMonth("");
-        setSessions("");
-        setHours("");
-        setRate("");
-        setAmount("");
-      }}
-      style={{
-        background: "#6b7280",
-        color: "#fff",
-        border: "none",
-        padding: "12px 20px",
-        borderRadius: "6px",
-        cursor: "pointer",
-        fontWeight: "bold",
-      }}
-    >
-      Cancel
-    </button>
-  )}
-</div>
-
-     <hr style={{ margin: "30px 0" }} />
-
-<div
-  style={{
-    display: "flex",
-    gap: "15px",
-    alignItems: "center",
-    marginBottom: "20px",
-  }}
->
-  <input
-    type="text"
-    placeholder="🔍 Search by Mentor, Batch or Month..."
-    value={search}
-    onChange={(e) => setSearch(e.target.value)}
-    style={{
-      width: "350px",
-      padding: "10px",
-      borderRadius: "8px",
-      border: "1px solid #444",
-    }}
-  />
-<select
-  value={batchFilter}
-  onChange={(e) => setBatchFilter(e.target.value)}
-  style={{
-    padding: "10px",
-    borderRadius: "8px",
-    border: "1px solid #444",
-    width: "180px",
-  }}
->
-  <option value="All">All Batches</option>
-
-  {[...new Set(invoices.map((invoice) => invoice.batch_name))].map(
-    (batch) => (
-      <option key={batch} value={batch}>
-        {batch}
-      </option>
-    )
-  )}
-</select>
-
-{/* Month Filter */}
-<select
-  value={monthFilter}
-  onChange={(e) => setMonthFilter(e.target.value)}
-  style={{
-    padding: "10px",
-    borderRadius: "8px",
-    border: "1px solid #444",
-    width: "180px",
-  }}
->
-  <option value="All">All Months</option>
-
-  {[...new Set(invoices.map((invoice) => invoice.month))].map(
-    (month) => (
-      <option key={month} value={month}>
-        {month}
-      </option>
-    )
-  )}
-</select>
-
-<select
-  value={statusFilter}
-  onChange={(e) => setStatusFilter(e.target.value)}
-  style={{
-    padding: "10px",
-    borderRadius: "8px",
-    border: "1px solid #444",
-    width: "180px",
-  }}
->
-  <option value="All">All Status</option>
-  <option value="Paid">Paid</option>
-  <option value="Pending">Pending</option>
-</select>
-
-</div>
-
-<hr style={{ margin: "25px 0" }} />
-
-<h2>Invoice History</h2>
-
-<table style={tableStyle}>
-  <thead>
-  <tr>
-    <th style={thStyle}>Mentor</th>
-    <th style={thStyle}>Invoice No.</th>
-    <th style={thStyle}>Batch</th>
-    <th style={thStyle}>Month</th>
-    <th style={thStyle}>Sessions</th>
-    <th style={thStyle}>Hours</th>
-    <th style={thStyle}>Amount</th>
-    <th style={thStyle}>Status</th>
-    <th style={thStyle}>Payment</th>
-   
-
-    <th
-      style={{
-        ...thStyle,
-        width: "170px",
-      }}
-    >
-      Actions
-    </th>
-  </tr>
-</thead>
-         
-        <tbody>
-  {currentInvoices.map((invoice) => (
-    <tr key={invoice.id}>
-      <td style={tdStyle}>{invoice.mentor_name}</td>
-      <td style={tdStyle}>
-      {invoice.invoice_number || "-"}
-</td>
-
-      <td style={tdStyle}>{invoice.batch_name}</td>
-
-      <td style={tdStyle}>{invoice.month}</td>
-
-      <td style={tdStyle}>{invoice.total_sessions}</td>
-
-      <td style={tdStyle}>{invoice.total_hours}</td>
-
-      <td style={tdStyle}>
-        ₹ {Number(invoice.total_amount).toLocaleString("en-IN")}
-      </td>
-
-      <td style={tdStyle}>
-        {invoice.payment_status}
-      </td>
-
-      <td style={tdStyle}>
-        {invoice.payment_status === "Pending" ? (
-          <button
-            onClick={() => markAsPaid(invoice.id)}
-            style={{
-              background: "#16a34a",
-              color: "#fff",
-              border: "none",
-              borderRadius: "5px",
-              padding: "5px 12px",
-              cursor: "pointer",
-              fontSize: "12px",
-            }}
-          >
-            Mark Paid
-          </button>
-        ) : (
-          <span
-            style={{
-              color: "#16a34a",
-              fontWeight: "bold",
-            }}
-          >
-            ✔ Paid
-          </span>
-        )}
-      </td>
-
-      <td style={tdStyle}>
         <div
           style={{
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            gap: "12px",
+            marginLeft: "280px",
+            padding: "32px 36px 60px",
+            background: "#f1f5f9",
+            minHeight: "100vh",
           }}
         >
-          {/* Download PDF */}
-          <a
-            href={`http://127.0.0.1:8000/download-invoice/${invoice.id}`}
-            target="_blank"
-            rel="noreferrer"
-            title="Download PDF"
-            style={{
-              textDecoration: "none",
-              fontSize: "20px",
-            }}
-          >
-            📥
-          </a>
+          {/* Header */}
+          <div className="page-hero">
+            <div className="page-hero-blob" />
+            <div className="page-hero-content">
+              <div className="page-hero-eyebrow">Operations</div>
+              <h1 className="page-hero-title">Invoice Generator</h1>
+              <p className="page-hero-subtitle">
+                Generate mentor invoices, track payment status, and send them out.
+              </p>
+            </div>
+            <div className="page-hero-stat">
+              <div className="page-hero-stat-value">₹{summary.total_amount}</div>
+              <div className="page-hero-stat-label">Total Billed</div>
+            </div>
+          </div>
 
-          {/* Edit */}
-          <span
-            onClick={() => editInvoice(invoice)}
-            title="Edit Invoice"
-            style={{
-              cursor: "pointer",
-              fontSize: "20px",
-            }}
-          >
-            ✏️
-          </span>
+          {/* KPI tiles */}
+          <div className="kpi-grid">
+            <KPITile title="Total Amount" value={`₹${summary.total_amount}`} color="#16a34a" />
+            <KPITile title="Pending Amount" value={`₹${summary.pending_amount}`} color="#dc2626" />
+            <KPITile title="Total Invoices" value={summary.total_invoices} color="#2563eb" />
+            <KPITile title="Total Hours" value={summary.total_hours} color="#7c3aed" />
+          </div>
 
-          {/* Delete */}
-          <span
-            onClick={() => deleteInvoice(invoice.id)}
-            title="Delete Invoice"
-            style={{
-              cursor: "pointer",
-              fontSize: "20px",
-              color: "#dc2626",
-            }}
-          >
-            🗑️
-          </span>
-          {/* Send Email */}
-<span
-  onClick={() => sendInvoiceEmail(invoice.id)}
-  title="Send Invoice Email"
-  style={{
-    cursor: "pointer",
-    fontSize: "20px",
-    color: "#2563eb",
-  }}
->
-  📧
-</span>
+          {/* Form */}
+          <div className="card form-card">
+            <h2 className="card-title">{editId ? "✏️ Update Invoice" : "➕ Generate Invoice"}</h2>
+
+            <div className="form-grid">
+              <Field label="Mentor">
+                <select className="styled-input" style={inputStyle} value={mentorName} onChange={handleMentorChange}>
+                  <option value="">Select Mentor</option>
+                  {mentors.map((mentor) => (
+                    <option key={mentor.id} value={mentor.name}>
+                      {mentor.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Batch">
+                <select className="styled-input" style={inputStyle} value={batchName} onChange={(e) => setBatchName(e.target.value)}>
+                  <option value="">Select Batch</option>
+                  {batches.map((batch) => (
+                    <option key={batch.id} value={batch.batch_name}>
+                      {batch.batch_name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Month">
+                <input type="month" className="styled-input" style={inputStyle} value={month} onChange={(e) => setMonth(e.target.value)} />
+              </Field>
+
+              <Field label="Total Sessions">
+                <input type="number" className="styled-input" style={inputStyle} value={sessions} onChange={(e) => setSessions(e.target.value)} />
+              </Field>
+
+              <Field label="Total Hours">
+                <input type="number" className="styled-input" style={inputStyle} value={hours} onChange={handleHoursChange} />
+              </Field>
+
+              <Field label="Hourly Rate">
+                <input className="styled-input" readOnly value={rate} style={{ ...inputStyle, background: "#f1f5f9", color: "#64748b" }} />
+              </Field>
+
+              <Field label="Total Amount">
+                <input className="styled-input" readOnly value={amount} style={{ ...inputStyle, background: "#f1f5f9", color: "#64748b", fontWeight: 700 }} />
+              </Field>
+            </div>
+
+            <div style={{ marginTop: "22px", display: "flex", gap: "12px" }}>
+              <button className="btn btn-primary" onClick={saveInvoice} disabled={loading}>
+                {loading ? "Saving..." : editId ? "Update Invoice" : "Generate Invoice"}
+              </button>
+
+              {editId && (
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    setEditId(null);
+                    setMentorName("");
+                    setMentorEmail("");
+                    setBatchName("");
+                    setMonth("");
+                    setSessions("");
+                    setHours("");
+                    setRate("");
+                    setAmount("");
+                  }}
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Invoice history */}
+          <div className="card" style={{ marginTop: "24px" }}>
+            <div className="list-toolbar">
+              <h2 className="card-title" style={{ margin: 0 }}>
+                📄 Invoice History
+              </h2>
+
+              <div className="filter-row">
+                <div className="search-wrap">
+                  <span className="search-icon">🔍</span>
+                  <input
+                    type="text"
+                    placeholder="Search mentor, batch, month..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="styled-input search-input"
+                  />
+                </div>
+
+                <select className="styled-input filter-select" value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)}>
+                  <option value="All">All Batches</option>
+                  {[...new Set(invoices.map((invoice) => invoice.batch_name))].map((batch) => (
+                    <option key={batch} value={batch}>
+                      {batch}
+                    </option>
+                  ))}
+                </select>
+
+                <select className="styled-input filter-select" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)}>
+                  <option value="All">All Months</option>
+                  {[...new Set(invoices.map((invoice) => invoice.month))].map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+
+                <select className="styled-input filter-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                  <option value="All">All Status</option>
+                  <option value="Paid">Paid</option>
+                  <option value="Pending">Pending</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="table-wrap">
+              <table className="styled-table">
+                <thead>
+                  <tr>
+                    <th>Mentor</th>
+                    <th>Invoice No.</th>
+                    <th>Batch</th>
+                    <th>Month</th>
+                    <th>Sessions</th>
+                    <th>Hours</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Payment</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {currentInvoices.map((invoice, i) => (
+                    <tr key={invoice.id} style={{ animationDelay: `${i * 0.03}s` }}>
+                      <td className="strong">{invoice.mentor_name}</td>
+                      <td className="muted">{invoice.invoice_number || "-"}</td>
+                      <td>{invoice.batch_name}</td>
+                      <td>{invoice.month}</td>
+                      <td>{invoice.total_sessions}</td>
+                      <td>{invoice.total_hours}</td>
+                      <td className="strong">₹ {Number(invoice.total_amount).toLocaleString("en-IN")}</td>
+                      <td>
+                        <PaymentBadge status={invoice.payment_status} />
+                      </td>
+                      <td>
+                        {invoice.payment_status === "Pending" ? (
+                          <button className="btn btn-mark-paid" onClick={() => markAsPaid(invoice.id)}>
+                            Mark Paid
+                          </button>
+                        ) : (
+                          <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "13px" }}>✔ Paid</span>
+                        )}
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "12px" }}>
+                          <a
+                            href={`http://127.0.0.1:8000/download-invoice/${invoice.id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Download PDF"
+                            className="action-icon"
+                          >
+                            📥
+                          </a>
+                          <span onClick={() => editInvoice(invoice)} title="Edit Invoice" className="action-icon">
+                            ✏️
+                          </span>
+                          <span onClick={() => deleteInvoice(invoice.id)} title="Delete Invoice" className="action-icon action-danger">
+                            🗑️
+                          </span>
+                          <span onClick={() => sendInvoiceEmail(invoice.id)} title="Send Invoice Email" className="action-icon action-primary">
+                            📧
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {currentInvoices.length === 0 && (
+                <div className="empty-state">
+                  <div style={{ fontSize: "32px", marginBottom: "8px" }}>📄</div>
+                  {invoices.length === 0 ? "No invoices yet — generate your first one above." : "No invoices match your filters."}
+                </div>
+              )}
+            </div>
+
+            {totalPages > 1 && (
+              <div className="pagination">
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                  disabled={currentPage === 1}
+                >
+                  ⬅ Previous
+                </button>
+
+                <span className="page-indicator">
+                  Page {currentPage} of {totalPages}
+                </span>
+
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+                  disabled={currentPage === totalPages}
+                >
+                  Next ➡
+                </button>
+              </div>
+            )}
+          </div>
         </div>
-      </td>
-    </tr>
-  ))}
-        </tbody>
-      </table>
-      <div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: "20px",
-  }}
->
-  <button
-    onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-    disabled={currentPage === 1}
-    style={{
-      padding: "10px 18px",
-      border: "none",
-      background: currentPage === 1 ? "#d1d5db" : "#2563eb",
-      color: "#fff",
-      borderRadius: "6px",
-      cursor: currentPage === 1 ? "not-allowed" : "pointer",
-    }}
-  >
-    ⬅ Previous
-  </button>
 
-  <span
-    style={{
-      fontWeight: "bold",
-      fontSize: "16px",
-    }}
-  >
-    Page {currentPage} of {totalPages}
-  </span>
+        <style jsx>{`
+          .page-hero {
+            position: relative;
+            overflow: hidden;
+            border-radius: 18px;
+            padding: 30px 32px;
+            margin-bottom: 24px;
+            background: linear-gradient(120deg, #0f172a 0%, #1e293b 60%, #0f172a 100%);
+            background-size: 200% 200%;
+            animation: heroShift 12s ease infinite;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+            box-shadow: 0 16px 32px -18px rgba(15, 23, 42, 0.55);
+          }
 
-  <button
-    onClick={() =>
-      setCurrentPage((p) => Math.min(p + 1, totalPages))
-    }
-    disabled={currentPage === totalPages}
-    style={{
-      padding: "10px 18px",
-      border: "none",
-      background:
-        currentPage === totalPages ? "#d1d5db" : "#2563eb",
-      color: "#fff",
-      borderRadius: "6px",
-      cursor:
-        currentPage === totalPages
-          ? "not-allowed"
-          : "pointer",
-    }}
-  >
-    Next ➡
-  </button>
-</div>
-    </div>
+          .page-hero-blob {
+            position: absolute;
+            width: 220px;
+            height: 220px;
+            border-radius: 50%;
+            background: #f59e0b;
+            filter: blur(60px);
+            opacity: 0.3;
+            top: -80px;
+            right: 160px;
+            animation: float 9s ease-in-out infinite;
+          }
+
+          .page-hero-content {
+            position: relative;
+            z-index: 1;
+          }
+
+          .page-hero-eyebrow {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #fbbf24;
+            background: rgba(251, 191, 36, 0.12);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            padding: 5px 10px;
+            border-radius: 999px;
+            margin-bottom: 10px;
+          }
+
+          .page-hero-title {
+            font-size: 26px;
+            font-weight: 800;
+            color: #f8fafc;
+            margin: 0 0 6px;
+          }
+
+          .page-hero-subtitle {
+            color: #94a3b8;
+            font-size: 14px;
+            margin: 0;
+          }
+
+          .page-hero-stat {
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            padding: 14px 26px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            flex-shrink: 0;
+          }
+
+          .page-hero-stat-value {
+            font-size: 26px;
+            font-weight: 800;
+            color: #fbbf24;
+          }
+
+          .page-hero-stat-label {
+            font-size: 11px;
+            color: #94a3b8;
+            margin-top: 2px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+          }
+
+          .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+          }
+
+          :global(.kpi-tile) {
+            background: #fff;
+            padding: 18px 20px;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+          }
+
+          :global(.kpi-tile:hover) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 18px -10px rgba(15, 23, 42, 0.25);
+          }
+
+          .card {
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 26px 28px;
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+            border: 1px solid #eef2f7;
+          }
+
+          .card-title {
+            margin: 0 0 18px;
+            font-size: 17px;
+            color: #1e293b;
+          }
+
+          .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 18px;
+          }
+
+          .styled-input:focus {
+            border-color: #f59e0b !important;
+            background: #ffffff !important;
+            box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
+          }
+
+          .btn {
+            border: none;
+            border-radius: 10px;
+            padding: 11px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+          }
+
+          .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+          }
+
+          .btn-primary {
+            background: linear-gradient(120deg, #f59e0b, #fbbf24);
+            color: #0f172a;
+            box-shadow: 0 6px 16px -6px rgba(245, 158, 11, 0.6);
+          }
+
+          .btn-primary:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 20px -6px rgba(245, 158, 11, 0.7);
+          }
+
+          .btn-ghost {
+            background: #f1f5f9;
+            color: #475569;
+          }
+
+          .btn-ghost:hover:not(:disabled) {
+            background: #e2e8f0;
+          }
+
+          .btn-mark-paid {
+            background: #16a34a;
+            color: white;
+            padding: 6px 12px;
+            font-size: 12px;
+          }
+
+          .btn-mark-paid:hover {
+            background: #15803d;
+          }
+
+          .list-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 14px;
+            margin-bottom: 18px;
+          }
+
+          .filter-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+          }
+
+          .filter-select {
+            width: 160px;
+          }
+
+          .search-wrap {
+            position: relative;
+          }
+
+          .search-icon {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 13px;
+            opacity: 0.5;
+          }
+
+          .search-input {
+            width: 240px;
+            padding-left: 34px !important;
+          }
+
+          .table-wrap {
+            overflow-x: auto;
+          }
+
+          .styled-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+          }
+
+          .styled-table thead th {
+            text-align: left;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #94a3b8;
+            font-weight: 700;
+            padding: 10px 14px;
+            border-bottom: 2px solid #f1f5f9;
+            white-space: nowrap;
+          }
+
+          .styled-table tbody tr {
+            animation: fadeSlideUp 0.3s ease both;
+            transition: background 0.12s ease;
+          }
+
+          .styled-table tbody tr:hover {
+            background: #fafaf9;
+          }
+
+          .styled-table td {
+            padding: 12px 14px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #1e293b;
+            text-align: center;
+          }
+
+          .styled-table td.muted {
+            color: #94a3b8;
+          }
+
+          .styled-table td.strong {
+            font-weight: 600;
+          }
+
+          .action-icon {
+            cursor: pointer;
+            font-size: 18px;
+            text-decoration: none;
+            transition: transform 0.12s ease;
+          }
+
+          .action-icon:hover {
+            transform: scale(1.15);
+          }
+
+          .action-danger:hover {
+            filter: hue-rotate(0deg);
+          }
+
+          .empty-state {
+            text-align: center;
+            padding: 50px 20px;
+            color: #94a3b8;
+            font-size: 14px;
+          }
+
+          .pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 20px;
+          }
+
+          .page-indicator {
+            font-weight: 700;
+            font-size: 14px;
+            color: #475569;
+          }
+
+          @keyframes heroShift {
+            0% {
+              background-position: 0% 50%;
+            }
+            50% {
+              background-position: 100% 50%;
+            }
+            100% {
+              background-position: 0% 50%;
+            }
+          }
+
+          @keyframes float {
+            0%,
+            100% {
+              transform: translateY(0px);
+            }
+            50% {
+              transform: translateY(16px);
+            }
+          }
+
+          @keyframes fadeSlideUp {
+            from {
+              opacity: 0;
+              transform: translateY(6px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+        `}</style>
+      </>
+    </ProtectedRoute>
   );
 }
-// ----------------------------
-// Styles
-// ----------------------------
-
-const containerStyle = {
-  maxWidth: "900px",
-  margin: "40px auto",
-  padding: "30px",
-  background: "#fff",
-  borderRadius: "10px",
-  boxShadow: "0 2px 10px rgba(0,0,0,.15)",
-};
-
-const gridStyle = {
-  display: "grid",
-  gridTemplateColumns: "1fr 1fr",
-  gap: "20px",
-};
-
-const inputStyle = {
-  width: "100%",
-  padding: "10px",
-  marginTop: "5px",
-  borderRadius: "6px",
-  border: "1px solid #ddd",
-};
-
-const buttonStyle = {
-  marginTop: "25px",
-  padding: "12px 20px",
-  border: "none",
-  background: "#2563eb",
-  color: "#fff",
-  borderRadius: "6px",
-  cursor: "pointer",
-  fontWeight: "bold",
-};
-
-const tableStyle = {
-  width: "100%",
-  borderCollapse: "collapse",
-  border: "1px solid #444",
-};
-const cardStyle = {
-  background: "#1f2937",
-  color: "#fff",
-  padding: "20px",
-  borderRadius: "12px",
-  textAlign: "center",
-  boxShadow: "0 4px 10px rgba(0,0,0,0.2)",
-};
-const thStyle = {
-  padding: "12px",
-  border: "1px solid #444",
-  background: "#1f2937",
-  color: "#ffffff",
-  textAlign: "center",
-};
-
-const tdStyle = {
-  padding: "10px",
-  border: "1px solid #444",
-  textAlign: "center",
-  verticalAlign: "middle",
-};

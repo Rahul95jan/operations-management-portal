@@ -24,7 +24,36 @@ export default function ResourceAnalyticsPage() {
       <ProtectedRoute>
         <>
           <Sidebar />
-          <div style={{ marginLeft: "300px", padding: "30px" }}>Loading Resource Analytics...</div>
+          <div
+            style={{
+              marginLeft: "280px",
+              minHeight: "100vh",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexDirection: "column",
+              gap: "14px",
+              background: "#f1f5f9",
+            }}
+          >
+            <div className="spinner" />
+            <div style={{ color: "#64748b", fontSize: "14px" }}>Loading resource analytics…</div>
+          </div>
+          <style jsx>{`
+            .spinner {
+              width: 36px;
+              height: 36px;
+              border-radius: 50%;
+              border: 3px solid #e2e8f0;
+              border-top-color: #f59e0b;
+              animation: spin 0.8s linear infinite;
+            }
+            @keyframes spin {
+              to {
+                transform: rotate(360deg);
+              }
+            }
+          `}</style>
         </>
       </ProtectedRoute>
     );
@@ -37,10 +66,10 @@ export default function ResourceAnalyticsPage() {
       <>
         <Sidebar />
 
-        <div style={{ marginLeft: "300px", padding: "30px", background: "#f8fafc", minHeight: "100vh" }}>
-          <ResourceHeaderBanner />
+        <div style={{ marginLeft: "280px", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
+          <ResourceHeaderBanner stat={{ value: `${overall.completion_rate}%`, label: "Completion Rate" }} />
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: "16px", marginBottom: "16px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px", marginBottom: "16px" }}>
             <PlacementKPI title="Total Sessions" value={overall.total_sessions} color="#334155" />
             <PlacementKPI title="Resources Required" value={overall.resources_required} color="#2563eb" />
             <PlacementKPI title="Resources Received" value={overall.resources_received} color="#16a34a" />
@@ -48,7 +77,7 @@ export default function ResourceAnalyticsPage() {
             <PlacementKPI title="Delayed" value={overall.resources_delayed} color="#dc2626" />
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: "16px", marginBottom: "30px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "16px", marginBottom: "30px" }}>
             <PlacementKPI title="Completion Rate" value={`${overall.completion_rate}%`} color="#0891b2" />
             <PlacementKPI title="On-Time Rate" value={`${overall.on_time_rate}%`} color="#16a34a" />
             <PlacementKPI title="Avg Delay" value={`${overall.avg_delay_hours} hrs`} color="#ea580c" />

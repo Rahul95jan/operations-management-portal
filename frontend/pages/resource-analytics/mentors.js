@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import ResourceHeaderBanner from "../../components/resources/analytics/ResourceHeaderBanner";
@@ -36,64 +36,163 @@ export default function MentorPerformancePage() {
       .catch(() => setHeatmap(null));
   }, []);
 
+  const avgCompliance = useMemo(() => {
+    if (!mentors || mentors.length === 0) return null;
+    const sum = mentors.reduce((acc, m) => acc + (Number(m.compliance_score) || 0), 0);
+    return Math.round(sum / mentors.length);
+  }, [mentors]);
+
   return (
     <ProtectedRoute>
       <>
         <Sidebar />
 
-        <div style={{ marginLeft: "300px", padding: "30px", background: "#f8fafc", minHeight: "100vh" }}>
-          <ResourceHeaderBanner />
-          <h1 style={{ fontSize: "26px", fontWeight: 700, marginTop: 0 }}>👨‍🏫 Mentor Resource Performance</h1>
-          <p style={{ color: "#64748b", marginTop: 0, marginBottom: "24px" }}>
-            Worst performers first — Compliance Score = On-Time Submissions ÷ Total Required × 100.
-          </p>
+        <div style={{ marginLeft: "280px", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
+          <ResourceHeaderBanner
+            title="👨‍🏫 Mentor Resource Performance"
+            subtitle="Worst performers first — Compliance Score = On-Time Submissions ÷ Total Required × 100"
+            stat={avgCompliance !== null ? { value: `${avgCompliance}%`, label: "Avg Compliance" } : null}
+          />
 
-          <div style={{ background: "#fff", borderRadius: "12px", boxShadow: "0 2px 10px rgba(0,0,0,0.1)", padding: "20px", marginBottom: "24px", overflowX: "auto" }}>
+          <div className="card table-card">
             {mentors === null ? (
-              <p>Loading...</p>
+              <div className="empty-state">Loading…</div>
             ) : mentors.length === 0 ? (
-              <p style={{ color: "#94a3b8" }}>No mentor data yet.</p>
+              <div className="empty-state">No mentor data yet.</div>
             ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "900px" }}>
-                <thead>
-                  <tr style={{ textAlign: "left", borderBottom: "2px solid #e2e8f0" }}>
-                    {COLUMNS.map(([key, label]) => (
-                      <th key={key} style={{ padding: "10px 12px", fontSize: "12px", color: "#64748b", textTransform: "uppercase" }}>
-                        {label}
-                      </th>
-                    ))}
-                    <th style={{ padding: "10px 12px", fontSize: "12px", color: "#64748b", textTransform: "uppercase" }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mentors.map((m) => (
-                    <tr key={m.mentor_name} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                      <td style={{ padding: "12px", fontWeight: 700 }}>{m.mentor_name}</td>
-                      <td style={{ padding: "12px" }}>{m.sessions}</td>
-                      <td style={{ padding: "12px" }}>{m.required}</td>
-                      <td style={{ padding: "12px" }}>{m.received}</td>
-                      <td style={{ padding: "12px" }}>{m.pending}</td>
-                      <td style={{ padding: "12px" }}>{m.delayed}</td>
-                      <td style={{ padding: "12px" }}>{m.on_time_percent}%</td>
-                      <td style={{ padding: "12px" }}>{m.avg_delay_hours} hrs</td>
-                      <td style={{ padding: "12px" }}>{m.reminder_count}</td>
-                      <td style={{ padding: "12px", fontWeight: 700 }}>{m.compliance_score}%</td>
-                      <td style={{ padding: "12px" }}>
-                        <ComplianceBadge classification={m.classification} />
-                      </td>
+              <div className="table-wrap">
+                <table className="styled-table" style={{ minWidth: "900px" }}>
+                  <thead>
+                    <tr>
+                      {COLUMNS.map(([key, label]) => (
+                        <th key={key}>{label}</th>
+                      ))}
+                      <th>Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {mentors.map((m, i) => (
+                      <tr key={m.mentor_name} style={{ animationDelay: `${i * 0.03}s` }}>
+                        <td className="strong">{m.mentor_name}</td>
+                        <td>{m.sessions}</td>
+                        <td>{m.required}</td>
+                        <td>{m.received}</td>
+                        <td>{m.pending}</td>
+                        <td>{m.delayed}</td>
+                        <td>{m.on_time_percent}%</td>
+                        <td className="muted">{m.avg_delay_hours} hrs</td>
+                        <td>{m.reminder_count}</td>
+                        <td className="strong">{m.compliance_score}%</td>
+                        <td>
+                          <ComplianceBadge classification={m.classification} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 
-          <div style={{ background: "#fff", borderRadius: "12px", boxShadow: "0 2px 10px rgba(0,0,0,0.1)", padding: "20px" }}>
-            <h2 style={{ marginTop: 0 }}>🗓️ Mentor Resource Compliance Heatmap</h2>
-            <p style={{ color: "#94a3b8", marginTop: 0 }}>On-time submission rate per week — spot mentors trending worse before it becomes a pattern.</p>
+          <div className="card">
+            <h2 className="card-title">🗓️ Mentor Resource Compliance Heatmap</h2>
+            <p className="card-subtitle">
+              On-time submission rate per week — spot mentors trending worse before it becomes a pattern.
+            </p>
             <MentorHeatmap data={heatmap} />
           </div>
         </div>
+
+        <style jsx>{`
+          .card {
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 22px 24px;
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+            border: 1px solid #eef2f7;
+            margin-bottom: 24px;
+            animation: fadeSlideUp 0.4s ease both;
+          }
+
+          .table-card {
+            padding: 20px;
+          }
+
+          .card-title {
+            margin: 0 0 6px;
+            font-size: 17px;
+            color: #1e293b;
+          }
+
+          .card-subtitle {
+            margin: 0 0 16px;
+            color: #94a3b8;
+            font-size: 13px;
+          }
+
+          .table-wrap {
+            overflow-x: auto;
+          }
+
+          .styled-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+          }
+
+          .styled-table thead th {
+            text-align: left;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #94a3b8;
+            font-weight: 700;
+            padding: 10px 12px;
+            border-bottom: 2px solid #f1f5f9;
+            white-space: nowrap;
+          }
+
+          .styled-table tbody tr {
+            animation: fadeSlideUp 0.3s ease both;
+            transition: background 0.12s ease;
+          }
+
+          .styled-table tbody tr:hover {
+            background: #fafaf9;
+          }
+
+          .styled-table td {
+            padding: 12px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #1e293b;
+          }
+
+          .styled-table td.muted {
+            color: #94a3b8;
+          }
+
+          .styled-table td.strong {
+            font-weight: 700;
+          }
+
+          .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #94a3b8;
+            font-size: 14px;
+          }
+
+          @keyframes fadeSlideUp {
+            from {
+              opacity: 0;
+              transform: translateY(8px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+        `}</style>
       </>
     </ProtectedRoute>
   );

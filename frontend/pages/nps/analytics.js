@@ -101,7 +101,44 @@ export default function NPSAnalyticsPage() {
   }, [insights]);
 
   if (responses === null || insights === null) {
-    return <h2 style={{ padding: "30px" }}>Loading NPS Analytics...</h2>;
+    return (
+      <ProtectedRoute>
+        <>
+          <Sidebar />
+          <div
+            style={{
+              marginLeft: "280px",
+              minHeight: "100vh",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexDirection: "column",
+              gap: "14px",
+              background: "#f1f5f9",
+            }}
+          >
+            <div
+              style={{
+                width: "36px",
+                height: "36px",
+                borderRadius: "50%",
+                border: "3px solid #e2e8f0",
+                borderTopColor: "#f59e0b",
+                animation: "spin 0.8s linear infinite",
+              }}
+            />
+            <div style={{ color: "#64748b", fontSize: "14px" }}>Loading NPS analytics…</div>
+          </div>
+          <style jsx global>{`
+            @keyframes spin {
+              to {
+                transform: rotate(360deg);
+              }
+            }
+          `}</style>
+        </>
+      </ProtectedRoute>
+    );
   }
 
   const {
@@ -124,13 +161,13 @@ export default function NPSAnalyticsPage() {
 
         <div
           style={{
-            marginLeft: "300px",
-            padding: "30px",
-            background: "#f8fafc",
+            marginLeft: "280px",
+            padding: "32px 36px 60px",
+            background: "#f1f5f9",
             minHeight: "100vh",
           }}
         >
-          <NPSHeaderBanner lastUpdated={lastUpdated} />
+          <NPSHeaderBanner lastUpdated={lastUpdated} stat={{ value: overall.nps_score, label: "NPS Score" }} />
 
           <div
             style={{
@@ -140,36 +177,12 @@ export default function NPSAnalyticsPage() {
               marginBottom: "24px",
             }}
           >
-            <a href={`http://127.0.0.1:8000/export-nps${exportSuffix}`} target="_blank" rel="noreferrer">
-              <button
-                style={{
-                  background: "#16a34a",
-                  color: "#fff",
-                  border: "none",
-                  padding: "10px 18px",
-                  borderRadius: "8px",
-                  fontWeight: "600",
-                  cursor: "pointer",
-                }}
-              >
-                ⬇ Export Excel
-              </button>
+            <a href={`http://127.0.0.1:8000/export-nps${exportSuffix}`} target="_blank" rel="noreferrer" className="export-btn export-btn-excel">
+              ⬇ Export Excel
             </a>
 
-            <a href={`http://127.0.0.1:8000/export-nps-report${exportSuffix}`} target="_blank" rel="noreferrer">
-              <button
-                style={{
-                  background: "#0f172a",
-                  color: "#facc15",
-                  border: "none",
-                  padding: "10px 18px",
-                  borderRadius: "8px",
-                  fontWeight: "600",
-                  cursor: "pointer",
-                }}
-              >
-                ⬇ Export PDF Report
-              </button>
+            <a href={`http://127.0.0.1:8000/export-nps-report${exportSuffix}`} target="_blank" rel="noreferrer" className="export-btn export-btn-pdf">
+              ⬇ Export PDF Report
             </a>
           </div>
 
@@ -183,9 +196,9 @@ export default function NPSAnalyticsPage() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(4,1fr)",
-              gap: "20px",
-              marginBottom: "20px",
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: "16px",
+              marginBottom: "16px",
             }}
           >
             <PlacementKPI title="Total Responses" value={overall.total} color="#334155" />
@@ -197,9 +210,9 @@ export default function NPSAnalyticsPage() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(4,1fr)",
-              gap: "20px",
-              marginBottom: "20px",
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: "16px",
+              marginBottom: "16px",
             }}
           >
             <PlacementKPI title="Passives" value={overall.passives} color="#f59e0b" />
@@ -208,7 +221,7 @@ export default function NPSAnalyticsPage() {
             <PlacementKPI title="Avg Doubt Resolution" value={`${overall.avg_doubt} / 5`} color="#0891b2" />
           </div>
 
-          <div style={{ marginBottom: "40px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", marginBottom: "30px" }}>
             <PlacementKPI title="Avg Website / LMS Rating" value={`${overall.avg_website} / 5`} color="#ea580c" />
           </div>
 
@@ -263,6 +276,41 @@ export default function NPSAnalyticsPage() {
 
           <NPSResponseTable data={responses} />
         </div>
+
+        <style jsx>{`
+          .export-btn {
+            display: inline-block;
+            text-decoration: none;
+            padding: 10px 18px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+          }
+
+          .export-btn:hover {
+            transform: translateY(-1px);
+          }
+
+          .export-btn-excel {
+            background: #16a34a;
+            color: #fff;
+          }
+
+          .export-btn-excel:hover {
+            box-shadow: 0 8px 18px -8px rgba(22, 163, 74, 0.6);
+          }
+
+          .export-btn-pdf {
+            background: linear-gradient(120deg, #0f172a, #1e293b);
+            color: #facc15;
+          }
+
+          .export-btn-pdf:hover {
+            box-shadow: 0 8px 18px -8px rgba(15, 23, 42, 0.6);
+          }
+        `}</style>
       </>
     </ProtectedRoute>
   );

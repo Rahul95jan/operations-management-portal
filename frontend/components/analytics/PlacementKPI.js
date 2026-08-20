@@ -1,18 +1,24 @@
 export default function PlacementKPI({ title, value, color }) {
   return (
     <div
+      className="kpi-tile"
       style={{
         background: "#fff",
         borderRadius: "12px",
-        padding: "20px",
-        borderLeft: `6px solid ${color}`,
-        boxShadow: "0 2px 10px rgba(0,0,0,.08)",
+        padding: "18px 20px",
+        borderLeft: `4px solid ${color}`,
+        boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)",
+        transition: "transform 0.15s ease, box-shadow 0.15s ease",
       }}
     >
       <h4
         style={{
-          color: "#64748b",
-          marginBottom: "10px",
+          color: "#94a3b8",
+          marginBottom: "8px",
+          fontSize: "12px",
+          fontWeight: 700,
+          letterSpacing: "0.03em",
+          textTransform: "uppercase",
         }}
       >
         {title}
@@ -22,11 +28,19 @@ export default function PlacementKPI({ title, value, color }) {
         style={{
           color,
           margin: 0,
-          fontSize: "32px",
+          fontSize: "26px",
+          fontVariantNumeric: "tabular-nums",
         }}
       >
         {value}
       </h2>
+
+      <style jsx>{`
+        .kpi-tile:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 18px -10px rgba(15, 23, 42, 0.25);
+        }
+      `}</style>
     </div>
   );
 }

@@ -139,36 +139,39 @@ export default function ResourcesPage() {
 
         <div
           style={{
-            marginLeft: "300px",
-            padding: "30px",
-            background: "#f8fafc",
+            marginLeft: "280px",
+            padding: "32px 36px 60px",
+            background: "#f1f5f9",
             minHeight: "100vh",
           }}
         >
-          <h1 style={{ fontSize: "32px", fontWeight: 700, marginBottom: "6px" }}>
-            📦 Resource Portal
-          </h1>
-          <p style={{ color: "#64748b", marginTop: 0, marginBottom: "30px" }}>
-            Submit session resources — code, notes, slides, recordings, and more.
-          </p>
+          {/* Header */}
+          <div className="page-hero">
+            <div className="page-hero-blob" />
+            <div className="page-hero-content">
+              <div className="page-hero-eyebrow">Resource Portal</div>
+              <h1 className="page-hero-title">📦 Submit Session Resources</h1>
+              <p className="page-hero-subtitle">
+                Code, notes, slides, recordings — submit everything mentors owe for a session.
+              </p>
+            </div>
+            <div className="page-hero-stats">
+              <div className="page-hero-stat">
+                <div className="page-hero-stat-value">{sessions.length}</div>
+                <div className="page-hero-stat-label">Sessions Available</div>
+              </div>
+              <div className="page-hero-stat">
+                <div className="page-hero-stat-value">{existingResources.length}</div>
+                <div className="page-hero-stat-label">Already Submitted</div>
+              </div>
+            </div>
+          </div>
 
-          <div
-            style={{
-              background: "#fff",
-              borderRadius: "12px",
-              boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
-              padding: "24px",
-              marginBottom: "30px",
-            }}
-          >
-            <SessionPicker
-              sessions={sessions}
-              selectedSession={selectedSession}
-              onSelect={handleSessionSelect}
-            />
+          <div className="card">
+            <SessionPicker sessions={sessions} selectedSession={selectedSession} onSelect={handleSessionSelect} />
 
             <div style={{ marginBottom: "24px", maxWidth: "300px" }}>
-              <label style={{ display: "block", fontWeight: 600, marginBottom: "8px", fontSize: "13px" }}>
+              <label style={{ display: "block", fontWeight: 600, marginBottom: "8px", fontSize: "13px", color: "#334155" }}>
                 Submitted By
               </label>
               <input
@@ -176,20 +179,23 @@ export default function ResourcesPage() {
                 value={submittedBy}
                 onChange={(e) => setSubmittedBy(e.target.value)}
                 placeholder="Your name"
+                className="styled-input"
                 style={{
                   width: "100%",
                   boxSizing: "border-box",
-                  padding: "9px 11px",
-                  borderRadius: "8px",
-                  border: "1.5px solid #e2e8f0",
+                  padding: "10px 12px",
+                  borderRadius: "10px",
+                  border: "1px solid #e2e8f0",
+                  background: "#f8fafc",
                   fontSize: "14px",
+                  outline: "none",
                 }}
               />
             </div>
 
             {selectedSession && (
               <>
-                <h3 style={{ marginBottom: "12px" }}>Resources</h3>
+                <h3 className="subheading">📝 Resources</h3>
 
                 {rows.map((row, i) => (
                   <ResourceRow
@@ -202,55 +208,13 @@ export default function ResourcesPage() {
                   />
                 ))}
 
-                <button
-                  type="button"
-                  onClick={addRow}
-                  style={{
-                    background: "#f1f5f9",
-                    color: "#334155",
-                    border: "1.5px dashed #cbd5e1",
-                    borderRadius: "10px",
-                    padding: "10px 16px",
-                    fontWeight: 600,
-                    fontSize: "13px",
-                    cursor: "pointer",
-                    marginBottom: "20px",
-                  }}
-                >
+                <button type="button" onClick={addRow} className="btn btn-add">
                   + Add Another Resource
                 </button>
 
-                {formError && (
-                  <div
-                    style={{
-                      background: "#fee2e2",
-                      color: "#991b1b",
-                      padding: "10px 14px",
-                      borderRadius: "8px",
-                      fontSize: "13px",
-                      fontWeight: 600,
-                      marginBottom: "16px",
-                    }}
-                  >
-                    {formError}
-                  </div>
-                )}
+                {formError && <div className="form-error">{formError}</div>}
 
-                <button
-                  type="button"
-                  onClick={handleSubmit}
-                  disabled={submitting}
-                  style={{
-                    background: submitting ? "#94a3b8" : "#0f172a",
-                    color: "#facc15",
-                    border: "none",
-                    padding: "14px 24px",
-                    borderRadius: "10px",
-                    fontWeight: 700,
-                    fontSize: "15px",
-                    cursor: submitting ? "not-allowed" : "pointer",
-                  }}
-                >
+                <button type="button" onClick={handleSubmit} disabled={submitting} className="btn btn-submit">
                   {submitting ? "Submitting..." : "Submit Resources"}
                 </button>
               </>
@@ -258,21 +222,215 @@ export default function ResourcesPage() {
           </div>
 
           {selectedSession && (
-            <div
-              style={{
-                background: "#fff",
-                borderRadius: "12px",
-                boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
-                padding: "24px",
-              }}
-            >
-              <h3 style={{ marginBottom: "16px" }}>
-                Already Submitted for "{selectedSession.topic}"
+            <div className="card" style={{ marginTop: "24px" }}>
+              <h3 className="subheading" style={{ marginTop: 0 }}>
+                📋 Already Submitted for "{selectedSession.topic}"
               </h3>
               <SubmittedResourcesList resources={existingResources} />
             </div>
           )}
         </div>
+
+        <style jsx>{`
+          .page-hero {
+            position: relative;
+            overflow: hidden;
+            border-radius: 18px;
+            padding: 30px 32px;
+            margin-bottom: 24px;
+            background: linear-gradient(120deg, #0f172a 0%, #1e293b 60%, #0f172a 100%);
+            background-size: 200% 200%;
+            animation: heroShift 12s ease infinite;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+            box-shadow: 0 16px 32px -18px rgba(15, 23, 42, 0.55);
+          }
+
+          .page-hero-blob {
+            position: absolute;
+            width: 220px;
+            height: 220px;
+            border-radius: 50%;
+            background: #facc15;
+            filter: blur(60px);
+            opacity: 0.25;
+            top: -80px;
+            right: 160px;
+            animation: float 9s ease-in-out infinite;
+          }
+
+          .page-hero-content {
+            position: relative;
+            z-index: 1;
+          }
+
+          .page-hero-eyebrow {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #fbbf24;
+            background: rgba(251, 191, 36, 0.12);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            padding: 5px 10px;
+            border-radius: 999px;
+            margin-bottom: 10px;
+          }
+
+          .page-hero-title {
+            font-size: 26px;
+            font-weight: 800;
+            color: #f8fafc;
+            margin: 0 0 6px;
+          }
+
+          .page-hero-subtitle {
+            color: #94a3b8;
+            font-size: 14px;
+            margin: 0;
+          }
+
+          .page-hero-stats {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            gap: 12px;
+            flex-shrink: 0;
+          }
+
+          .page-hero-stat {
+            text-align: center;
+            padding: 14px 22px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+          }
+
+          .page-hero-stat-value {
+            font-size: 26px;
+            font-weight: 800;
+            color: #fbbf24;
+          }
+
+          .page-hero-stat-label {
+            font-size: 11px;
+            color: #94a3b8;
+            margin-top: 2px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            white-space: nowrap;
+          }
+
+          .card {
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 26px 28px;
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+            border: 1px solid #eef2f7;
+            animation: fadeSlideUp 0.4s ease both;
+          }
+
+          .subheading {
+            font-size: 15px;
+            color: #1e293b;
+            margin: 0 0 14px;
+          }
+
+          .styled-input:focus {
+            border-color: #f59e0b !important;
+            background: #ffffff !important;
+            box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
+          }
+
+          .btn {
+            border: none;
+            border-radius: 10px;
+            padding: 12px 20px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.15s ease;
+          }
+
+          .btn:disabled {
+            cursor: not-allowed;
+          }
+
+          .btn-add {
+            background: #f1f5f9;
+            color: #334155;
+            border: 1.5px dashed #cbd5e1 !important;
+            font-weight: 600;
+            font-size: 13px;
+            margin-bottom: 20px;
+          }
+
+          .btn-add:hover {
+            background: #e2e8f0;
+          }
+
+          .btn-submit {
+            background: linear-gradient(120deg, #0f172a, #1e293b);
+            color: #facc15;
+            box-shadow: 0 6px 16px -6px rgba(15, 23, 42, 0.5);
+          }
+
+          .btn-submit:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 20px -6px rgba(15, 23, 42, 0.6);
+          }
+
+          .btn-submit:disabled {
+            background: #94a3b8;
+            color: #f1f5f9;
+          }
+
+          .form-error {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 16px;
+          }
+
+          @keyframes heroShift {
+            0% {
+              background-position: 0% 50%;
+            }
+            50% {
+              background-position: 100% 50%;
+            }
+            100% {
+              background-position: 0% 50%;
+            }
+          }
+
+          @keyframes float {
+            0%,
+            100% {
+              transform: translateY(0px);
+            }
+            50% {
+              transform: translateY(16px);
+            }
+          }
+
+          @keyframes fadeSlideUp {
+            from {
+              opacity: 0;
+              transform: translateY(8px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+        `}</style>
       </>
     </ProtectedRoute>
   );

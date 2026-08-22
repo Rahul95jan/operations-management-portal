@@ -13,279 +13,272 @@ from reportlab.platypus import (
     TableStyle,
     Paragraph,
     Spacer,
+    Image,
+    HRFlowable,
 )
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+# Helvetica (the default base-14 PDF font) has no glyph for the Rupee sign
+# (U+20B9) and silently renders it as a tofu box. DejaVu Sans does, so it's
+# bundled under assets/fonts and used anywhere currency is printed.
+_FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "fonts")
+try:
+    pdfmetrics.registerFont(TTFont("DejaVuSans", os.path.join(_FONT_DIR, "DejaVuSans.ttf")))
+    pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", os.path.join(_FONT_DIR, "DejaVuSans-Bold.ttf")))
+except Exception:
+    pass
 
 # =====================================================
 # Invoice PDF
 # =====================================================
 
 def generate_invoice(invoice):
-    print("=" * 50)
-    print("✅ NEW generate_invoice() FUNCTION IS RUNNING")
-    print(__file__)
-    print("=" * 50)
-
     if not os.path.exists("pdfs"):
         os.makedirs("pdfs")
 
     filename = f"pdfs/invoice_{invoice.id}.pdf"
 
-    c = canvas.Canvas(filename, pagesize=A4)
-    # =====================================
-    # Logo Path
-    # =====================================
-
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
 
-    # =====================================
-    # Professional Header
-    # =====================================
+    # ---- Brand palette (matches the portal's navy/gold design system) ----
+    NAVY = HexColor("#0f172a")
+    GOLD = HexColor("#f59e0b")
+    GOLD_LIGHT = HexColor("#fbbf24")
+    SLATE = HexColor("#334155")
+    MUTED = HexColor("#94a3b8")
+    BORDER = HexColor("#e2e8f0")
+    BG_ALT = HexColor("#f8fafc")
+    GREEN = HexColor("#16a34a")
+    GREEN_BG = HexColor("#dcfce7")
+    AMBER_TEXT = HexColor("#b45309")
+    AMBER_BG = HexColor("#fef3c7")
+    RED = HexColor("#dc2626")
+    RED_BG = HexColor("#fee2e2")
 
-    HEADER_HEIGHT = 82
+    doc = SimpleDocTemplate(
+        filename,
+        pagesize=A4,
+        topMargin=0,
+        bottomMargin=18 * mm,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+    )
 
-    # Blue Header Background
-    c.setFillColor(HexColor("#1E3A8A"))
-    c.rect(0, 760, 595, HEADER_HEIGHT, fill=1, stroke=0)
+    styles = getSampleStyleSheet()
 
-    # -------------------------------------
-    # Company Logo
-    # -------------------------------------
+    kv_style = ParagraphStyle("KV", parent=styles["Normal"], leading=15, spaceAfter=8)
+    plain_style = ParagraphStyle("Plain", parent=styles["Normal"], textColor=SLATE, fontSize=9, leading=13)
+    section_label_style = ParagraphStyle(
+        "SectionLabel", parent=styles["Normal"], textColor=MUTED, fontSize=8.5,
+        fontName="Helvetica-Bold", leading=11, spaceAfter=6,
+    )
+    note_style = ParagraphStyle("Note", parent=styles["Normal"], textColor=SLATE, fontSize=9, leading=13)
+    footer_style = ParagraphStyle("Footer", parent=styles["Normal"], textColor=MUTED, fontSize=8, alignment=1, leading=11)
 
-    if os.path.exists(LOGO_PATH):
-        logo = ImageReader(LOGO_PATH)
-
-        c.drawImage(
-            logo,
-            30,                 # X Position
-            770,                # Y Position
-            width=100,          # Logo Width
-            height=50,          # Logo Height
-            preserveAspectRatio=True,
-            mask="auto",
+    def kv(label, value, value_color="#0f172a", value_size=11.5):
+        return Paragraph(
+            f"<font color='#94a3b8' size='8'><b>{label.upper()}</b></font><br/>"
+            f"<font color='{value_color}' size='{value_size}'><b>{value}</b></font>",
+            kv_style,
         )
 
-    # -------------------------------------
-    # Company Name
-    # -------------------------------------
+    elements = []
 
-    c.setFillColor(HexColor("#FFFFFF"))
-    c.setFont("Helvetica-Bold", 24)
-
-    # Centered in the header
-    c.drawCentredString(
-        325,
-        800,
-        "Krish Naik Academy"
-    )
-
-    # -------------------------------------
-    # Invoice Title
-    # -------------------------------------
-
-    c.setFillColor(HexColor("#111827"))
-    c.setFont("Helvetica-Bold", 26)
-
-    c.drawCentredString(
-        297,
-        735,
-        "MENTOR PAYMENT INVOICE"
-    )
-
-    # -------------------------------------
-    # Divider
-    # -------------------------------------
-
-    c.setStrokeColor(HexColor("#D1D5DB"))
-    c.setLineWidth(1)
-    c.line(30, 720, 565, 720)
-       # =====================================================
-    # Invoice Information Card
     # =====================================================
+    # Header banner
+    # =====================================================
+    if os.path.exists(LOGO_PATH):
+        logo_cell = Image(LOGO_PATH, width=32 * mm, height=12.5 * mm)
+    else:
+        logo_cell = ""
 
-    c.setFillColor(HexColor("#F3F4F6"))
-    c.roundRect(
-        40,
-        560,
-        515,
-        130,
-        8,
-        fill=1,
-        stroke=0,
+    brand_text = Paragraph(
+        "<font color='#ffffff' size='16'><b>Krish Naik Academy</b></font><br/>"
+        "<font color='#fbbf24' size='8.5'>Operations Management Portal</font>",
+        ParagraphStyle("Brand", parent=styles["Normal"], leading=16),
     )
 
-    c.setFillColor(HexColor("#111827"))
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(55, 670, "Invoice Information")
+    invoice_no_text = invoice.invoice_number or "DRAFT — PENDING"
+    doc_title = Paragraph(
+        "<font color='#fbbf24' size='20'><b>INVOICE</b></font><br/>"
+        f"<font color='#ffffff' size='9.5'>#{invoice_no_text}</font>",
+        ParagraphStyle("DocTitle", parent=styles["Normal"], alignment=2, leading=23),
+    )
 
-    c.setFont("Helvetica", 12)
+    header_left = Table([[logo_cell, brand_text]], colWidths=[36 * mm, 82 * mm])
+    header_left.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
 
-    # ----------------------------
-    # Left Column
-    # ----------------------------
+    header = Table([[header_left, doc_title]], colWidths=[118 * mm, 60 * mm])
+    header.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, 0), 16 * mm),
+        ("RIGHTPADDING", (1, 0), (1, 0), 12 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 16),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+    ]))
+    elements.append(header)
+    elements.append(HRFlowable(width="100%", thickness=3, color=GOLD, spaceBefore=0, spaceAfter=18))
 
-    c.drawString(55, 645, "Invoice No")
-    c.drawString(180, 645, f": {invoice.invoice_number}")
-
-    c.drawString(55, 620, "Month")
-    c.drawString(180, 620, f": {invoice.month}")
-
-    c.drawString(55, 595, "Payment Status")
-
-    # Payment Status Badge
-    status = str(invoice.payment_status).upper()
+    # =====================================================
+    # Bill To  /  Invoice Details
+    # =====================================================
+    status = str(invoice.payment_status or "Pending").upper()
 
     if status == "PAID":
-        badge_color = HexColor("#16A34A")
+        badge_bg, badge_fg = GREEN_BG, GREEN
     elif status == "PENDING":
-        badge_color = HexColor("#F59E0B")
+        badge_bg, badge_fg = AMBER_BG, AMBER_TEXT
     else:
-        badge_color = HexColor("#DC2626")
-    c.setFillColor(badge_color)
-    c.roundRect(
-        180,
-        586,
-        80,
-        18,
-        4,
-        fill=1,
-        stroke=0,
+        badge_bg, badge_fg = RED_BG, RED
+
+    badge_style = ParagraphStyle(
+        "Badge", parent=styles["Normal"], textColor=badge_fg, fontSize=9,
+        fontName="Helvetica-Bold", alignment=1, leading=11,
     )
+    status_badge = Table([[Paragraph(f"● {status}", badge_style)]], colWidths=[34 * mm])
+    status_badge.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), badge_bg),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+    ]))
 
-    c.setFillColor(HexColor("#FFFFFF"))
-    c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(
-        220,
-        592,
-        status,
-    )
+    bill_to_cell = [
+        Paragraph("BILL TO", section_label_style),
+        Paragraph(f"<b>{invoice.mentor_name}</b>", ParagraphStyle("MentorName", parent=styles["Normal"], textColor=NAVY, fontSize=13, leading=16)),
+    ]
+    if invoice.mentor_email:
+        bill_to_cell.append(Paragraph(invoice.mentor_email, plain_style))
 
-    # Reset font/color
-    c.setFillColor(HexColor("#111827"))
-    c.setFont("Helvetica", 12)
+    details_cell = [
+        Paragraph("INVOICE DETAILS", section_label_style),
+        kv("Date Issued", datetime.now().strftime("%d %b %Y"), value_size=10.5),
+        kv("Batch", invoice.batch_name, value_size=10.5),
+        kv("Billing Month", invoice.month, value_size=10.5),
+        status_badge,
+    ]
 
-    # ----------------------------
-    # Right Column
-    # ----------------------------
-
-    c.drawString(300, 645, "Mentor")
-    c.drawString(410, 645, f": {invoice.mentor_name}")
-
-    c.drawString(300, 620, "Batch")
-    c.drawString(410, 620, f": {invoice.batch_name}")
+    info_table = Table([[bill_to_cell, details_cell]], colWidths=[89 * mm, 89 * mm])
+    info_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), BG_ALT),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOX", (0, 0), (-1, -1), 0.75, BORDER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+        ("TOPPADDING", (0, 0), (-1, -1), 14),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+    ]))
+    elements.append(info_table)
+    elements.append(Spacer(1, 20))
 
     # =====================================================
-    # Payment Summary Card
+    # Line items
     # =====================================================
+    rate_val = float(invoice.hourly_rate or 0)
+    amount_val = float(invoice.total_amount or 0)
 
-    # Card
-    c.setFillColor(HexColor("#FFFFFF"))
-    c.setStrokeColor(HexColor("#D1D5DB"))
+    item_header_style = ParagraphStyle("ItemHeader", parent=styles["Normal"], textColor=colors.white, fontSize=9, fontName="Helvetica-Bold")
+    item_desc_style = ParagraphStyle("ItemDesc", parent=styles["Normal"], textColor=NAVY, fontSize=10.5, fontName="Helvetica-Bold", leading=14)
+    item_value_style = ParagraphStyle("ItemValue", parent=styles["Normal"], textColor=SLATE, fontSize=10.5, fontName="DejaVuSans", alignment=2)
 
-    c.roundRect(
-    40,
-    300,
-    515,
-    220,
-    10,
-    fill=1,
-    stroke=1,
- )
+    items_data = [
+        [
+            Paragraph("DESCRIPTION", item_header_style),
+            Paragraph("SESSIONS", item_header_style),
+            Paragraph("HOURS", item_header_style),
+            Paragraph("RATE", item_header_style),
+            Paragraph("AMOUNT", ParagraphStyle("ItemHeaderR", parent=item_header_style, alignment=2)),
+        ],
+        [
+            Paragraph(f"Mentoring Services — {invoice.batch_name} ({invoice.month})", item_desc_style),
+            Paragraph(str(invoice.total_sessions), item_value_style),
+            Paragraph(f"{invoice.total_hours} hrs", item_value_style),
+            Paragraph(f"₹ {rate_val:,.2f}", item_value_style),
+            Paragraph(f"₹ {amount_val:,.2f}", ParagraphStyle("ItemAmount", parent=item_value_style, fontName="DejaVuSans-Bold", textColor=NAVY)),
+        ],
+    ]
 
-   # -----------------------------------------------------
-   # Header
-   # -----------------------------------------------------
+    items_table = Table(items_data, colWidths=[56 * mm, 26 * mm, 22 * mm, 30 * mm, 44 * mm])
+    items_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("LINEBELOW", (0, 1), (-1, 1), 0.75, BORDER),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (0, -1), 10),
+        ("RIGHTPADDING", (-1, 0), (-1, -1), 10),
+    ]))
+    elements.append(items_table)
+    elements.append(Spacer(1, 14))
 
-    c.setFillColor(HexColor("#1E3A8A"))
-    c.roundRect(
-    40,
-    490,
-    515,
-    30,
-    10,
-    fill=1,
-    stroke=0,
- )
-
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(55, 500, "Payment Summary")
-
-  # -----------------------------------------------------
-  # Table Layout
-  # -----------------------------------------------------
-
-    label_x = 60
-    colon_x = 220
-    value_x = 525
-
-    rows = [
-    ("Total Sessions", str(invoice.total_sessions)),
-    ("Total Hours", f"{invoice.total_hours} Hours"),
-    ("Hourly Rate", f"₹ {float(invoice.hourly_rate):,.2f}"),
- ]
-
-    y = 455
-
-    for label, value in rows:
-
-        c.setFillColor(HexColor("#374151"))
-        c.setFont("Helvetica", 12)
-        c.drawString(label_x, y, label)
-
-        c.drawString(colon_x, y, ":")
-
-        c.setFillColor(HexColor("#111827"))
-        c.setFont("Helvetica-Bold", 12)
-        c.drawRightString(value_x, y, value)
-
-        c.setStrokeColor(HexColor("#E5E7EB"))
-        c.line(55, y - 12, 540, y - 12)
-
-        y -= 38
-
-     # -----------------------------------------------------
-    # Total Payable Box
-    # -----------------------------------------------------
-
-    c.setFillColor(HexColor("#F97316"))
-
-    c.roundRect(
-        55,
-        320,
-        485,
-        48,
-        8,
-        fill=1,
-        stroke=0,
+    # =====================================================
+    # Total payable
+    # =====================================================
+    total_table = Table(
+        [[
+            Paragraph("<font color='#0f172a' size='12'><b>TOTAL PAYABLE</b></font>", ParagraphStyle("TotalLabel", parent=styles["Normal"])),
+            Paragraph(
+                f"₹ {amount_val:,.2f}",
+                ParagraphStyle("TotalValue", parent=styles["Normal"], alignment=2, fontName="DejaVuSans-Bold", fontSize=16, textColor=NAVY),
+            ),
+        ]],
+        colWidths=[89 * mm, 89 * mm],
     )
+    total_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), GOLD_LIGHT),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+        ("TOPPADDING", (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+    ]))
+    elements.append(total_table)
+    elements.append(Spacer(1, 20))
 
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 15)
-    c.drawString(70, 338, "TOTAL PAYABLE")
-
-    c.setFont("Helvetica-Bold", 18)
-
-    c.drawRightString(
-        525,
-        338,
-        f"₹ {float(invoice.total_amount):,.2f}",
+    # =====================================================
+    # Note
+    # =====================================================
+    note_table = Table(
+        [[Paragraph(
+            "<b>Thank you for your mentorship contribution this cycle.</b><br/>"
+            "Payment is processed as per the standard Krish Naik Academy billing cycle. "
+            "For any billing queries, please reach out to the operations team.",
+            note_style,
+        )]],
+        colWidths=[178 * mm],
     )
+    note_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), BG_ALT),
+        ("BOX", (0, 0), (-1, -1), 0.75, BORDER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+        ("TOPPADDING", (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+    ]))
+    elements.append(note_table)
+    elements.append(Spacer(1, 26))
 
     # =====================================================
     # Footer
     # =====================================================
+    elements.append(HRFlowable(width="100%", thickness=0.75, color=BORDER, spaceAfter=10))
+    elements.append(Paragraph(
+        f"Krish Naik Academy &nbsp;·&nbsp; Generated on {datetime.now().strftime('%d %b %Y, %I:%M %p')} "
+        "&nbsp;·&nbsp; This is a system-generated invoice and does not require a signature.",
+        footer_style,
+    ))
 
-    c.setFillColor(HexColor("#6B7280"))
-    c.setFont("Helvetica-Oblique", 10)
-
-    c.drawCentredString(
-        297,
-        25,
-        "Generated by Krish Naik Academy",
-    )
-
-    c.save()
+    doc.build(elements)
 
     return filename
 
@@ -537,6 +530,32 @@ def _segment_color(score):
     return RED
 
 
+_SEGMENT_BG = {
+    "Promoter": colors.HexColor("#dcfce7"),
+    "Passive": colors.HexColor("#fef3c7"),
+    "Detractor": colors.HexColor("#fee2e2"),
+}
+
+BORDER = colors.HexColor("#e2e8f0")
+BG_ALT = colors.HexColor("#f8fafc")
+GOLD_LIGHT = HexColor("#fbbf24")
+
+
+def _footer(canvas_obj, doc_obj):
+    canvas_obj.saveState()
+    canvas_obj.setStrokeColor(BORDER)
+    canvas_obj.setLineWidth(0.5)
+    canvas_obj.line(16 * mm, 14 * mm, 194 * mm, 14 * mm)
+    canvas_obj.setFont("Helvetica", 8)
+    canvas_obj.setFillColor(colors.HexColor("#94a3b8"))
+    canvas_obj.drawCentredString(
+        105 * mm,
+        10 * mm,
+        f"Krish Naik Academy  ·  NPS Analytics Report  ·  Page {doc_obj.page}",
+    )
+    canvas_obj.restoreState()
+
+
 def generate_nps_report(records, insights):
 
     if not os.path.exists("pdfs"):
@@ -544,11 +563,14 @@ def generate_nps_report(records, insights):
 
     filename = "pdfs/nps_report.pdf"
 
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+
     doc = SimpleDocTemplate(
         filename,
         pagesize=A4,
-        topMargin=20 * mm,
-        bottomMargin=18 * mm,
+        topMargin=0,
+        bottomMargin=22 * mm,
         leftMargin=16 * mm,
         rightMargin=16 * mm,
     )
@@ -556,13 +578,13 @@ def generate_nps_report(records, insights):
     styles = getSampleStyleSheet()
 
     title_style = ParagraphStyle(
-        "TitleWhite", parent=styles["Title"], textColor=colors.white, fontSize=20,
+        "TitleWhite", parent=styles["Normal"], textColor=colors.white, fontSize=18, fontName="Helvetica-Bold", leading=22,
     )
     subtitle_style = ParagraphStyle(
-        "SubtitleWhite", parent=styles["Normal"], textColor=YELLOW, fontSize=11,
+        "SubtitleWhite", parent=styles["Normal"], textColor=YELLOW, fontSize=10, leading=13,
     )
     section_style = ParagraphStyle(
-        "Section", parent=styles["Heading2"], textColor=NAVY, spaceBefore=14, spaceAfter=8,
+        "Section", parent=styles["Heading2"], textColor=NAVY, fontSize=13, spaceBefore=16, spaceAfter=8,
     )
     body_style = ParagraphStyle(
         "Body", parent=styles["Normal"], textColor=SLATE, fontSize=10, leading=14,
@@ -570,58 +592,91 @@ def generate_nps_report(records, insights):
     bullet_style = ParagraphStyle(
         "Bullet", parent=body_style, leftIndent=12, bulletIndent=0, spaceAfter=6,
     )
+    kpi_label_style = ParagraphStyle(
+        "KpiLabel", parent=styles["Normal"], textColor=colors.HexColor("#94a3b8"), fontSize=7.5,
+        fontName="Helvetica-Bold", alignment=1, leading=10,
+    )
+    kpi_value_style = ParagraphStyle(
+        "KpiValue", parent=styles["Normal"], textColor=NAVY, fontSize=16, fontName="Helvetica-Bold", alignment=1,
+    )
+    kpi_value_hero_style = ParagraphStyle(
+        "KpiValueHero", parent=kpi_value_style, textColor=colors.HexColor("#b45309"), fontSize=18,
+    )
 
     elements = []
 
-    # ---- Header banner ----
-    header = Table(
+    # =====================================================
+    # Header banner
+    # =====================================================
+    if os.path.exists(LOGO_PATH):
+        logo_cell = Image(LOGO_PATH, width=30 * mm, height=11.5 * mm)
+    else:
+        logo_cell = ""
+
+    header_text = Table(
         [[Paragraph("Krish Naik Academy", title_style)],
          [Paragraph(f"NPS Analytics Report &nbsp;&bull;&nbsp; Generated {datetime.now().strftime('%d %b %Y')}", subtitle_style)]],
-        colWidths=[178 * mm],
+        colWidths=[130 * mm],
     )
+    header_text.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+
+    header = Table([[logo_cell, header_text]], colWidths=[38 * mm, 140 * mm])
     header.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), NAVY),
-        ("LEFTPADDING", (0, 0), (-1, -1), 14),
-        ("TOPPADDING", (0, 0), (-1, 0), 14),
-        ("BOTTOMPADDING", (0, -1), (-1, -1), 14),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, 0), 6 * mm),
+        ("RIGHTPADDING", (0, 0), (0, 0), 2 * mm),
+        ("LEFTPADDING", (1, 0), (1, 0), 4 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 16),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
     ]))
     elements.append(header)
-    elements.append(Spacer(1, 16))
+    elements.append(HRFlowable(width="100%", thickness=3, color=GOLD_LIGHT, spaceBefore=0, spaceAfter=18))
 
     overall = insights["overall"]
 
     # ---- KPI summary ----
-    elements.append(Paragraph("Executive Summary", section_style))
+    elements.append(Paragraph("<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;Executive Summary", section_style))
+
+    kpi_labels = ["TOTAL RESPONSES", "AVG SCORE (0-10)", "NPS SCORE", "PROMOTERS", "PASSIVES", "DETRACTORS"]
+    kpi_values = [
+        str(overall["total"]), str(overall["avg_nps_score"]), str(overall["nps_score"]),
+        str(overall["promoters"]), str(overall["passives"]), str(overall["detractors"]),
+    ]
 
     kpi_data = [
-        ["Total Responses", "Avg Score (0-10)", "NPS Score", "Promoters", "Passives", "Detractors"],
+        [Paragraph(lbl, kpi_label_style) for lbl in kpi_labels],
         [
-            str(overall["total"]),
-            str(overall["avg_nps_score"]),
-            str(overall["nps_score"]),
-            str(overall["promoters"]),
-            str(overall["passives"]),
-            str(overall["detractors"]),
+            Paragraph(kpi_values[0], kpi_value_style),
+            Paragraph(kpi_values[1], kpi_value_style),
+            Paragraph(kpi_values[2], kpi_value_hero_style),
+            Paragraph(kpi_values[3], kpi_value_style),
+            Paragraph(kpi_values[4], kpi_value_style),
+            Paragraph(kpi_values[5], kpi_value_style),
         ],
     ]
     kpi_table = Table(kpi_data, colWidths=[29.67 * mm] * 6)
     kpi_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), SLATE),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 1), (-1, 1), 14),
-        ("TEXTCOLOR", (0, 1), (-1, 1), NAVY),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("BACKGROUND", (0, 0), (-1, -1), BG_ALT),
+        ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#fef3c7")),
+        ("BOX", (0, 0), (-1, -1), 0.75, BORDER),
+        ("LINEAFTER", (0, 0), (-2, -1), 0.5, BORDER),
+        ("TOPPADDING", (0, 0), (-1, 0), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+        ("TOPPADDING", (0, 1), (-1, 1), 2),
+        ("BOTTOMPADDING", (0, 1), (-1, 1), 12),
+        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
     ]))
     elements.append(kpi_table)
-    elements.append(Spacer(1, 10))
+    elements.append(Spacer(1, 12))
 
-    rating_data = [["Average Rating", "Score / 5"]] + [
+    elements.append(Paragraph("<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;Average Ratings", section_style))
+
+    rating_data = [["Category", "Score / 5"]] + [
         [r["label"], f"{r['value']:.2f}"] for r in insights["rating_breakdown"]
     ]
     rating_table = Table(rating_data, colWidths=[89 * mm, 89 * mm])
@@ -629,15 +684,18 @@ def generate_nps_report(records, insights):
         ("BACKGROUND", (0, 0), (-1, 0), NAVY),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_ALT]),
+        ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("ROUNDEDCORNERS", [6, 6, 6, 6]),
     ]))
     elements.append(rating_table)
 
     # ---- Segment breakdowns needing attention ----
     def breakdown_section(title, rows):
-        elements.append(Paragraph(title, section_style))
+        elements.append(Paragraph(f"<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;{title}", section_style))
 
         if not rows:
             elements.append(Paragraph("Not enough data yet.", body_style))
@@ -649,11 +707,15 @@ def generate_nps_report(records, insights):
         ]
         table = Table(data, colWidths=[70 * mm, 36 * mm, 36 * mm, 36 * mm])
         table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_ALT]),
+            ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("ROUNDEDCORNERS", [6, 6, 6, 6]),
         ]))
         elements.append(table)
 
@@ -662,7 +724,7 @@ def generate_nps_report(records, insights):
     breakdown_section("Batches Needing Attention (lowest NPS first)", insights["by_batch"])
 
     # ---- Learner concerns ----
-    elements.append(Paragraph("Recurring Themes in Learner Feedback", section_style))
+    elements.append(Paragraph("<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;Recurring Themes in Learner Feedback", section_style))
 
     if insights["concern_keywords"]:
         concern_text = ", ".join(
@@ -681,33 +743,36 @@ def generate_nps_report(records, insights):
         elements.append(Paragraph(f"<b>What learners praise most:</b> {praise_text}", body_style))
 
     # ---- Automated insights summary ----
-    elements.append(Paragraph("Automated Insights Summary", section_style))
+    elements.append(Paragraph("<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;Automated Insights Summary", section_style))
 
     summary_data = [[row["label"], row["value"]] for row in insights["automated_insights_table"]]
     summary_table = Table(summary_data, colWidths=[89 * mm, 89 * mm])
     summary_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f1f5f9")),
+        ("BACKGROUND", (0, 0), (0, -1), BG_ALT),
         ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
         ("FONTNAME", (1, 0), (1, -1), "Helvetica-Bold"),
         ("TEXTCOLOR", (1, 0), (1, -1), NAVY),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("ROUNDEDCORNERS", [6, 6, 6, 6]),
     ]))
     elements.append(summary_table)
     elements.append(Spacer(1, 4))
 
     # ---- Business recommendations ----
-    elements.append(Paragraph("Business Recommendations", section_style))
+    elements.append(Paragraph("<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;Business Recommendations", section_style))
 
     for rec in insights["recommendations"]:
         elements.append(Paragraph(f"&bull;&nbsp; <b>{rec['title']}.</b> {rec['text']}", bullet_style))
 
     # ---- Full response table ----
-    elements.append(Paragraph("All Responses", section_style))
+    elements.append(Paragraph("<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;All Responses", section_style))
 
     table_header = ["Learner", "Course", "Batch", "Mentor", "Score", "Segment"]
     table_rows = [table_header]
+    segments = []
 
     for r in records:
         score = r.nps_score
@@ -718,6 +783,7 @@ def generate_nps_report(records, insights):
         else:
             segment = "Detractor"
 
+        segments.append(segment)
         table_rows.append([
             r.learner_name, r.course_name, r.batch_name, r.mentor_name, str(score), segment,
         ])
@@ -733,19 +799,312 @@ def generate_nps_report(records, insights):
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_ALT]),
+        ("ALIGN", (4, 1), (4, -1), "CENTER"),
     ]
 
-    for i, r in enumerate(records, start=1):
+    for i, (r, segment) in enumerate(zip(records, segments), start=1):
         row_styles.append(("TEXTCOLOR", (5, i), (5, i), _segment_color(r.nps_score)))
         row_styles.append(("FONTNAME", (5, i), (5, i), "Helvetica-Bold"))
+        row_styles.append(("BACKGROUND", (5, i), (5, i), _SEGMENT_BG[segment]))
+        row_styles.append(("ALIGN", (5, i), (5, i), "CENTER"))
 
     response_table.setStyle(TableStyle(row_styles))
     elements.append(response_table)
 
-    doc.build(elements)
+    doc.build(elements, onFirstPage=_footer, onLaterPages=_footer)
+
+    return filename
+
+
+# =====================================================
+# Analytics Dashboard Report PDF
+# =====================================================
+
+def _analytics_footer(canvas_obj, doc_obj):
+    canvas_obj.saveState()
+    canvas_obj.setStrokeColor(BORDER)
+    canvas_obj.setLineWidth(0.5)
+    canvas_obj.line(16 * mm, 14 * mm, 194 * mm, 14 * mm)
+    canvas_obj.setFont("Helvetica", 8)
+    canvas_obj.setFillColor(colors.HexColor("#94a3b8"))
+    canvas_obj.drawCentredString(
+        105 * mm,
+        10 * mm,
+        f"Krish Naik Academy  ·  Analytics Report  ·  Page {doc_obj.page}",
+    )
+    canvas_obj.restoreState()
+
+
+def generate_analytics_report(data, filter_desc="All data"):
+    if not os.path.exists("pdfs"):
+        os.makedirs("pdfs")
+
+    filename = "pdfs/analytics_report.pdf"
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+
+    doc = SimpleDocTemplate(
+        filename,
+        pagesize=A4,
+        topMargin=0,
+        bottomMargin=22 * mm,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+    )
+
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        "AnTitleWhite", parent=styles["Normal"], textColor=colors.white, fontSize=18, fontName="Helvetica-Bold", leading=22,
+    )
+    subtitle_style = ParagraphStyle(
+        "AnSubtitleWhite", parent=styles["Normal"], textColor=YELLOW, fontSize=10, leading=13,
+    )
+    section_style = ParagraphStyle(
+        "AnSection", parent=styles["Heading2"], textColor=NAVY, fontSize=13, spaceBefore=16, spaceAfter=8,
+    )
+    section_note_style = ParagraphStyle(
+        "AnSectionNote", parent=styles["Normal"], textColor=colors.HexColor("#94a3b8"), fontSize=8.5, spaceAfter=8,
+    )
+    body_style = ParagraphStyle(
+        "AnBody", parent=styles["Normal"], textColor=SLATE, fontSize=10, leading=14,
+    )
+    kpi_label_style = ParagraphStyle(
+        "AnKpiLabel", parent=styles["Normal"], textColor=colors.HexColor("#94a3b8"), fontSize=7.5,
+        fontName="Helvetica-Bold", alignment=1, leading=10,
+    )
+    kpi_value_style = ParagraphStyle(
+        "AnKpiValue", parent=styles["Normal"], textColor=NAVY, fontSize=14, fontName="Helvetica-Bold", alignment=1,
+    )
+
+    def bullet(title):
+        return Paragraph(f"<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;{title}", section_style)
+
+    def kpi_grid(pairs, per_row=4):
+        rows = []
+        for i in range(0, len(pairs), per_row):
+            chunk = pairs[i:i + per_row]
+            labels = [Paragraph(lbl.upper(), kpi_label_style) for lbl, _ in chunk]
+            values = [Paragraph(str(val), kpi_value_style) for _, val in chunk]
+            while len(labels) < per_row:
+                labels.append("")
+                values.append("")
+            rows.append(labels)
+            rows.append(values)
+
+        col_w = (178 / per_row) * mm
+        table = Table(rows, colWidths=[col_w] * per_row)
+        style = [
+            ("BACKGROUND", (0, 0), (-1, -1), BG_ALT),
+            ("BOX", (0, 0), (-1, -1), 0.75, BORDER),
+            ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+        ]
+        for r in range(0, len(rows), 2):
+            style.append(("TOPPADDING", (0, r), (-1, r), 10))
+            style.append(("BOTTOMPADDING", (0, r), (-1, r), 2))
+            style.append(("TOPPADDING", (0, r + 1), (-1, r + 1), 2))
+            style.append(("BOTTOMPADDING", (0, r + 1), (-1, r + 1), 12))
+            if r > 0:
+                style.append(("LINEABOVE", (0, r), (-1, r), 0.5, BORDER))
+        table.setStyle(TableStyle(style))
+        return table
+
+    def data_table(headers, rows, col_widths, empty_message="No data yet."):
+        if not rows:
+            return Paragraph(empty_message, body_style)
+
+        header_cells = [Paragraph(h, ParagraphStyle("AnTH", parent=styles["Normal"], textColor=colors.white, fontSize=9, fontName="Helvetica-Bold")) for h in headers]
+        table_data = [header_cells] + rows
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_ALT]),
+            ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        return table
+
+    elements = []
+
+    # ---- Header ----
+    if os.path.exists(LOGO_PATH):
+        logo_cell = Image(LOGO_PATH, width=30 * mm, height=11.5 * mm)
+    else:
+        logo_cell = ""
+
+    header_text = Table(
+        [[Paragraph("Krish Naik Academy", title_style)],
+         [Paragraph(f"Analytics Report &nbsp;&bull;&nbsp; Generated {datetime.now().strftime('%d %b %Y')}", subtitle_style)],
+         [Paragraph(f"Scope: {filter_desc}", subtitle_style)]],
+        colWidths=[130 * mm],
+    )
+    header_text.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+
+    header = Table([[logo_cell, header_text]], colWidths=[38 * mm, 140 * mm])
+    header.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, 0), 6 * mm),
+        ("RIGHTPADDING", (0, 0), (0, 0), 2 * mm),
+        ("LEFTPADDING", (1, 0), (1, 0), 4 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 16),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+    ]))
+    elements.append(header)
+    elements.append(HRFlowable(width="100%", thickness=3, color=GOLD_LIGHT, spaceBefore=0, spaceAfter=18))
+
+    es = data["executive_summary"]
+    elements.append(bullet("Executive Operations Summary"))
+    elements.append(kpi_grid([
+        ("Sessions", es["total_sessions"]),
+        ("Batches", es["total_batches"]),
+        ("Mentors", es["total_mentors"]),
+        ("Learners", es["total_learners"]),
+        ("Completion Rate", f"{es['completion_rate']}%"),
+        ("Health Score", f"{es['health_score']}%"),
+    ]))
+    elements.append(Spacer(1, 10))
+
+    ss = data["session_summary"]
+    elements.append(bullet("Session Analytics"))
+    elements.append(kpi_grid([
+        ("Total Sessions", ss["total_sessions"]),
+        ("Completed", ss["completed_sessions"]),
+        ("Scheduled", ss["scheduled_sessions"]),
+        ("Cancelled", ss["cancelled_sessions"]),
+    ]))
+    elements.append(Spacer(1, 10))
+
+    ms = data["mentor_summary"]
+    elements.append(bullet("Mentor Analytics"))
+    elements.append(kpi_grid([
+        ("Total Mentors", ms["total_mentors"]),
+        ("Active", ms["active_mentors"]),
+        ("Inactive", ms["inactive_mentors"]),
+        ("Avg Hourly Rate", f"Rs {ms['average_hourly_rate']}"),
+    ]))
+    elements.append(Spacer(1, 10))
+
+    bs = data["batch_summary"]
+    elements.append(bullet("Batch Analytics"))
+    elements.append(kpi_grid([
+        ("Total Batches", bs["total_batches"]),
+        ("Completed", bs["completed_batches"]),
+        ("Ongoing", bs["ongoing_batches"]),
+        ("Delayed", bs["delayed_batches"]),
+        ("Avg Attendance", f"{bs['average_attendance']}%"),
+        ("Avg Completion", f"{bs['average_completion']}%"),
+        ("Avg Health", bs["average_health"]),
+    ]))
+    elements.append(Spacer(1, 10))
+
+    elements.append(bullet("Batch Performance"))
+    bp_rows = [
+        [b["batch_name"], b["mentor_name"], str(b.get("strength") or 0), f"{b.get('attendance_percentage') or 0}%", f"{b.get('completion_percentage') or 0}%", str(b.get("health_score") or 0), b.get("status") or "—"]
+        for b in data["batch_performance"]
+    ]
+    elements.append(data_table(
+        ["Batch", "Mentor", "Strength", "Attendance", "Completion", "Health", "Status"],
+        bp_rows,
+        [40 * mm, 32 * mm, 20 * mm, 24 * mm, 24 * mm, 18 * mm, 20 * mm],
+        "No batches match this scope.",
+    ))
+    elements.append(Spacer(1, 10))
+
+    ls = data["learner_summary"]
+    elements.append(bullet("Learner Analytics"))
+    elements.append(kpi_grid([
+        ("Total Learners", ls["total_learners"]),
+        ("Active", ls["active_learners"]),
+        ("Inactive", ls["inactive_learners"]),
+        ("Dropouts", ls["dropout_count"]),
+        ("Avg Completion", f"{ls['average_completion']}%"),
+    ], per_row=5))
+    elements.append(Spacer(1, 10))
+
+    os_ = data["operations_summary"]
+    elements.append(bullet("Operations Analytics"))
+    elements.append(kpi_grid([
+        ("Projects", os_["total_projects"]),
+        ("Total Sessions", os_["total_sessions"]),
+        ("Completed", os_["completed_sessions"]),
+        ("Cancelled", os_["cancelled_sessions"]),
+        ("SLA", f"{os_['average_sla']}%"),
+        ("Completion", f"{os_['average_completion']}%"),
+        ("Mentor Utilization", f"{os_['average_mentor_utilization']}%"),
+        ("Resource Utilization", f"{os_['average_resource_utilization']}%"),
+        ("Productivity", f"{os_['average_productivity']}%"),
+    ], per_row=3))
+    elements.append(Spacer(1, 10))
+
+    elements.append(bullet("At-Risk Batches"))
+    ar_rows = [
+        [b["batch_name"], b["mentor_name"], f"{b.get('attendance') or 0}%", f"{b.get('completion') or 0}%", str(b.get("health") or 0), b.get("status") or "—"]
+        for b in data["at_risk_batches"]
+    ]
+    elements.append(data_table(
+        ["Batch", "Mentor", "Attendance", "Completion", "Health", "Status"],
+        ar_rows,
+        [38 * mm, 34 * mm, 26 * mm, 26 * mm, 22 * mm, 32 * mm],
+        "No at-risk batches in this scope.",
+    ))
+    elements.append(Spacer(1, 10))
+
+    elements.append(bullet("Top Mentors Leaderboard"))
+    tm_rows = [
+        [m["mentor_name"], str(m["sessions"]), f"Rs {m['hourly_rate']}", f"Rs {m['revenue']}"]
+        for m in data["top_mentors"][:15]
+    ]
+    elements.append(data_table(
+        ["Mentor", "Sessions", "Hourly Rate", "Revenue"],
+        tm_rows,
+        [60 * mm, 40 * mm, 39 * mm, 39 * mm],
+        "No mentors match this scope.",
+    ))
+    elements.append(Spacer(1, 10))
+
+    elements.append(bullet("Top Batches Leaderboard"))
+    tb_rows = [
+        [b["batch_name"], b.get("course_name") or "—", b.get("mentor_name") or "—", str(b.get("strength") or 0), str(b["sessions"])]
+        for b in data["top_batches"][:15]
+    ]
+    elements.append(data_table(
+        ["Batch", "Course", "Mentor", "Strength", "Sessions"],
+        tb_rows,
+        [38 * mm, 38 * mm, 38 * mm, 32 * mm, 32 * mm],
+        "No batches match this scope.",
+    ))
+    elements.append(Spacer(1, 10))
+
+    ps = data.get("placement_summary")
+    if ps:
+        elements.append(bullet("Placement Analytics"))
+        elements.append(Paragraph("Sample/illustrative data — not yet linked to real placement records or this report's filters.", section_note_style))
+        elements.append(kpi_grid([
+            ("Eligible Students", ps["eligible_students"]),
+            ("Placed Students", ps["placed_students"]),
+            ("Placement Rate", f"{ps['placement_rate']}%"),
+            ("Interviews Scheduled", ps["interview_scheduled"]),
+            ("Offers Received", ps["offers_received"]),
+            ("Companies Hiring", ps["companies_hiring"]),
+            ("Average CTC", f"{ps['average_ctc']} LPA"),
+            ("Highest CTC", f"{ps['highest_ctc']} LPA"),
+        ]))
+
+    doc.build(elements, onFirstPage=_analytics_footer, onLaterPages=_analytics_footer)
 
     return filename
 

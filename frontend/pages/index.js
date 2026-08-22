@@ -85,7 +85,6 @@ export default function Home() {
             <QuickCard icon="📅" title="Sessions" link="/sessions" accent="#3b82f6" />
             <QuickCard icon="🎓" title="Batches" link="/batches" accent="#3b82f6" />
             <QuickCard icon="📈" title="Analytics" link="/analytics" accent="#3b82f6" />
-            <QuickCard icon="📑" title="Reports" link="/reports" accent="#3b82f6" />
             <QuickCard icon="💰" title="Invoices" link="/invoice-generator" accent="#3b82f6" />
             <QuickCard icon="⚙️" title="Settings" link="/settings" accent="#3b82f6" />
           </QuickNavGroup>

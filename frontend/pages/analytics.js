@@ -1,13 +1,16 @@
 import AnalyticsCard from "../components/AnalyticsCard";
 import SessionTrendChart from "../components/analytics/SessionTrendChart";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
-import RevenueTrendChart from "../components/analytics/RevenueTrendChart";
 import BatchHealthChart from "../components/analytics/BatchHealthChart";
 import OperationsKPI from "../components/analytics/OperationsKPI";
 import PlacementKPI from "../components/analytics/PlacementKPI";
 import PlacementStatusChart from "../components/analytics/PlacementStatusChart";
+
+const API = "http://127.0.0.1:8000";
+
+const EMPTY_FILTERS = { course_name: "", mentor_name: "", date_from: "", date_to: "" };
 
 const STATUS_COLORS = {
   Completed: { bg: "#dcfce7", color: "#15803d" },
@@ -18,6 +21,19 @@ const STATUS_COLORS = {
   "At Risk": { bg: "#fee2e2", color: "#b91c1c" },
   Cancelled: { bg: "#fee2e2", color: "#b91c1c" },
 };
+
+function unique(list) {
+  return [...new Set(list.filter(Boolean))].sort();
+}
+
+function buildQuery(filters, keys) {
+  const params = new URLSearchParams();
+  keys.forEach((key) => {
+    if (filters[key]) params.set(key, filters[key]);
+  });
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
 
 function StatusPill({ status }) {
   const s = STATUS_COLORS[status] || { bg: "#e2e8f0", color: "#475569" };
@@ -38,11 +54,12 @@ function StatusPill({ status }) {
   );
 }
 
-function Section({ icon, title, children, delay = 0 }) {
+function Section({ icon, title, children, delay = 0, badge }) {
   return (
     <div className="section" style={{ animationDelay: `${delay}s` }}>
       <h2 className="section-title">
         <span>{icon}</span> {title}
+        {badge && <span className="section-badge">{badge}</span>}
       </h2>
       {children}
     </div>
@@ -53,48 +70,47 @@ function Card({ children }) {
   return <div className="card">{children}</div>;
 }
 
+function FilterSelect({ label, value, options, onChange }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+      <label style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>{label}</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          border: "1px solid #e2e8f0",
+          borderRadius: "10px",
+          padding: "10px 12px",
+          fontSize: "14px",
+          minWidth: "180px",
+          background: "#f8fafc",
+          outline: "none",
+        }}
+      >
+        <option value="">All {label}s</option>
+        {options.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 export default function Analytics() {
   const [sessionData, setSessionData] = useState(null);
   const [mentorData, setMentorData] = useState(null);
   const [batchData, setBatchData] = useState(null);
-  const [revenueData, setRevenueData] = useState(null);
   const [topMentors, setTopMentors] = useState([]);
   const [topBatches, setTopBatches] = useState([]);
   const [sessionTrend, setSessionTrend] = useState([]);
-  const [revenueTrend, setRevenueTrend] = useState([]);
   const [placementStatus, setPlacementStatus] = useState([]);
-
-  const fetchSessionTrend = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/session-trend");
-      const data = await res.json();
-      setSessionTrend(data);
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
   const [batchHealthData, setBatchHealthData] = useState([]);
 
-  const fetchBatchHealthChart = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/batch-health-chart");
-      const data = await res.json();
-      setBatchHealthData(data);
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
-  const fetchPlacementStatus = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/placement-status");
-      const data = await res.json();
-      setPlacementStatus(data);
-    } catch (err) {
-      console.log(err);
-    }
-  };
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [filterOptions, setFilterOptions] = useState({ course_name: [], mentor_name: [] });
+  const hasActiveFilter = Object.values(filters).some(Boolean);
 
   const [operationsSummary, setOperationsSummary] = useState({
     total_projects: 0,
@@ -128,86 +144,6 @@ export default function Analytics() {
     average_completion: 0,
   });
 
-  const fetchBatchSummary = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/batch-analytics");
-      const data = await res.json();
-      setBatchSummary(data);
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
-  const fetchBatchPerformance = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/batch-performance");
-      const data = await res.json();
-      setBatchPerformance(data);
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
-  const fetchLearnerSummary = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/learner-analytics");
-      const data = await res.json();
-      setLearnerSummary(data);
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
-  const fetchPlacementSummary = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/placement-summary");
-      const data = await res.json();
-      setPlacementSummary(data);
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
-  const fetchExecutiveSummary = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/executive-summary");
-      const data = await res.json();
-      setExecutiveSummary(data);
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
-  const fetchAtRiskBatches = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/at-risk-batches");
-      const data = await res.json();
-      setAtRiskBatches(data);
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
-  const fetchOperationsSummary = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/operations-analytics");
-      const data = await res.json();
-      setOperationsSummary(data);
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
-  const fetchRevenueTrend = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/revenue-trend");
-      const data = await res.json();
-      setRevenueTrend(data);
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
   const [placementSummary, setPlacementSummary] = useState({
     eligible_students: 0,
     placed_students: 0,
@@ -225,52 +161,58 @@ export default function Analytics() {
     total_batches: 0,
     total_mentors: 0,
     total_learners: 0,
-    total_revenue: 0,
     active_issues: 0,
     health_score: 0,
   });
 
   const [batchPerformance, setBatchPerformance] = useState([]);
 
+  // ---- One-time fetches: not affected by filters (either global/sample data, or filter-option sources) ----
   useEffect(() => {
-    fetchLearnerSummary();
-    fetchBatchSummary();
-    fetchBatchPerformance();
-    fetchOperationsSummary();
-    fetchAtRiskBatches();
-    fetchSessionTrend();
-    fetchRevenueTrend();
-    fetchBatchHealthChart();
-    fetchExecutiveSummary();
-    fetchPlacementSummary();
-    fetchPlacementStatus();
+    fetch(`${API}/session-trend`).then((r) => r.json()).then(setSessionTrend).catch(() => {});
+    fetch(`${API}/batch-health-chart`).then((r) => r.json()).then(setBatchHealthData).catch(() => {});
+    fetch(`${API}/placement-summary`).then((r) => r.json()).then(setPlacementSummary).catch(() => {});
+    fetch(`${API}/placement-status`).then((r) => r.json()).then(setPlacementStatus).catch(() => {});
 
-    fetch("http://127.0.0.1:8000/dashboard/session-analytics")
-      .then((res) => res.json())
-      .then((data) => setSessionData(data));
-
-    fetch("http://127.0.0.1:8000/dashboard/mentor-analytics")
-      .then((res) => res.json())
-      .then((data) => setMentorData(data));
-
-    fetch("http://127.0.0.1:8000/dashboard/batch-analytics")
-      .then((res) => res.json())
-      .then((data) => setBatchData(data));
-
-    fetch("http://127.0.0.1:8000/dashboard/revenue-analytics")
-      .then((res) => res.json())
-      .then((data) => setRevenueData(data));
-
-    fetch("http://127.0.0.1:8000/dashboard/top-mentors")
-      .then((res) => res.json())
-      .then((data) => setTopMentors(data));
-
-    fetch("http://127.0.0.1:8000/dashboard/top-batches")
-      .then((res) => res.json())
-      .then((data) => setTopBatches(data));
+    fetch(`${API}/batches`)
+      .then((r) => r.json())
+      .then((data) => {
+        const all = Array.isArray(data) ? data : [];
+        setFilterOptions({
+          course_name: unique(all.map((b) => b.course_name)),
+          mentor_name: unique(all.map((b) => b.mentor_name)),
+        });
+      })
+      .catch(() => {});
   }, []);
 
-  if (!sessionData || !mentorData || !batchData || !revenueData) {
+  // ---- Filterable fetches: re-run whenever course/mentor/date filters change ----
+  useEffect(() => {
+    const cm = buildQuery(filters, ["course_name", "mentor_name"]);
+    const cmd = buildQuery(filters, ["course_name", "mentor_name", "date_from", "date_to"]);
+
+    fetch(`${API}/dashboard/session-analytics${cmd}`).then((r) => r.json()).then(setSessionData).catch(() => {});
+    fetch(`${API}/dashboard/mentor-analytics${cm}`).then((r) => r.json()).then(setMentorData).catch(() => {});
+    fetch(`${API}/dashboard/batch-analytics${cm}`).then((r) => r.json()).then(setBatchData).catch(() => {});
+    fetch(`${API}/dashboard/top-mentors${cm}`).then((r) => r.json()).then(setTopMentors).catch(() => {});
+    fetch(`${API}/dashboard/top-batches${cm}`).then((r) => r.json()).then(setTopBatches).catch(() => {});
+    fetch(`${API}/batch-analytics${cm}`).then((r) => r.json()).then(setBatchSummary).catch(() => {});
+    fetch(`${API}/batch-performance${cm}`).then((r) => r.json()).then(setBatchPerformance).catch(() => {});
+    fetch(`${API}/learner-analytics${cm}`).then((r) => r.json()).then(setLearnerSummary).catch(() => {});
+    fetch(`${API}/operations-analytics${cm}`).then((r) => r.json()).then(setOperationsSummary).catch(() => {});
+    fetch(`${API}/at-risk-batches${cm}`).then((r) => r.json()).then(setAtRiskBatches).catch(() => {});
+    fetch(`${API}/executive-summary${cmd}`).then((r) => r.json()).then(setExecutiveSummary).catch(() => {});
+  }, [filters]);
+
+  const handleFilterChange = (key, value) => setFilters((prev) => ({ ...prev, [key]: value }));
+  const clearFilters = () => setFilters(EMPTY_FILTERS);
+
+  const sessionCompletionRate = useMemo(() => {
+    if (!sessionData || !sessionData.total_sessions) return 0;
+    return Math.round((sessionData.completed_sessions / sessionData.total_sessions) * 100);
+  }, [sessionData]);
+
+  if (!sessionData || !mentorData || !batchData) {
     return (
       <ProtectedRoute>
         <>
@@ -330,7 +272,7 @@ export default function Analytics() {
               <div className="page-hero-eyebrow">Operations</div>
               <h1 className="page-hero-title">Analytics Dashboard</h1>
               <p className="page-hero-subtitle">
-                Live view of sessions, mentors, batches, revenue, and placements.
+                Live view of sessions, mentors, batches, and placements — filter by course, mentor, or date.
               </p>
             </div>
             <div className="page-hero-stat">
@@ -338,6 +280,73 @@ export default function Analytics() {
               <div className="page-hero-stat-label">Health Score</div>
             </div>
           </div>
+
+          {/* Filter bar */}
+          <div className="card filter-card">
+            <FilterSelect
+              label="Course"
+              value={filters.course_name}
+              options={filterOptions.course_name}
+              onChange={(v) => handleFilterChange("course_name", v)}
+            />
+            <FilterSelect
+              label="Mentor"
+              value={filters.mentor_name}
+              options={filterOptions.mentor_name}
+              onChange={(v) => handleFilterChange("mentor_name", v)}
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>Session Date From</label>
+              <input
+                type="date"
+                value={filters.date_from}
+                onChange={(e) => handleFilterChange("date_from", e.target.value)}
+                className="date-input"
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>Session Date To</label>
+              <input
+                type="date"
+                value={filters.date_to}
+                onChange={(e) => handleFilterChange("date_to", e.target.value)}
+                className="date-input"
+              />
+            </div>
+
+            {hasActiveFilter && (
+              <button onClick={clearFilters} className="btn-clear">
+                ✕ Clear Filters
+              </button>
+            )}
+
+            <div className="export-actions">
+              <a
+                href={`${API}/export-analytics${buildQuery(filters, ["course_name", "mentor_name", "date_from", "date_to"])}`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-export btn-export-excel"
+              >
+                ⬇ Export Excel
+              </a>
+              <a
+                href={`${API}/export-analytics-report${buildQuery(filters, ["course_name", "mentor_name", "date_from", "date_to"])}`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-export btn-export-pdf"
+              >
+                ⬇ Export PDF Report
+              </a>
+            </div>
+          </div>
+          {hasActiveFilter && (
+            <div className="filter-hint">
+              Filtering sessions, mentors, batches, operations, and learner metrics below (exports respect these
+              filters too). Placement Analytics and the trend charts (Session Trend, Batch Health) are
+              sample/illustrative data and are not yet wired to real records, so they always show all-time figures
+              regardless of this filter.
+            </div>
+          )}
 
           {/* Executive Summary */}
           <Section icon="🚀" title="Executive Operations Summary" delay={0}>
@@ -347,14 +356,14 @@ export default function Analytics() {
               <OperationsKPI title="Batches" value={executiveSummary.total_batches} color="#9333ea" />
               <OperationsKPI title="Mentors" value={executiveSummary.total_mentors} color="#ea580c" />
               <OperationsKPI title="Learners" value={executiveSummary.total_learners} color="#0891b2" />
-              <OperationsKPI title="Revenue" value={`₹${executiveSummary.total_revenue}`} color="#16a34a" />
+              <OperationsKPI title="Completion Rate" value={`${sessionCompletionRate}%`} color="#16a34a" />
               <OperationsKPI title="Active Issues" value={executiveSummary.active_issues} color="#dc2626" />
               <OperationsKPI title="Health Score" value={`${executiveSummary.health_score}%`} color="#059669" />
             </div>
           </Section>
 
           {/* Placement Analytics */}
-          <Section icon="💼" title="Placement Analytics" delay={0.05}>
+          <Section icon="💼" title="Placement Analytics" delay={0.05} badge="Sample data — not filterable yet">
             <Card>
               <div className="kpi-grid kpi-grid-4">
                 <PlacementKPI title="Eligible Students" value={placementSummary.eligible_students} color="#2563eb" />
@@ -370,7 +379,7 @@ export default function Analytics() {
           </Section>
 
           {/* Placement Status */}
-          <Section icon="📈" title="Placement Status Overview" delay={0.08}>
+          <Section icon="📈" title="Placement Status Overview" delay={0.08} badge="Sample data">
             <Card>
               <PlacementStatusChart data={placementStatus} />
             </Card>
@@ -452,7 +461,7 @@ export default function Analytics() {
                   </tbody>
                 </table>
                 {batchPerformance.length === 0 && (
-                  <div className="empty-state">No batch performance data yet.</div>
+                  <div className="empty-state">No batch performance data matches these filters.</div>
                 )}
               </div>
             </Card>
@@ -517,22 +526,9 @@ export default function Analytics() {
                   </tbody>
                 </table>
                 {atRiskBatches.length === 0 && (
-                  <div className="empty-state">✅ No at-risk batches right now.</div>
+                  <div className="empty-state">✅ No at-risk batches match these filters.</div>
                 )}
               </div>
-            </Card>
-          </Section>
-
-          {/* Revenue Analytics */}
-          <Section icon="💰" title="Revenue Analytics" delay={0.24}>
-            <div className="kpi-grid kpi-grid-4">
-              <AnalyticsCard title="Total Invoices" value={revenueData.total_invoices} color="#2563eb" />
-              <AnalyticsCard title="Total Revenue" value={`₹${revenueData.total_revenue}`} color="#16a34a" />
-              <AnalyticsCard title="Paid Amount" value={`₹${revenueData.paid_amount}`} color="#0891b2" />
-              <AnalyticsCard title="Pending Amount" value={`₹${revenueData.pending_amount}`} color="#dc2626" />
-            </div>
-            <Card>
-              <RevenueTrendChart data={revenueTrend} />
             </Card>
           </Section>
 
@@ -560,7 +556,7 @@ export default function Analytics() {
                     ))}
                   </tbody>
                 </table>
-                {topMentors.length === 0 && <div className="empty-state">No mentor data yet.</div>}
+                {topMentors.length === 0 && <div className="empty-state">No mentor data matches these filters.</div>}
               </div>
             </Card>
           </Section>
@@ -591,7 +587,7 @@ export default function Analytics() {
                     ))}
                   </tbody>
                 </table>
-                {topBatches.length === 0 && <div className="empty-state">No batch data yet.</div>}
+                {topBatches.length === 0 && <div className="empty-state">No batch data matches these filters.</div>}
               </div>
             </Card>
           </Section>
@@ -603,7 +599,7 @@ export default function Analytics() {
             overflow: hidden;
             border-radius: 18px;
             padding: 30px 32px;
-            margin-bottom: 28px;
+            margin-bottom: 24px;
             background: linear-gradient(120deg, #0f172a 0%, #1e293b 60%, #0f172a 100%);
             background-size: 200% 200%;
             animation: heroShift 12s ease infinite;
@@ -684,6 +680,95 @@ export default function Analytics() {
             letter-spacing: 0.04em;
           }
 
+          :global(.card) {
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 22px 24px;
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+            border: 1px solid #eef2f7;
+          }
+
+          .filter-card {
+            display: flex;
+            align-items: flex-end;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+          }
+
+          .date-input {
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 14px;
+            background: #f8fafc;
+            outline: none;
+          }
+
+          .btn-clear {
+            background: #f1f5f9;
+            color: #334155;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 10px 16px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+          }
+
+          .btn-clear:hover {
+            background: #e2e8f0;
+          }
+
+          .export-actions {
+            display: flex;
+            gap: 10px;
+            margin-left: auto;
+          }
+
+          .btn-export {
+            display: inline-block;
+            text-decoration: none;
+            border-radius: 10px;
+            padding: 10px 16px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+          }
+
+          .btn-export:hover {
+            transform: translateY(-1px);
+          }
+
+          .btn-export-excel {
+            background: #16a34a;
+            color: #fff;
+          }
+
+          .btn-export-excel:hover {
+            box-shadow: 0 8px 18px -8px rgba(22, 163, 74, 0.6);
+          }
+
+          .btn-export-pdf {
+            background: linear-gradient(120deg, #0f172a, #1e293b);
+            color: #facc15;
+          }
+
+          .btn-export-pdf:hover {
+            box-shadow: 0 8px 18px -8px rgba(15, 23, 42, 0.6);
+          }
+
+          .filter-hint {
+            background: #fffbeb;
+            color: #92400e;
+            font-size: 12.5px;
+            padding: 10px 16px;
+            border-radius: 10px;
+            margin-bottom: 24px;
+            line-height: 1.5;
+          }
+
           :global(.section) {
             margin-bottom: 30px;
             animation: fadeSlideUp 0.4s ease both;
@@ -696,6 +781,17 @@ export default function Analytics() {
             display: flex;
             align-items: center;
             gap: 8px;
+          }
+
+          :global(.section-badge) {
+            font-size: 10.5px;
+            font-weight: 700;
+            color: #94a3b8;
+            background: #f1f5f9;
+            padding: 3px 10px;
+            border-radius: 999px;
+            text-transform: none;
+            letter-spacing: 0;
           }
 
           .kpi-grid {
@@ -714,14 +810,6 @@ export default function Analytics() {
 
           .kpi-grid-5 {
             grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-          }
-
-          :global(.card) {
-            background: #ffffff;
-            border-radius: 16px;
-            padding: 22px 24px;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
-            border: 1px solid #eef2f7;
           }
 
           .table-wrap {

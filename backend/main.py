@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from fastapi.responses import FileResponse
 
 from fastapi import FastAPI, Depends, Form, File, UploadFile
+from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from models.operations import OperationsAnalytics
 
@@ -34,6 +35,7 @@ from resource_analytics import compute_resource_analytics, compute_mentor_perfor
 from resource_export import build_export_rows
 import os
 
+OPS_NOTIFICATION_EMAIL = os.getenv("OPS_NOTIFICATION_EMAIL")
 
 from database import SessionLocal
 from sqlalchemy.orm import Session
@@ -49,7 +51,7 @@ from schemas import NPSCreate
 from models.session_analytics import SessionAnalytics
 from database import engine
 from models.user import Base
-from pdf_generator import generate_invoice, generate_webinar_report, generate_nps_report
+from pdf_generator import generate_invoice, generate_webinar_report, generate_nps_report, generate_analytics_report
 from nps_insights import compute_nps_insights
 from models.invoice import Invoice
 from schemas import InvoiceCreate
@@ -594,27 +596,27 @@ def dashboard_overview(db: Session = Depends(get_db)):
         "active_mentors": active_mentors,
     }
 @app.get("/dashboard/session-analytics")
-def session_analytics(db: Session = Depends(get_db)):
+def session_analytics(
+    course_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    base_query = db.query(SessionModel)
+    if course_name:
+        base_query = base_query.filter(SessionModel.course_name == course_name)
+    if mentor_name:
+        base_query = base_query.filter(SessionModel.mentor_name == mentor_name)
+    if date_from:
+        base_query = base_query.filter(SessionModel.session_date >= date_from)
+    if date_to:
+        base_query = base_query.filter(SessionModel.session_date <= date_to)
 
-    total_sessions = db.query(SessionModel).count()
-
-    completed_sessions = (
-        db.query(SessionModel)
-        .filter(SessionModel.status == "Completed")
-        .count()
-    )
-
-    scheduled_sessions = (
-        db.query(SessionModel)
-        .filter(SessionModel.status == "Scheduled")
-        .count()
-    )
-
-    cancelled_sessions = (
-        db.query(SessionModel)
-        .filter(SessionModel.status == "Cancelled")
-        .count()
-    )
+    total_sessions = base_query.count()
+    completed_sessions = base_query.filter(SessionModel.status == "Completed").count()
+    scheduled_sessions = base_query.filter(SessionModel.status == "Scheduled").count()
+    cancelled_sessions = base_query.filter(SessionModel.status == "Cancelled").count()
 
     return {
         "total_sessions": total_sessions,
@@ -623,23 +625,27 @@ def session_analytics(db: Session = Depends(get_db)):
         "cancelled_sessions": cancelled_sessions
     }
 @app.get("/dashboard/mentor-analytics")
-def mentor_analytics(db: Session = Depends(get_db)):
+def mentor_analytics(
+    course_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(Mentor)
 
-    total_mentors = db.query(Mentor).count()
+    if course_name:
+        course_mentor_names = [
+            b.mentor_name for b in db.query(Batch).filter(Batch.course_name == course_name).all()
+            if b.mentor_name
+        ]
+        query = query.filter(Mentor.name.in_(course_mentor_names))
 
-    active_mentors = (
-        db.query(Mentor)
-        .filter(Mentor.status == "Active")
-        .count()
-    )
+    if mentor_name:
+        query = query.filter(Mentor.name == mentor_name)
 
-    inactive_mentors = (
-        db.query(Mentor)
-        .filter(Mentor.status == "Inactive")
-        .count()
-    )
-
-    mentors = db.query(Mentor).all()
+    total_mentors = query.count()
+    active_mentors = query.filter(Mentor.status == "Active").count()
+    inactive_mentors = query.filter(Mentor.status == "Inactive").count()
+    mentors = query.all()
 
     total_rate = 0
 
@@ -662,11 +668,20 @@ def mentor_analytics(db: Session = Depends(get_db)):
         "average_hourly_rate": round(average_hourly_rate, 2)
     }
 @app.get("/dashboard/batch-analytics")
-def batch_analytics(db: Session = Depends(get_db)):
+def batch_analytics(
+    course_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(Batch)
+    if course_name:
+        query = query.filter(Batch.course_name == course_name)
+    if mentor_name:
+        query = query.filter(Batch.mentor_name == mentor_name)
 
-    total_batches = db.query(Batch).count()
+    total_batches = query.count()
 
-    batches = db.query(Batch).all()
+    batches = query.all()
 
     total_strength = 0
 
@@ -721,19 +736,34 @@ def revenue_analytics(db: Session = Depends(get_db)):
     }
 @app.get("/dashboard/top-mentors")
 
-def top_mentors(db: Session = Depends(get_db)):
+def top_mentors(
+    course_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    mentor_query = db.query(Mentor)
 
-    mentors = db.query(Mentor).all()
+    if course_name:
+        course_mentor_names = [
+            b.mentor_name for b in db.query(Batch).filter(Batch.course_name == course_name).all()
+            if b.mentor_name
+        ]
+        mentor_query = mentor_query.filter(Mentor.name.in_(course_mentor_names))
+
+    if mentor_name:
+        mentor_query = mentor_query.filter(Mentor.name == mentor_name)
+
+    mentors = mentor_query.all()
 
     leaderboard = []
 
     for mentor in mentors:
 
-        session_count = (
-            db.query(SessionModel)
-            .filter(SessionModel.mentor_name == mentor.name)
-            .count()
-        )
+        session_query = db.query(SessionModel).filter(SessionModel.mentor_name == mentor.name)
+        if course_name:
+            session_query = session_query.filter(SessionModel.course_name == course_name)
+
+        session_count = session_query.count()
 
         try:
             rate = int(mentor.hourly_rate)
@@ -759,9 +789,18 @@ def top_mentors(db: Session = Depends(get_db)):
 
 
 @app.get("/dashboard/top-batches")
-def top_batches(db: Session = Depends(get_db)):
+def top_batches(
+    course_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(Batch)
+    if course_name:
+        query = query.filter(Batch.course_name == course_name)
+    if mentor_name:
+        query = query.filter(Batch.mentor_name == mentor_name)
 
-    batches = db.query(Batch).all()
+    batches = query.all()
 
     leaderboard = []
 
@@ -1759,11 +1798,17 @@ def poll_trend():
 
 
 @app.get("/batch-analytics")
-def batch_analytics():
+def batch_analytics(course_name: Optional[str] = None, mentor_name: Optional[str] = None):
 
     db = SessionLocal()
 
-    batches = db.query(Batch).all()
+    query = db.query(Batch)
+    if course_name:
+        query = query.filter(Batch.course_name == course_name)
+    if mentor_name:
+        query = query.filter(Batch.mentor_name == mentor_name)
+
+    batches = query.all()
 
     total_batches = len(batches)
 
@@ -1821,13 +1866,19 @@ def batch_analytics():
         "average_health": average_health,
     }
 @app.get("/batch-performance")
-def batch_performance():
+def batch_performance(course_name: Optional[str] = None, mentor_name: Optional[str] = None):
 
     db = SessionLocal()
 
     try:
 
-        batches = db.query(Batch).all()
+        query = db.query(Batch)
+        if course_name:
+            query = query.filter(Batch.course_name == course_name)
+        if mentor_name:
+            query = query.filter(Batch.mentor_name == mentor_name)
+
+        batches = query.all()
 
         data = []
 
@@ -1849,13 +1900,19 @@ def batch_performance():
         db.close()
 
 @app.get("/learner-analytics")
-def learner_analytics():
+def learner_analytics(course_name: Optional[str] = None, mentor_name: Optional[str] = None):
 
     db = SessionLocal()
 
     try:
 
-        batches = db.query(Batch).all()
+        query = db.query(Batch)
+        if course_name:
+            query = query.filter(Batch.course_name == course_name)
+        if mentor_name:
+            query = query.filter(Batch.mentor_name == mentor_name)
+
+        batches = query.all()
 
         total_learners = sum(b.strength or 0 for b in batches)
 
@@ -1887,13 +1944,23 @@ def learner_analytics():
         db.close()
 
 @app.get("/operations-analytics")
-def operations_analytics():
+def operations_analytics(course_name: Optional[str] = None, mentor_name: Optional[str] = None):
 
     db = SessionLocal()
 
     try:
 
-        operations = db.query(OperationsAnalytics).all()
+        query = db.query(OperationsAnalytics)
+        if course_name:
+            batch_names = [
+                b.batch_name for b in db.query(Batch).filter(Batch.course_name == course_name).all()
+                if b.batch_name
+            ]
+            query = query.filter(OperationsAnalytics.batch_name.in_(batch_names))
+        if mentor_name:
+            query = query.filter(OperationsAnalytics.mentor_name == mentor_name)
+
+        operations = query.all()
 
         total_projects = len(operations)
 
@@ -1959,17 +2026,19 @@ def operations_analytics():
         db.close()
 
 @app.get("/at-risk-batches")
-def at_risk_batches():
+def at_risk_batches(course_name: Optional[str] = None, mentor_name: Optional[str] = None):
 
     db = SessionLocal()
 
     try:
 
-        batches = (
-            db.query(Batch)
-            .filter(Batch.health_score < 70)
-            .all()
-        )
+        query = db.query(Batch).filter(Batch.health_score < 70)
+        if course_name:
+            query = query.filter(Batch.course_name == course_name)
+        if mentor_name:
+            query = query.filter(Batch.mentor_name == mentor_name)
+
+        batches = query.all()
 
         data = []
 
@@ -2087,27 +2156,51 @@ def batch_health_chart():
     return data
 
 @app.get("/executive-summary")
-def executive_summary():
+def executive_summary(
+    course_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
 
     db = SessionLocal()
 
     try:
 
-        # Projects
+        # Projects (not yet tracked per-course; shown as an overall figure)
         total_projects = 12
 
         # Sessions
-        total_sessions = db.query(SessionModel).count()
+        session_query = db.query(SessionModel)
+        if course_name:
+            session_query = session_query.filter(SessionModel.course_name == course_name)
+        if mentor_name:
+            session_query = session_query.filter(SessionModel.mentor_name == mentor_name)
+        if date_from:
+            session_query = session_query.filter(SessionModel.session_date >= date_from)
+        if date_to:
+            session_query = session_query.filter(SessionModel.session_date <= date_to)
+        total_sessions = session_query.count()
 
         # Batches
-        total_batches = db.query(Batch).count()
+        batch_query = db.query(Batch)
+        if course_name:
+            batch_query = batch_query.filter(Batch.course_name == course_name)
+        if mentor_name:
+            batch_query = batch_query.filter(Batch.mentor_name == mentor_name)
+        batches = batch_query.all()
+        total_batches = len(batches)
 
         # Mentors
-        total_mentors = db.query(Mentor).count()
+        mentor_query = db.query(Mentor)
+        if mentor_name:
+            mentor_query = mentor_query.filter(Mentor.name == mentor_name)
+        elif course_name:
+            course_mentor_names = [b.mentor_name for b in batches if b.mentor_name]
+            mentor_query = mentor_query.filter(Mentor.name.in_(course_mentor_names))
+        total_mentors = mentor_query.count()
 
         # Learners
-        batches = db.query(Batch).all()
-
         total_learners = sum(
             batch.strength or 0
             for batch in batches
@@ -2174,6 +2267,271 @@ def placement_status():
             "students": 68,
         }
     ]
+
+
+def _gather_analytics_data(db, course_name=None, mentor_name=None, date_from=None, date_to=None):
+    """Builds every section of the Analytics Dashboard as plain dicts/lists,
+    applying the same course/mentor/date filters as the individual endpoints.
+    Shared by the Excel and PDF export endpoints so both stay in sync with
+    what's actually shown on screen."""
+
+    # Sessions
+    session_query = db.query(SessionModel)
+    if course_name:
+        session_query = session_query.filter(SessionModel.course_name == course_name)
+    if mentor_name:
+        session_query = session_query.filter(SessionModel.mentor_name == mentor_name)
+    if date_from:
+        session_query = session_query.filter(SessionModel.session_date >= date_from)
+    if date_to:
+        session_query = session_query.filter(SessionModel.session_date <= date_to)
+
+    total_sessions = session_query.count()
+    completed_sessions = session_query.filter(SessionModel.status == "Completed").count()
+    scheduled_sessions = session_query.filter(SessionModel.status == "Scheduled").count()
+    cancelled_sessions = session_query.filter(SessionModel.status == "Cancelled").count()
+
+    session_summary = {
+        "total_sessions": total_sessions,
+        "completed_sessions": completed_sessions,
+        "scheduled_sessions": scheduled_sessions,
+        "cancelled_sessions": cancelled_sessions,
+    }
+
+    # Batches
+    batch_query = db.query(Batch)
+    if course_name:
+        batch_query = batch_query.filter(Batch.course_name == course_name)
+    if mentor_name:
+        batch_query = batch_query.filter(Batch.mentor_name == mentor_name)
+    batches = batch_query.all()
+    total_batches = len(batches)
+
+    batch_summary = {
+        "total_batches": total_batches,
+        "completed_batches": len([b for b in batches if b.status == "Completed"]),
+        "ongoing_batches": len([b for b in batches if b.status == "Ongoing"]),
+        "delayed_batches": len([b for b in batches if b.status == "Delayed"]),
+        "average_attendance": round(sum(b.attendance_percentage or 0 for b in batches) / total_batches, 2) if total_batches else 0,
+        "average_completion": round(sum(b.completion_percentage or 0 for b in batches) / total_batches, 2) if total_batches else 0,
+        "average_health": round(sum(b.health_score or 0 for b in batches) / total_batches, 2) if total_batches else 0,
+    }
+
+    batch_performance = [
+        {
+            "batch_name": b.batch_name,
+            "mentor_name": b.mentor_name,
+            "strength": b.strength,
+            "attendance_percentage": b.attendance_percentage,
+            "completion_percentage": b.completion_percentage,
+            "health_score": b.health_score,
+            "status": b.status,
+        }
+        for b in batches
+    ]
+
+    at_risk_batches = [
+        {
+            "batch_name": b.batch_name,
+            "mentor_name": b.mentor_name,
+            "attendance": b.attendance_percentage,
+            "completion": b.completion_percentage,
+            "health": b.health_score,
+            "status": b.status,
+        }
+        for b in batches
+        if (b.health_score or 0) < 70
+    ]
+
+    # Mentors
+    mentor_query = db.query(Mentor)
+    if mentor_name:
+        mentor_query = mentor_query.filter(Mentor.name == mentor_name)
+    elif course_name:
+        course_mentor_names = [b.mentor_name for b in batches if b.mentor_name]
+        mentor_query = mentor_query.filter(Mentor.name.in_(course_mentor_names))
+    mentors = mentor_query.all()
+    total_mentors = len(mentors)
+
+    total_rate = 0
+    for m in mentors:
+        try:
+            total_rate += int(m.hourly_rate)
+        except Exception:
+            pass
+
+    mentor_summary = {
+        "total_mentors": total_mentors,
+        "active_mentors": len([m for m in mentors if m.status == "Active"]),
+        "inactive_mentors": len([m for m in mentors if m.status == "Inactive"]),
+        "average_hourly_rate": round(total_rate / total_mentors, 2) if total_mentors else 0,
+    }
+
+    top_mentors = []
+    for m in mentors:
+        sq = db.query(SessionModel).filter(SessionModel.mentor_name == m.name)
+        if course_name:
+            sq = sq.filter(SessionModel.course_name == course_name)
+        session_count = sq.count()
+        try:
+            rate = int(m.hourly_rate)
+        except Exception:
+            rate = 0
+        top_mentors.append({
+            "mentor_name": m.name,
+            "sessions": session_count,
+            "hourly_rate": rate,
+            "revenue": session_count * 2 * rate,
+        })
+    top_mentors.sort(key=lambda x: x["revenue"], reverse=True)
+
+    top_batches = []
+    for b in batches:
+        session_count = db.query(SessionModel).filter(SessionModel.batch_name == b.batch_name).count()
+        top_batches.append({
+            "batch_name": b.batch_name,
+            "course_name": b.course_name,
+            "mentor_name": b.mentor_name,
+            "strength": b.strength,
+            "sessions": session_count,
+        })
+    top_batches.sort(key=lambda x: x["sessions"], reverse=True)
+
+    # Learners
+    learner_summary = {
+        "total_learners": sum(b.strength or 0 for b in batches),
+        "active_learners": sum(b.active_learners or 0 for b in batches),
+        "inactive_learners": sum(b.inactive_learners or 0 for b in batches),
+        "dropout_count": sum(b.dropout_count or 0 for b in batches),
+        "average_completion": round(sum(b.course_completion or 0 for b in batches) / total_batches, 2) if total_batches else 0,
+    }
+
+    # Operations
+    ops_query = db.query(OperationsAnalytics)
+    if course_name:
+        batch_names = [b.batch_name for b in batches if b.batch_name]
+        ops_query = ops_query.filter(OperationsAnalytics.batch_name.in_(batch_names))
+    if mentor_name:
+        ops_query = ops_query.filter(OperationsAnalytics.mentor_name == mentor_name)
+    operations = ops_query.all()
+    ops_count = len(operations)
+
+    operations_summary = {
+        "total_projects": ops_count,
+        "total_sessions": sum(o.total_sessions or 0 for o in operations),
+        "completed_sessions": sum(o.completed_sessions or 0 for o in operations),
+        "cancelled_sessions": sum(o.cancelled_sessions or 0 for o in operations),
+        "average_sla": round(sum(o.sla_percentage or 0 for o in operations) / ops_count, 2) if ops_count else 0,
+        "average_completion": round(sum(o.completion_percentage or 0 for o in operations) / ops_count, 2) if ops_count else 0,
+        "average_mentor_utilization": round(sum(o.mentor_utilization or 0 for o in operations) / ops_count, 2) if ops_count else 0,
+        "average_resource_utilization": round(sum(o.resource_utilization or 0 for o in operations) / ops_count, 2) if ops_count else 0,
+        "average_productivity": round(sum(o.productivity_score or 0 for o in operations) / ops_count, 2) if ops_count else 0,
+    }
+
+    # Executive summary (total_projects/active_issues/health_score are not
+    # yet tracked per-course — shown as overall figures, same as the UI)
+    completion_rate = round((completed_sessions / total_sessions) * 100, 1) if total_sessions else 0
+
+    executive_summary = {
+        "total_projects": 12,
+        "total_sessions": total_sessions,
+        "total_batches": total_batches,
+        "total_mentors": total_mentors,
+        "total_learners": learner_summary["total_learners"],
+        "completion_rate": completion_rate,
+        "active_issues": 3,
+        "health_score": 92,
+    }
+
+    return {
+        "executive_summary": executive_summary,
+        "session_summary": session_summary,
+        "mentor_summary": mentor_summary,
+        "batch_summary": batch_summary,
+        "batch_performance": batch_performance,
+        "at_risk_batches": at_risk_batches,
+        "learner_summary": learner_summary,
+        "operations_summary": operations_summary,
+        "top_mentors": top_mentors,
+        "top_batches": top_batches,
+        "placement_summary": placement_summary(),
+    }
+
+
+def _filter_description(course_name, mentor_name, date_from, date_to):
+    parts = []
+    if course_name:
+        parts.append(f"Course = {course_name}")
+    if mentor_name:
+        parts.append(f"Mentor = {mentor_name}")
+    if date_from:
+        parts.append(f"From {date_from}")
+    if date_to:
+        parts.append(f"To {date_to}")
+    return "; ".join(parts) if parts else "All data (no filters applied)"
+
+
+@app.get("/export-analytics")
+def export_analytics(
+    course_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    db = SessionLocal()
+
+    try:
+        data = _gather_analytics_data(db, course_name, mentor_name, date_from, date_to)
+
+        file_name = "analytics_report.xlsx"
+
+        with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
+            pd.DataFrame([data["executive_summary"]]).to_excel(writer, sheet_name="Executive Summary", index=False)
+            pd.DataFrame([data["session_summary"]]).to_excel(writer, sheet_name="Session Analytics", index=False)
+            pd.DataFrame([data["mentor_summary"]]).to_excel(writer, sheet_name="Mentor Analytics", index=False)
+            pd.DataFrame([data["batch_summary"]]).to_excel(writer, sheet_name="Batch Analytics", index=False)
+            pd.DataFrame(data["batch_performance"]).to_excel(writer, sheet_name="Batch Performance", index=False)
+            pd.DataFrame([data["learner_summary"]]).to_excel(writer, sheet_name="Learner Analytics", index=False)
+            pd.DataFrame([data["operations_summary"]]).to_excel(writer, sheet_name="Operations Analytics", index=False)
+            pd.DataFrame(data["at_risk_batches"]).to_excel(writer, sheet_name="At-Risk Batches", index=False)
+            pd.DataFrame(data["top_mentors"]).to_excel(writer, sheet_name="Top Mentors", index=False)
+            pd.DataFrame(data["top_batches"]).to_excel(writer, sheet_name="Top Batches", index=False)
+            pd.DataFrame([data["placement_summary"]]).to_excel(writer, sheet_name="Placement (sample data)", index=False)
+
+        return FileResponse(
+            file_name,
+            filename=file_name,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    finally:
+        db.close()
+
+
+@app.get("/export-analytics-report")
+def export_analytics_report(
+    course_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    db = SessionLocal()
+
+    try:
+        data = _gather_analytics_data(db, course_name, mentor_name, date_from, date_to)
+        filter_desc = _filter_description(course_name, mentor_name, date_from, date_to)
+
+        pdf_path = generate_analytics_report(data, filter_desc)
+
+        return FileResponse(
+            path=pdf_path,
+            filename="Analytics_Report.pdf",
+            media_type="application/pdf",
+        )
+
+    finally:
+        db.close()
+
 
 from sqlalchemy import func
 from models.zoom_analytics import ZoomAnalytics
@@ -2776,13 +3134,11 @@ def create_resource(
             mentor_id=mentor_id,
         )
 
-        ops_email = get_settings(db).ops_notification_email
-
-        if ops_email:
+        if OPS_NOTIFICATION_EMAIL:
             ops_subject, ops_body = ops_notification_email(new_resource)
             _send_resource_email(
                 db,
-                ops_email,
+                OPS_NOTIFICATION_EMAIL,
                 "Operations Notification",
                 ops_subject,
                 ops_body,
@@ -3384,63 +3740,17 @@ def download_lms_package(session_id: int, user_id: str = None):
 # ----------------------------------------------------------
 
 @app.get("/resource-scheduler/status")
-def resource_scheduler_status():
-    db = SessionLocal()
-
-    try:
-        return {
-            "enabled": get_settings(db).reminder_scheduler_enabled,
-            "interval_hours": REMINDER_INTERVAL_HOURS,
-        }
-
-    finally:
-        db.close()
+def resource_scheduler_status(db: Session = Depends(get_db)):
+    settings = get_settings(db)
+    return {
+        "enabled": settings.reminder_scheduler_enabled,
+        "interval_hours": REMINDER_INTERVAL_HOURS,
+    }
 
 
 @app.post("/resource-scheduler/run")
 def resource_scheduler_run(dry_run: bool = True):
-    return run_reminder_check(dry_run=dry_run, respect_toggle=False)
-
-
-# ----------------------------------------------------------
-# App Settings
-# ----------------------------------------------------------
-
-@app.get("/settings")
-def get_app_settings():
-    db = SessionLocal()
-
-    try:
-        return settings_to_dict(get_settings(db))
-
-    finally:
-        db.close()
-
-
-@app.put("/settings")
-def update_app_settings(data: AppSettingsUpdate):
-    db = SessionLocal()
-
-    try:
-        settings = get_settings(db)
-
-        for field, value in data.model_dump(exclude_unset=True).items():
-            setattr(settings, field, value)
-
-        settings.updated_at = datetime.utcnow()
-        db.commit()
-        db.refresh(settings)
-
-        _log_audit(
-            db,
-            "Settings Updated",
-            details=str(data.model_dump(exclude_unset=True)),
-        )
-
-        return settings_to_dict(settings)
-
-    finally:
-        db.close()
+    return run_reminder_check(dry_run=dry_run)
 
 
 # ----------------------------------------------------------

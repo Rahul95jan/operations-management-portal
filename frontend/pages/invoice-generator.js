@@ -64,6 +64,358 @@ function PaymentBadge({ status }) {
   );
 }
 
+function InvoicePreviewModal({ invoice, mode, confirming, onClose, onConfirm, onSendEmail }) {
+  const isView = mode === "view";
+  const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const amountNum = Number(invoice.total_amount) || 0;
+
+  return (
+    <div className="preview-overlay" onClick={onClose}>
+      <div className="preview-card" onClick={(e) => e.stopPropagation()}>
+        <button className="preview-close" onClick={onClose} title="Close">
+          ✕
+        </button>
+
+        <div className="preview-header">
+          <div className="preview-brand">KRISH NAIK ACADEMY</div>
+          <div className="preview-doc-title">INVOICE</div>
+          {invoice.invoice_number ? (
+            <div className="preview-doc-number">{invoice.invoice_number}</div>
+          ) : (
+            <div className="preview-doc-number preview-doc-number-draft">DRAFT — NOT YET GENERATED</div>
+          )}
+        </div>
+
+        <div className="preview-body">
+          {!isView && (
+            <div className="preview-banner">
+              👁 This is a preview. Nothing has been saved yet — confirm below to generate the invoice.
+            </div>
+          )}
+
+          <div className="preview-meta-grid">
+            <div>
+              <div className="preview-meta-label">Bill To</div>
+              <div className="preview-meta-value">{invoice.mentor_name || "—"}</div>
+              {invoice.mentor_email && <div className="preview-meta-sub">{invoice.mentor_email}</div>}
+            </div>
+            <div>
+              <div className="preview-meta-label">Batch</div>
+              <div className="preview-meta-value">{invoice.batch_name || "—"}</div>
+            </div>
+            <div>
+              <div className="preview-meta-label">Month</div>
+              <div className="preview-meta-value">{invoice.month || "—"}</div>
+            </div>
+            <div>
+              <div className="preview-meta-label">Date</div>
+              <div className="preview-meta-value">{today}</div>
+            </div>
+          </div>
+
+          <table className="preview-table">
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th>Sessions</th>
+                <th>Hours</th>
+                <th>Rate</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Mentoring — {invoice.batch_name || "—"} ({invoice.month || "—"})
+                </td>
+                <td>{invoice.total_sessions}</td>
+                <td>{invoice.total_hours}</td>
+                <td>₹{invoice.hourly_rate}</td>
+                <td>₹ {amountNum.toLocaleString("en-IN")}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div className="preview-total-row">
+            <span>Total Amount</span>
+            <span className="preview-total-value">₹ {amountNum.toLocaleString("en-IN")}</span>
+          </div>
+
+          <div className="preview-status-row">
+            <PaymentBadge status={invoice.payment_status || "Pending"} />
+          </div>
+        </div>
+
+        <div className="preview-footer">
+          {isView ? (
+            <>
+              {invoice.id && (
+                <a
+                  href={`http://127.0.0.1:8000/download-invoice/${invoice.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-ghost"
+                >
+                  📥 Download PDF
+                </a>
+              )}
+              {invoice.id && (
+                <button className="btn btn-primary" onClick={() => onSendEmail(invoice.id)}>
+                  📧 Send Email
+                </button>
+              )}
+              <button className="btn btn-ghost" onClick={onClose}>
+                Close
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="btn btn-ghost" onClick={onClose}>
+                ✏️ Keep Editing
+              </button>
+              <button className="btn btn-primary" onClick={onConfirm} disabled={confirming}>
+                {confirming ? "Generating..." : "✅ Confirm & Generate Invoice"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      <style jsx>{`
+        .preview-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(15, 23, 42, 0.6);
+          backdrop-filter: blur(2px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+          padding: 24px;
+          animation: overlayIn 0.15s ease;
+        }
+
+        .preview-card {
+          background: #fff;
+          border-radius: 16px;
+          width: 100%;
+          max-width: 560px;
+          max-height: 90vh;
+          overflow-y: auto;
+          position: relative;
+          box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.4);
+          animation: cardIn 0.2s ease;
+        }
+
+        .preview-close {
+          position: absolute;
+          top: 14px;
+          right: 14px;
+          background: rgba(255, 255, 255, 0.15);
+          color: #fff;
+          border: none;
+          width: 28px;
+          height: 28px;
+          border-radius: 50%;
+          cursor: pointer;
+          font-size: 14px;
+          z-index: 2;
+        }
+
+        .preview-close:hover {
+          background: rgba(255, 255, 255, 0.28);
+        }
+
+        .preview-header {
+          background: linear-gradient(120deg, #0f172a, #1e293b);
+          padding: 26px 28px;
+          border-radius: 16px 16px 0 0;
+          text-align: center;
+        }
+
+        .preview-brand {
+          color: #f8fafc;
+          font-weight: 800;
+          font-size: 16px;
+          letter-spacing: 0.04em;
+        }
+
+        .preview-doc-title {
+          color: #fbbf24;
+          font-weight: 800;
+          font-size: 26px;
+          margin-top: 6px;
+          letter-spacing: 0.06em;
+        }
+
+        .preview-doc-number {
+          color: #94a3b8;
+          font-size: 12px;
+          margin-top: 6px;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+        }
+
+        .preview-doc-number-draft {
+          color: #f59e0b;
+        }
+
+        .preview-body {
+          padding: 24px 28px;
+        }
+
+        .preview-banner {
+          background: #fffbeb;
+          color: #92400e;
+          font-size: 12.5px;
+          font-weight: 600;
+          padding: 10px 14px;
+          border-radius: 8px;
+          margin-bottom: 20px;
+        }
+
+        .preview-meta-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 16px;
+          margin-bottom: 22px;
+        }
+
+        .preview-meta-label {
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+          color: #94a3b8;
+          margin-bottom: 4px;
+        }
+
+        .preview-meta-value {
+          font-size: 14px;
+          font-weight: 700;
+          color: #1e293b;
+        }
+
+        .preview-meta-sub {
+          font-size: 12px;
+          color: #64748b;
+          margin-top: 2px;
+        }
+
+        .preview-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 13px;
+          margin-bottom: 16px;
+        }
+
+        .preview-table th {
+          text-align: left;
+          font-size: 10.5px;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+          color: #94a3b8;
+          font-weight: 700;
+          padding: 8px 6px;
+          border-bottom: 2px solid #f1f5f9;
+        }
+
+        .preview-table td {
+          padding: 10px 6px;
+          border-bottom: 1px solid #f1f5f9;
+          color: #1e293b;
+        }
+
+        .preview-total-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background: #fffbeb;
+          padding: 12px 16px;
+          border-radius: 10px;
+          font-weight: 700;
+          color: #92400e;
+          margin-bottom: 16px;
+        }
+
+        .preview-total-value {
+          font-size: 18px;
+          color: #b45309;
+        }
+
+        .preview-status-row {
+          display: flex;
+          justify-content: flex-end;
+        }
+
+        .preview-footer {
+          display: flex;
+          justify-content: flex-end;
+          gap: 10px;
+          padding: 18px 28px;
+          border-top: 1px solid #f1f5f9;
+          flex-wrap: wrap;
+        }
+
+        :global(.preview-footer .btn) {
+          border: none;
+          border-radius: 10px;
+          padding: 11px 18px;
+          font-size: 13.5px;
+          font-weight: 700;
+          cursor: pointer;
+          text-decoration: none;
+          display: inline-block;
+          transition: all 0.15s ease;
+        }
+
+        :global(.preview-footer .btn:disabled) {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        :global(.preview-footer .btn-primary) {
+          background: linear-gradient(120deg, #f59e0b, #fbbf24);
+          color: #0f172a;
+        }
+
+        :global(.preview-footer .btn-primary:hover:not(:disabled)) {
+          transform: translateY(-1px);
+        }
+
+        :global(.preview-footer .btn-ghost) {
+          background: #f1f5f9;
+          color: #475569;
+        }
+
+        :global(.preview-footer .btn-ghost:hover) {
+          background: #e2e8f0;
+        }
+
+        @keyframes overlayIn {
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
+        }
+
+        @keyframes cardIn {
+          from {
+            opacity: 0;
+            transform: translateY(12px) scale(0.98);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 export default function InvoiceGenerator() {
   const [mentorName, setMentorName] = useState("");
   const [mentorEmail, setMentorEmail] = useState("");
@@ -138,6 +490,12 @@ export default function InvoiceGenerator() {
   });
 
   const [editId, setEditId] = useState(null);
+
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewMode, setPreviewMode] = useState("confirm"); // "confirm" | "view"
+  const [previewData, setPreviewData] = useState(null);
+  const [confirming, setConfirming] = useState(false);
+
   useEffect(() => {
     fetchMentors();
     fetchInvoices();
@@ -342,6 +700,47 @@ export default function InvoiceGenerator() {
     }
   };
 
+  const openFormPreview = () => {
+    if (!mentorName || !batchName || !month || !sessions || !hours) {
+      alert("Please fill all fields");
+      return;
+    }
+
+    setPreviewData({
+      mentor_name: mentorName,
+      mentor_email: mentorEmail,
+      batch_name: batchName,
+      month,
+      total_sessions: sessions,
+      total_hours: hours,
+      hourly_rate: rate,
+      total_amount: amount,
+      payment_status: "Paid",
+      invoice_number: null,
+      id: editId,
+    });
+    setPreviewMode("confirm");
+    setPreviewOpen(true);
+  };
+
+  const openHistoryPreview = (invoice) => {
+    setPreviewData(invoice);
+    setPreviewMode("view");
+    setPreviewOpen(true);
+  };
+
+  const closePreview = () => setPreviewOpen(false);
+
+  const confirmAndGenerate = async () => {
+    setConfirming(true);
+    try {
+      await saveInvoice();
+    } finally {
+      setConfirming(false);
+      setPreviewOpen(false);
+    }
+  };
+
   return (
     <ProtectedRoute>
       <>
@@ -428,8 +827,8 @@ export default function InvoiceGenerator() {
             </div>
 
             <div style={{ marginTop: "22px", display: "flex", gap: "12px" }}>
-              <button className="btn btn-primary" onClick={saveInvoice} disabled={loading}>
-                {loading ? "Saving..." : editId ? "Update Invoice" : "Generate Invoice"}
+              <button className="btn btn-primary" onClick={openFormPreview} disabled={loading}>
+                {loading ? "Saving..." : editId ? "👁 Preview & Update" : "👁 Preview & Generate"}
               </button>
 
               {editId && (
@@ -554,6 +953,9 @@ export default function InvoiceGenerator() {
                           <span onClick={() => deleteInvoice(invoice.id)} title="Delete Invoice" className="action-icon action-danger">
                             🗑️
                           </span>
+                          <span onClick={() => openHistoryPreview(invoice)} title="Preview Invoice" className="action-icon">
+                            👁️
+                          </span>
                           <span onClick={() => sendInvoiceEmail(invoice.id)} title="Send Invoice Email" className="action-icon action-primary">
                             📧
                           </span>
@@ -597,6 +999,17 @@ export default function InvoiceGenerator() {
             )}
           </div>
         </div>
+
+        {previewOpen && previewData && (
+          <InvoicePreviewModal
+            invoice={previewData}
+            mode={previewMode}
+            confirming={confirming}
+            onClose={closePreview}
+            onConfirm={confirmAndGenerate}
+            onSendEmail={sendInvoiceEmail}
+          />
+        )}
 
         <style jsx>{`
           .page-hero {

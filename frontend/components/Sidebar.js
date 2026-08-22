@@ -2,6 +2,25 @@ import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/router";
+import {
+  Home,
+  Calendar,
+  Users,
+  GraduationCap,
+  BarChart3,
+  Receipt,
+  ClipboardList,
+  PieChart,
+  Video,
+  Package,
+  ListChecks,
+  Clock,
+  TrendingUp,
+  Award,
+  Settings as SettingsIcon,
+  LogOut,
+  ChevronDown,
+} from "lucide-react";
 
 export default function Sidebar() {
   const router = useRouter();
@@ -34,48 +53,51 @@ export default function Sidebar() {
         </div>
 
         <ul className="nav-list">
-          <NavItem href="/" icon="🏠" label="Home" active={isActive("/")} />
+          <NavItem href="/" icon={Home} label="Home" active={isActive("/")} />
 
           <NavGroupLabel>Operations</NavGroupLabel>
-          <NavItem href="/sessions" icon="📅" label="Sessions" active={isActive("/sessions")} />
-          <NavItem href="/mentors" icon="👨‍🏫" label="Mentors" active={isActive("/mentors")} />
-          <NavItem href="/batches" icon="🎓" label="Batches" active={isActive("/batches")} />
-          <NavItem href="/analytics" icon="📈" label="Analytics" active={isActive("/analytics")} />
-          <NavItem href="/reports" icon="📑" label="Reports" active={isActive("/reports")} />
-          <NavItem href="/invoice-generator" icon="💰" label="Invoice Generator" active={isActive("/invoice-generator")} />
+          <NavItem href="/sessions" icon={Calendar} label="Sessions" active={isActive("/sessions")} />
+          <NavItem href="/mentors" icon={Users} label="Mentors" active={isActive("/mentors")} />
+          <NavItem href="/batches" icon={GraduationCap} label="Batches" active={isActive("/batches")} />
+          <NavItem href="/analytics" icon={BarChart3} label="Analytics" active={isActive("/analytics")} />
+          <NavItem href="/invoice-generator" icon={Receipt} label="Invoice Generator" active={isActive("/invoice-generator")} />
 
           <NavGroupLabel>Learner Feedback</NavGroupLabel>
-          <NavItem href="/nps" icon="📝" label="NPS Form" active={isActive("/nps")} />
-          <NavItem href="/nps/analytics" icon="📊" label="NPS Analytics" active={isActive("/nps/analytics")} />
-          <NavItem href="/zoom-analytics" icon="📹" label="Zoom Analytics" active={isActive("/zoom-analytics")} />
+          <NavItem href="/nps" icon={ClipboardList} label="NPS Form" active={isActive("/nps")} />
+          <NavItem href="/nps/analytics" icon={PieChart} label="NPS Analytics" active={isActive("/nps/analytics")} />
+          <NavItem href="/zoom-analytics" icon={Video} label="Zoom Analytics" active={isActive("/zoom-analytics")} />
 
           <NavGroupLabel>Resource Portal</NavGroupLabel>
           <li className={`nav-item ${resourcesGroupActive ? "nav-item-parent-active" : ""}`}>
             <div className="nav-parent-row" onClick={() => setResourcesOpen((prev) => !prev)}>
               <Link href="/resources" className="nav-link nav-link-parent">
-                <span className="nav-icon">📦</span>
+                <span className="nav-icon">
+                  <Package size={16} strokeWidth={2} />
+                </span>
                 <span className="nav-label">Resource Portal</span>
               </Link>
-              <span className={`nav-chevron ${resourcesOpen ? "nav-chevron-open" : ""}`}>▾</span>
+              <span className={`nav-chevron ${resourcesOpen ? "nav-chevron-open" : ""}`}>
+                <ChevronDown size={14} strokeWidth={2.5} />
+              </span>
             </div>
 
             <div className={`nav-submenu ${resourcesOpen ? "nav-submenu-open" : ""}`}>
               <ul className="nav-sublist">
-                <SubNavItem href="/resources/tracking" icon="📋" label="Resource Tracking" active={isActive("/resources/tracking")} />
-                <SubNavItem href="/resources/pending" icon="⏳" label="Pending Resources" active={isActive("/resources/pending")} />
-                <SubNavItem href="/resource-analytics" icon="📈" label="Resource Analytics" active={isActive("/resource-analytics")} />
-                <SubNavItem href="/resource-analytics/mentors" icon="👨‍🏫" label="Mentor Performance" active={isActive("/resource-analytics/mentors")} />
+                <SubNavItem href="/resources/tracking" icon={ListChecks} label="Resource Tracking" active={isActive("/resources/tracking")} />
+                <SubNavItem href="/resources/pending" icon={Clock} label="Pending Resources" active={isActive("/resources/pending")} />
+                <SubNavItem href="/resource-analytics" icon={TrendingUp} label="Resource Analytics" active={isActive("/resource-analytics")} />
+                <SubNavItem href="/resource-analytics/mentors" icon={Award} label="Mentor Performance" active={isActive("/resource-analytics/mentors")} />
               </ul>
             </div>
           </li>
 
-          <NavItem href="/settings" icon="⚙️" label="Settings" active={isActive("/settings")} />
+          <NavItem href="/settings" icon={SettingsIcon} label="Settings" active={isActive("/settings")} />
         </ul>
       </div>
 
       <div className="sidebar-footer">
         <button onClick={logout} className="logout-btn">
-          <span>🚪</span> Logout
+          <LogOut size={16} strokeWidth={2.2} /> Logout
         </button>
       </div>
 
@@ -164,7 +186,7 @@ export default function Sidebar() {
           text-decoration: none;
           font-size: 14px;
           font-weight: 600;
-          padding: 10px 12px;
+          padding: 8px 12px;
           border-radius: 10px;
           position: relative;
           transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
@@ -174,6 +196,11 @@ export default function Sidebar() {
           background: rgba(255, 255, 255, 0.06);
           color: #f8fafc;
           transform: translateX(2px);
+        }
+
+        :global(.nav-link:hover .nav-icon) {
+          background: rgba(255, 255, 255, 0.1);
+          color: #f8fafc;
         }
 
         :global(.nav-link-active) {
@@ -194,11 +221,22 @@ export default function Sidebar() {
           box-shadow: 0 0 8px 1px rgba(251, 191, 36, 0.6);
         }
 
+        :global(.nav-link-active .nav-icon) {
+          background: rgba(251, 191, 36, 0.16);
+          color: #fbbf24;
+        }
+
         :global(.nav-icon) {
-          font-size: 16px;
-          width: 20px;
-          text-align: center;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 30px;
+          height: 30px;
+          border-radius: 9px;
+          background: rgba(255, 255, 255, 0.05);
+          color: #94a3b8;
           flex-shrink: 0;
+          transition: background 0.15s ease, color 0.15s ease;
         }
 
         :global(.nav-label) {
@@ -242,11 +280,17 @@ export default function Sidebar() {
           color: #fbbf24;
         }
 
+        .nav-item-parent-active :global(.nav-icon) {
+          background: rgba(251, 191, 36, 0.16);
+          color: #fbbf24;
+        }
+
         .nav-chevron {
-          font-size: 11px;
+          display: flex;
+          align-items: center;
           color: #64748b;
-          transition: transform 0.2s ease;
-          margin-right: 12px;
+          transition: transform 0.2s ease, color 0.2s ease;
+          margin-right: 14px;
           flex-shrink: 0;
         }
 
@@ -280,7 +324,7 @@ export default function Sidebar() {
           text-decoration: none;
           font-size: 13px;
           font-weight: 600;
-          padding: 8px 10px;
+          padding: 7px 10px;
           border-radius: 8px;
           margin-bottom: 2px;
           transition: background 0.15s ease, color 0.15s ease;
@@ -294,6 +338,11 @@ export default function Sidebar() {
         :global(.nav-sublink-active) {
           color: #fbbf24;
           background: rgba(245, 158, 11, 0.1);
+        }
+
+        :global(.nav-sublink svg) {
+          flex-shrink: 0;
+          opacity: 0.85;
         }
 
         .sidebar-footer {
@@ -336,22 +385,25 @@ export default function Sidebar() {
   );
 }
 
-function NavItem({ href, icon, label, active }) {
+function NavItem({ href, icon: Icon, label, active }) {
   return (
     <li className="nav-item">
       <Link href={href} className={`nav-link ${active ? "nav-link-active" : ""}`}>
-        <span className="nav-icon">{icon}</span>
+        <span className="nav-icon">
+          <Icon size={16} strokeWidth={2} />
+        </span>
         <span className="nav-label">{label}</span>
       </Link>
     </li>
   );
 }
 
-function SubNavItem({ href, icon, label, active }) {
+function SubNavItem({ href, icon: Icon, label, active }) {
   return (
     <li>
       <Link href={href} className={`nav-sublink ${active ? "nav-sublink-active" : ""}`}>
-        <span>{icon}</span> {label}
+        <Icon size={14} strokeWidth={2} />
+        {label}
       </Link>
     </li>
   );

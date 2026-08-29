@@ -187,6 +187,7 @@ def list_pending_requirements(db):
             "course_name": session.course_name if session else None,
             "resource_name": r.resource_name,
             "resource_type": r.resource_type,
+            "resource_category": r.resource_category,
             "status": r.status,
             "due_at": r.due_at,
             "delay_hours": delay_hours,

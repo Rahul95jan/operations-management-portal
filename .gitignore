@@ -9,6 +9,7 @@ node_modules/
 backend/uploads/
 backend/pdfs/
 *.xlsx
+*.csv
 backend/error.txt
 backend/mentor.py
 backend/package-lock.json

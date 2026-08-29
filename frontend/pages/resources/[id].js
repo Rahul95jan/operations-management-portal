@@ -5,6 +5,7 @@ import ProtectedRoute from "../../components/ProtectedRoute";
 import StatusBadge from "../../components/resources/StatusBadge";
 import ResourceActions from "../../components/resources/ResourceActions";
 import { typeConfig } from "../../components/resources/resourceTypes";
+import { categoryConfig } from "../../components/resources/resourceCategories";
 
 const API = "http://127.0.0.1:8000";
 
@@ -139,6 +140,7 @@ export default function ResourceDetailPage() {
                       <div>
                         <div style={{ fontWeight: 600 }}>{req.resource_name}</div>
                         <div style={{ fontSize: "12px", color: "#94a3b8" }}>
+                          {categoryConfig(req.resource_category)?.label && `${categoryConfig(req.resource_category).label} · `}
                           {req.due_at ? `Due ${formatDateTime(req.due_at)}` : "No deadline set"}
                         </div>
                       </div>
@@ -162,6 +164,7 @@ export default function ResourceDetailPage() {
                       <div>
                         <div style={{ fontWeight: 600 }}>{r.resource_title}</div>
                         <div style={{ fontSize: "12px", color: "#94a3b8" }}>
+                          {categoryConfig(r.resource_category)?.label && `${categoryConfig(r.resource_category).label} · `}
                           {typeConfig(r.resource_type)?.label || r.resource_type}
                           {r.file_size ? ` · ${(r.file_size / 1024).toFixed(1)} KB` : ""}
                           {" · Submitted "}{formatDateTime(r.submitted_at)}

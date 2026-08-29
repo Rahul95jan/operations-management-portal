@@ -3,6 +3,7 @@ import Link from "next/link";
 import Sidebar from "../../components/Sidebar";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import StatusBadge from "../../components/resources/StatusBadge";
+import { categoryConfig } from "../../components/resources/resourceCategories";
 
 const API = "http://127.0.0.1:8000";
 
@@ -123,7 +124,7 @@ export default function PendingResourcesPage() {
                 <table className="styled-table" style={{ minWidth: "1000px" }}>
                   <thead>
                     <tr>
-                      {["Mentor", "Session", "Batch", "Resource", "Status", "Due Date", "Delay", "Reminders", "Last Reminder", "Actions"].map((h) => (
+                      {["Mentor", "Session", "Batch", "Category", "Resource", "Status", "Due Date", "Delay", "Reminders", "Last Reminder", "Actions"].map((h) => (
                         <th key={h}>{h}</th>
                       ))}
                     </tr>
@@ -134,6 +135,7 @@ export default function PendingResourcesPage() {
                         <td className="strong">{r.mentor_name}</td>
                         <td>{r.session_topic}</td>
                         <td>{r.batch_name}</td>
+                        <td className="muted">{categoryConfig(r.resource_category)?.label || "—"}</td>
                         <td>{r.resource_name}</td>
                         <td>
                           <StatusBadge status={r.status} />

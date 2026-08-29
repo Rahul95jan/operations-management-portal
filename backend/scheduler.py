@@ -13,26 +13,35 @@ _scheduler = None
 
 def run_reminder_check(dry_run=False, respect_toggle=True):
     """Finds Overdue requirements due for a reminder and sends one each
-    (respecting the daily cap enforced inside _send_reminder_for_requirement).
+    (respecting the reminder_interval_hours gate enforced inside
+    _send_reminder_for_requirement, via next_reminder_at).
     dry_run=True reports what WOULD happen without sending anything.
     respect_toggle=True (the background job) no-ops entirely if the Settings
-    "Reminder Scheduler" toggle is off; the manual /resource-scheduler/run
-    endpoint passes False so Operations can still trigger a check on demand."""
+    "Reminder Scheduler" toggle is off, or if it's outside the configured
+    reminder time-of-day window; the manual /resource-scheduler/run endpoint
+    passes False so Operations can always trigger a check on demand."""
     from database import SessionLocal
     from models.resource_requirement import ResourceRequirement
     from resource_tracking import refresh_requirement_status
     from app_settings import get_settings
+    from resource_scheduling import is_within_reminder_window
     from main import _send_reminder_for_requirement
 
     db = SessionLocal()
     result = {"checked": 0, "reminded": 0, "candidates": [], "skipped": [], "errors": []}
 
     try:
-        if respect_toggle and not get_settings(db).reminder_scheduler_enabled:
+        settings = get_settings(db)
+
+        if respect_toggle and not settings.reminder_scheduler_enabled:
             result["scheduler_disabled"] = True
             return result
 
         now = datetime.utcnow()
+
+        if respect_toggle and not is_within_reminder_window(now, settings):
+            result["outside_window"] = True
+            return result
 
         requirements = (
             db.query(ResourceRequirement)

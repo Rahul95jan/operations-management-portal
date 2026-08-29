@@ -1,4 +1,5 @@
 import { RESOURCE_TYPES, typeConfig } from "./resourceTypes";
+import { RESOURCE_CATEGORIES } from "./resourceCategories";
 
 export default function ResourceRow({ row, index, onChange, onRemove, canRemove }) {
   const config = typeConfig(row.resource_type);
@@ -41,6 +42,22 @@ export default function ResourceRow({ row, index, onChange, onRemove, canRemove 
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px", marginBottom: "14px" }}>
         <div>
+          <label style={labelStyle}>Resource Category</label>
+          <select
+            value={row.resource_category || ""}
+            onChange={(e) => onChange("resource_category", e.target.value)}
+            style={inputStyle}
+          >
+            <option value="">Select category...</option>
+            {RESOURCE_CATEGORIES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.icon} {c.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
           <label style={labelStyle}>Resource Type</label>
           <select
             value={row.resource_type}
@@ -55,17 +72,17 @@ export default function ResourceRow({ row, index, onChange, onRemove, canRemove 
             ))}
           </select>
         </div>
+      </div>
 
-        <div>
-          <label style={labelStyle}>Resource Title</label>
-          <input
-            type="text"
-            value={row.resource_title}
-            onChange={(e) => onChange("resource_title", e.target.value)}
-            placeholder="e.g. RAG Session Slides"
-            style={inputStyle}
-          />
-        </div>
+      <div style={{ marginBottom: "14px" }}>
+        <label style={labelStyle}>Resource Title</label>
+        <input
+          type="text"
+          value={row.resource_title}
+          onChange={(e) => onChange("resource_title", e.target.value)}
+          placeholder="e.g. RAG Session Slides"
+          style={inputStyle}
+        />
       </div>
 
       {(showUrl || showFile) && (

@@ -10,9 +10,10 @@ def _format_dt(value):
     return value.strftime("%d %b %Y, %I:%M %p")
 
 
-def initial_request_email(session, requirements):
+def initial_request_email(session, requirements, submission_url=None):
     resource_lines = "\n".join(f"- {r.resource_name}" for r in requirements)
     due_at = next((r.due_at for r in requirements if r.due_at), None)
+    link = submission_url or f"{PORTAL_URL}/resources"
 
     subject = f"Resource Submission Required – {session.topic}"
     body = f"""Hi {session.mentor_name},
@@ -27,8 +28,8 @@ Required resources:
 Deadline:
 {_format_dt(due_at)}
 
-Please submit the resources through the Operations Management Portal:
-{PORTAL_URL}/resources
+Please submit the resources here:
+{link}
 
 Regards,
 Operations Team
@@ -36,46 +37,31 @@ Operations Team
     return subject, body
 
 
-def reminder_email(session, pending_requirements, is_final=False):
+def reminder_email(session, pending_requirements, submission_url=None, is_final=False):
     pending_lines = "\n".join(f"- {r.resource_name}" for r in pending_requirements)
     due_at = next((r.due_at for r in pending_requirements if r.due_at), None)
+    link = submission_url or f"{PORTAL_URL}/resources"
 
-    delay_text = "Not yet overdue"
-    if due_at:
-        delay_hours = max(0, round((datetime.utcnow() - due_at).total_seconds() / 3600, 1))
-        delay_text = f"{delay_hours} hours" if delay_hours > 0 else "Due now"
-
-    label = "Final Reminder" if is_final else "Reminder"
-    subject = f"{label}: Resource Submission Pending – {session.topic}"
+    label = "Reminder: Session Resource Submission Pending"
+    if is_final:
+        label = "Final Reminder: Session Resource Submission Pending"
+    subject = f"{label} – {session.topic}"
 
     body = f"""Hi {session.mentor_name},
 
-This is a reminder that the resources for:
+The resource submission for the following session is still pending:
 
-Session:
-{session.topic}
+Batch: {session.batch_name}
+Session: {session.topic}
+Session Date: {session.session_date}
 
-Batch:
-{session.batch_name}
-
-Session Date:
-{session.session_date}
-
-are still pending.
-
-Please upload/share the required resources as soon as possible.
+Please submit the required resource at the earliest.
 
 Pending Resources:
 {pending_lines}
 
-Original Deadline:
-{_format_dt(due_at)}
-
-Current Delay:
-{delay_text}
-
-Please complete the submission at the earliest:
-{PORTAL_URL}/resources
+[Submit Resource]
+{link}
 
 Regards,
 Operations Team
@@ -84,20 +70,16 @@ Operations Team
 
 
 def confirmation_email(resource):
-    subject = f"Resource Received – {resource.session_topic or resource.resource_title}"
+    subject = "Thank You for Uploading the Session Resources"
     body = f"""Hi {resource.mentor_name},
 
-We have successfully received your resource submission for:
+Thank you for submitting the resources for:
 
-{resource.session_topic or resource.resource_title}
+Batch: {resource.batch_name}
+Session: {resource.session_topic}
+Session Date: {resource.session_date or "Not set"}
 
-Submitted At:
-{_format_dt(resource.submitted_at)}
-
-Resource:
-{resource.resource_title}
-
-Thank you.
+Your resource submission has been successfully recorded.
 
 Regards,
 Operations Team

@@ -23,6 +23,7 @@ const COLUMNS = [
 export default function MentorPerformancePage() {
   const [mentors, setMentors] = useState(null);
   const [heatmap, setHeatmap] = useState(null);
+  const [atRisk, setAtRisk] = useState(null);
 
   useEffect(() => {
     fetch(`${API}/resource-analytics/mentors`)
@@ -34,6 +35,11 @@ export default function MentorPerformancePage() {
       .then((res) => res.json())
       .then(setHeatmap)
       .catch(() => setHeatmap(null));
+
+    fetch(`${API}/resource-analytics/at-risk-mentors`)
+      .then((res) => res.json())
+      .then((data) => setAtRisk(Array.isArray(data) ? data : []))
+      .catch(() => setAtRisk([]));
   }, []);
 
   const avgCompliance = useMemo(() => {
@@ -53,6 +59,43 @@ export default function MentorPerformancePage() {
             subtitle="Worst performers first — Compliance Score = On-Time Submissions ÷ Total Required × 100"
             stat={avgCompliance !== null ? { value: `${avgCompliance}%`, label: "Avg Compliance" } : null}
           />
+
+          {atRisk && atRisk.length > 0 && (
+            <div className="card risk-card">
+              <h2 className="card-title">⚠️ At-Risk Mentors</h2>
+              <p className="card-subtitle">
+                Compliance classified Needs Improvement or Critical — missing resources, high delay, or heavy reminder load.
+              </p>
+              <div className="table-wrap">
+                <table className="styled-table" style={{ minWidth: "700px" }}>
+                  <thead>
+                    <tr>
+                      <th>Mentor</th>
+                      <th>No Submission</th>
+                      <th>Avg Delay</th>
+                      <th>Reminders</th>
+                      <th>Score</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {atRisk.map((m) => (
+                      <tr key={m.mentor_name}>
+                        <td className="strong">{m.mentor_name}</td>
+                        <td>{m.pending}</td>
+                        <td className="muted">{m.avg_delay_hours} hrs</td>
+                        <td>{m.reminder_count}</td>
+                        <td className="strong">{m.compliance_score}%</td>
+                        <td>
+                          <ComplianceBadge classification={m.classification} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           <div className="card table-card">
             {mentors === null ? (
@@ -116,6 +159,11 @@ export default function MentorPerformancePage() {
 
           .table-card {
             padding: 20px;
+          }
+
+          .risk-card {
+            padding: 20px;
+            border-left: 4px solid #ef4444;
           }
 
           .card-title {

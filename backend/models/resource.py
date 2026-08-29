@@ -16,9 +16,11 @@ class Resource(Base):
     batch_name = Column(String, nullable=True)
     course_name = Column(String, nullable=True)
     session_topic = Column(String, nullable=True)
+    session_date = Column(String, nullable=True)
 
     # Resource details
     resource_type = Column(String, nullable=False)     # github, notion, google_drive, pdf, ppt, ...
+    resource_category = Column(String, nullable=True)  # session_notes, code_notebook, assignment, ...
     resource_title = Column(String, nullable=False)
     resource_url = Column(String, nullable=True)
     file_path = Column(String, nullable=True)

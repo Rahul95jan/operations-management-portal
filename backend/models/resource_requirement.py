@@ -13,6 +13,7 @@ class ResourceRequirement(Base):
     mentor_name = Column(String, nullable=True)
 
     resource_type = Column(String, nullable=False)      # github, notes, pdf, recording, assignment, ...
+    resource_category = Column(String, nullable=True)   # session_notes, code_notebook, assignment, ...
     resource_name = Column(String, nullable=False)       # human label, e.g. "GitHub Code"
 
     is_required = Column(Boolean, default=True)

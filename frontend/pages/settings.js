@@ -43,6 +43,11 @@ export default function Settings() {
         reminder_scheduler_enabled: form.reminder_scheduler_enabled,
         max_reminders_before_final: Number(form.max_reminders_before_final),
         resource_default_deadline_hours: Number(form.resource_default_deadline_hours),
+        reminder_interval_hours: Number(form.reminder_interval_hours),
+        reminder_window_start_hour: Number(form.reminder_window_start_hour),
+        reminder_window_end_hour: Number(form.reminder_window_end_hour),
+        reminder_timezone: form.reminder_timezone,
+        weekend_deadline_enabled: form.weekend_deadline_enabled,
       };
 
       const res = await fetch(`${API}/settings`, {
@@ -126,10 +131,10 @@ export default function Settings() {
                 delay={0.05}
               >
                 <ToggleRow
-                  label="Enable automatic daily reminders"
+                  label="Enable automatic reminders"
                   checked={form.reminder_scheduler_enabled}
                   onChange={(v) => update("reminder_scheduler_enabled", v)}
-                  warning={form.reminder_scheduler_enabled ? "This will start emailing mentors with overdue resources automatically, once per day per requirement, with no further confirmation." : null}
+                  warning={form.reminder_scheduler_enabled ? `This will start emailing mentors with overdue resources automatically, every ${form.reminder_interval_hours || 2}h per requirement (within the reminder window below), with no further confirmation.` : null}
                 />
 
                 <Field label={'Reminders before escalating to "Final Reminder"'}>
@@ -143,9 +148,59 @@ export default function Settings() {
                   />
                 </Field>
 
+                <Field label="Reminder interval (hours)" hint="How often an overdue requirement can be re-reminded. This is the real per-requirement cadence — live, no restart needed.">
+                  <input
+                    type="number"
+                    min="0.5"
+                    step="0.5"
+                    value={form.reminder_interval_hours}
+                    onChange={(e) => update("reminder_interval_hours", e.target.value)}
+                    className="styled-input"
+                    style={{ ...inputStyle, maxWidth: "120px" }}
+                  />
+                </Field>
+
+                <div style={{ display: "flex", gap: "18px" }}>
+                  <Field label="Reminder window start (hour, 0-23)">
+                    <input
+                      type="number"
+                      min="0"
+                      max="23"
+                      value={form.reminder_window_start_hour}
+                      onChange={(e) => update("reminder_window_start_hour", e.target.value)}
+                      className="styled-input"
+                      style={{ ...inputStyle, maxWidth: "120px" }}
+                    />
+                  </Field>
+                  <Field label="Reminder window end (hour, 0-23)">
+                    <input
+                      type="number"
+                      min="0"
+                      max="23"
+                      value={form.reminder_window_end_hour}
+                      onChange={(e) => update("reminder_window_end_hour", e.target.value)}
+                      className="styled-input"
+                      style={{ ...inputStyle, maxWidth: "120px" }}
+                    />
+                  </Field>
+                </div>
+
+                <Field label="Timezone" hint="IANA timezone used for the reminder window and the weekend deadline rule below.">
+                  <input
+                    type="text"
+                    value={form.reminder_timezone || ""}
+                    onChange={(e) => update("reminder_timezone", e.target.value)}
+                    placeholder="Asia/Kolkata"
+                    className="styled-input"
+                    style={{ ...inputStyle, maxWidth: "220px" }}
+                  />
+                </Field>
+
                 {schedulerStatus && (
                   <p className="hint-text">
-                    Background check runs every {schedulerStatus.interval_hours}h (set via <code>RESOURCE_REMINDER_INTERVAL_HOURS</code> — needs a server restart to change).
+                    Note: this is different from the background check's own tick, which runs every {schedulerStatus.interval_hours}h
+                    (set via <code>RESOURCE_REMINDER_INTERVAL_HOURS</code> — needs a server restart to change). The reminder interval
+                    above controls whether any given requirement is actually due for a resend when that tick runs.
                   </p>
                 )}
               </Section>
@@ -166,6 +221,16 @@ export default function Settings() {
                     style={{ ...inputStyle, maxWidth: "120px" }}
                   />
                 </Field>
+
+                <ToggleRow
+                  label="Weekend sessions due first-half Monday"
+                  checked={form.weekend_deadline_enabled}
+                  onChange={(v) => update("weekend_deadline_enabled", v)}
+                />
+                <p className="hint-text">
+                  When on, Saturday/Sunday sessions get a due date on the following Monday at the reminder window's start hour,
+                  instead of the flat default-deadline offset above.
+                </p>
               </Section>
 
               <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>

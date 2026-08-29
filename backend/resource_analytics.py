@@ -85,6 +85,13 @@ def compute_mentor_performance(db):
     return rows
 
 
+def compute_at_risk_mentors(db):
+    """Mentors whose compliance classification is Needs Improvement or Critical.
+    Reuses compute_mentor_performance's formula/classification as-is — no new
+    scoring logic. Already sorted worst-first."""
+    return [r for r in compute_mentor_performance(db) if r["classification"] in ("Critical", "Needs Improvement")]
+
+
 def compute_mentor_heatmap(db, weeks=4):
     active = [r for r in _refresh_active_requirements(db) if r.due_at]
 

@@ -7,6 +7,7 @@ import SubmittedResourcesList from "../../components/resources/SubmittedResource
 
 function emptyRow() {
   return {
+    resource_category: "",
     resource_type: "",
     resource_title: "",
     resource_url: "",
@@ -103,7 +104,9 @@ export default function ResourcesPage() {
         body.append("batch_name", selectedSession.batch_name || "");
         body.append("course_name", selectedSession.course_name || "");
         body.append("session_topic", selectedSession.topic || "");
+        body.append("session_date", selectedSession.session_date || "");
         body.append("resource_type", row.resource_type);
+        if (row.resource_category) body.append("resource_category", row.resource_category);
         body.append("resource_title", row.resource_title);
         if (row.resource_url) body.append("resource_url", row.resource_url);
         if (row.description) body.append("description", row.description);

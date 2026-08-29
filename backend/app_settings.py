@@ -19,5 +19,10 @@ def settings_to_dict(s):
         "reminder_scheduler_enabled": s.reminder_scheduler_enabled,
         "max_reminders_before_final": s.max_reminders_before_final,
         "resource_default_deadline_hours": s.resource_default_deadline_hours,
+        "reminder_interval_hours": s.reminder_interval_hours,
+        "reminder_window_start_hour": s.reminder_window_start_hour,
+        "reminder_window_end_hour": s.reminder_window_end_hour,
+        "reminder_timezone": s.reminder_timezone,
+        "weekend_deadline_enabled": s.weekend_deadline_enabled,
         "updated_at": s.updated_at,
     }

@@ -47,6 +47,7 @@ def build_export_rows(db):
             "Course": session.course_name if session else "",
             "Batch": session.batch_name if session else "",
             "Resource Type": r.resource_type,
+            "Category": r.resource_category or "",
             "Resource Title": res.resource_title if res else r.resource_name,
             "Status": r.status,
             "Required": "Yes" if r.is_required else "No",

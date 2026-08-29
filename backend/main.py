@@ -31,8 +31,16 @@ from models.resource_email_log import ResourceEmailLog
 from resource_emails import initial_request_email, reminder_email, confirmation_email, ops_notification_email
 from email_service import send_email as send_generic_email
 from scheduler import start_scheduler, stop_scheduler, run_reminder_check, REMINDER_INTERVAL_HOURS
-from resource_analytics import compute_resource_analytics, compute_mentor_performance, compute_mentor_heatmap
+from resource_analytics import (
+    compute_resource_analytics,
+    compute_mentor_performance,
+    compute_mentor_heatmap,
+    compute_at_risk_mentors,
+)
 from resource_export import build_export_rows
+from resource_tokens import get_or_create_session_token, get_session_by_token, submission_url
+from resource_scheduling import compute_due_at
+from resource_defaults import DEFAULT_REQUIREMENTS
 import os
 
 OPS_NOTIFICATION_EMAIL = os.getenv("OPS_NOTIFICATION_EMAIL")
@@ -161,6 +169,9 @@ def create_session(session: SessionCreate):
     db.commit()
     db.refresh(new_session)
 
+    if new_session.status == "Completed":
+        _ensure_default_requirements(db, new_session)
+
     db.close()
 
     return {
@@ -191,6 +202,8 @@ def update_session(session_id: int, session: SessionCreate):
         db.close()
         return {"message": "Session Not Found"}
 
+    previous_status = existing_session.status
+
     existing_session.topic = session.topic
     existing_session.mentor_name = session.mentor_name
     existing_session.batch_name = session.batch_name
@@ -200,6 +213,9 @@ def update_session(session_id: int, session: SessionCreate):
 
     db.commit()
     db.refresh(existing_session)
+
+    if existing_session.status == "Completed" and previous_status != "Completed":
+        _ensure_default_requirements(db, existing_session)
 
     db.close()
 
@@ -2894,16 +2910,19 @@ def _send_resource_email(
 
 
 def _send_reminder_for_requirement(db, requirement, session=None):
-    """Shared by the manual 'Send Reminder' endpoint and (Phase 5) the scheduler.
+    """Shared by the manual 'Send Reminder' endpoint and the scheduler.
     Returns (sent: bool, error: str | None) — error is a business-rule rejection
-    (already sent today, nothing pending), not an SMTP failure."""
+    (not due for another reminder yet, nothing pending), not an SMTP failure.
+    Idempotency is governed by next_reminder_at (interval-based, see below) —
+    NOT a once-per-calendar-day cap, so a 2-hour cadence can actually fire more
+    than once a day."""
     if requirement.status in ("Complete", "Not Required"):
         return False, "Requirement is not pending"
 
     now = datetime.utcnow()
 
-    if requirement.last_reminder_sent_at and requirement.last_reminder_sent_at.date() == now.date():
-        return False, "A reminder was already sent today for this requirement"
+    if requirement.next_reminder_at and requirement.next_reminder_at > now:
+        return False, "Not due for another reminder yet"
 
     if session is None:
         session = db.query(SessionModel).filter(SessionModel.id == requirement.session_id).first()
@@ -2918,7 +2937,10 @@ def _send_reminder_for_requirement(db, requirement, session=None):
     reminder_number = (requirement.reminder_count or 0) + 1
     is_final = reminder_number >= settings.max_reminders_before_final
 
-    subject, body = reminder_email(session, [requirement], is_final=is_final)
+    token = get_or_create_session_token(db, session)
+    link = submission_url(session)
+
+    subject, body = reminder_email(session, [requirement], submission_url=link, is_final=is_final)
 
     success = _send_resource_email(
         db,
@@ -2934,7 +2956,7 @@ def _send_reminder_for_requirement(db, requirement, session=None):
 
     requirement.reminder_count = reminder_number
     requirement.last_reminder_sent_at = now
-    requirement.next_reminder_at = now + timedelta(days=1)
+    requirement.next_reminder_at = now + timedelta(hours=settings.reminder_interval_hours or 2.0)
     db.commit()
 
     _log_audit(
@@ -2956,7 +2978,9 @@ def _resource_to_dict(r):
         "batch_name": r.batch_name,
         "course_name": r.course_name,
         "session_topic": r.session_topic,
+        "session_date": r.session_date,
         "resource_type": r.resource_type,
+        "resource_category": r.resource_category,
         "resource_title": r.resource_title,
         "resource_url": r.resource_url,
         "file_path": r.file_path,
@@ -2988,6 +3012,7 @@ def _requirement_to_dict(r):
         "mentor_id": r.mentor_id,
         "mentor_name": r.mentor_name,
         "resource_type": r.resource_type,
+        "resource_category": r.resource_category,
         "resource_name": r.resource_name,
         "is_required": r.is_required,
         "due_at": r.due_at,
@@ -3005,6 +3030,163 @@ def _requirement_to_dict(r):
 # Resources (submitted items)
 # ----------------------------------------------------------
 
+def _create_resource_core(
+    db,
+    *,
+    session_id,
+    mentor_id,
+    mentor_name,
+    batch_name,
+    course_name,
+    session_topic,
+    session_date,
+    resource_type,
+    resource_category,
+    resource_title,
+    resource_url,
+    description,
+    is_required,
+    created_by,
+    file,
+):
+    """Shared by the ops-facing POST /resources (trusts client-supplied
+    session/mentor identity) and the public POST /resources/submit/{token}
+    (identity is derived from the token, never from the client)."""
+    existing = (
+        db.query(Resource)
+        .filter(
+            Resource.session_id == session_id,
+            Resource.mentor_name == mentor_name,
+            Resource.resource_type == resource_type,
+            Resource.resource_title == resource_title,
+        )
+        .first()
+    )
+
+    if existing:
+        return {
+            "success": False,
+            "message": "This resource has already been submitted.",
+            "resource_id": existing.id,
+        }
+
+    file_meta = {}
+    if file is not None and file.filename:
+        file_meta = save_file(file)
+
+    now = datetime.utcnow()
+
+    # Look up a matching pending requirement first, so we know the deadline
+    # this submission is being measured against.
+    requirement = (
+        db.query(ResourceRequirement)
+        .filter(
+            ResourceRequirement.session_id == session_id,
+            ResourceRequirement.resource_type == resource_type,
+            ResourceRequirement.status.in_(["Pending", "Overdue"]),
+        )
+        .first()
+    )
+
+    # No requirement configured for this session/type — self-declare one so
+    # this submission is still trackable (every completed session should have
+    # a trackable resource requirement, whether or not Ops pre-configured it).
+    if not requirement and session_id is not None:
+        requirement = ResourceRequirement(
+            session_id=session_id,
+            mentor_id=mentor_id,
+            mentor_name=mentor_name,
+            resource_type=resource_type,
+            resource_category=resource_category,
+            resource_name=resource_title,
+            is_required=is_required,
+            status="Pending",
+        )
+        db.add(requirement)
+        db.commit()
+        db.refresh(requirement)
+    elif requirement and not requirement.resource_category and resource_category:
+        requirement.resource_category = resource_category
+
+    due_at = requirement.due_at if requirement else None
+    delay_minutes, delay_hours = compute_delay(due_at, now)
+
+    new_resource = Resource(
+        session_id=session_id,
+        mentor_id=mentor_id,
+        mentor_name=mentor_name,
+        batch_name=batch_name,
+        course_name=course_name,
+        session_topic=session_topic,
+        session_date=session_date,
+        resource_type=resource_type,
+        resource_category=resource_category,
+        resource_title=resource_title,
+        resource_url=resource_url,
+        file_path=file_meta.get("file_path"),
+        file_name=file_meta.get("file_name"),
+        file_size=file_meta.get("file_size"),
+        mime_type=file_meta.get("mime_type"),
+        description=description,
+        is_required=is_required,
+        status="Submitted",
+        submitted_at=now,
+        due_at=due_at,
+        received_at=now,
+        delay_minutes=delay_minutes,
+        delay_hours=delay_hours,
+        created_by=created_by,
+    )
+
+    db.add(new_resource)
+    db.commit()
+    db.refresh(new_resource)
+
+    if requirement:
+        requirement.received_at = now
+        refresh_requirement_status(requirement, now)
+        db.commit()
+
+    _log_audit(
+        db,
+        "Resource Created",
+        resource_id=new_resource.id,
+        session_id=session_id,
+        user=created_by,
+    )
+
+    # Thank-you email — only ever reached after the DB commit above succeeded.
+    recipient = _resolve_mentor_email(db, mentor_id=mentor_id, mentor_name=mentor_name)
+    confirm_subject, confirm_body = confirmation_email(new_resource)
+    _send_resource_email(
+        db,
+        recipient,
+        "Submission Confirmation",
+        confirm_subject,
+        confirm_body,
+        session_id=session_id,
+        mentor_id=mentor_id,
+    )
+
+    if OPS_NOTIFICATION_EMAIL:
+        ops_subject, ops_body = ops_notification_email(new_resource)
+        _send_resource_email(
+            db,
+            OPS_NOTIFICATION_EMAIL,
+            "Operations Notification",
+            ops_subject,
+            ops_body,
+            session_id=session_id,
+            mentor_id=mentor_id,
+        )
+
+    return {
+        "success": True,
+        "message": "Resource submitted successfully",
+        "id": new_resource.id,
+    }
+
+
 @app.post("/resources")
 def create_resource(
     session_id: int = Form(None),
@@ -3013,7 +3195,9 @@ def create_resource(
     batch_name: str = Form(None),
     course_name: str = Form(None),
     session_topic: str = Form(None),
+    session_date: str = Form(None),
     resource_type: str = Form(...),
+    resource_category: str = Form(None),
     resource_title: str = Form(...),
     resource_url: str = Form(None),
     description: str = Form(None),
@@ -3024,134 +3208,97 @@ def create_resource(
     db = SessionLocal()
 
     try:
-        existing = (
-            db.query(Resource)
-            .filter(
-                Resource.session_id == session_id,
-                Resource.mentor_name == mentor_name,
-                Resource.resource_type == resource_type,
-                Resource.resource_title == resource_title,
-            )
-            .first()
-        )
-
-        if existing:
-            return {
-                "success": False,
-                "message": "This resource has already been submitted.",
-                "resource_id": existing.id,
-            }
-
-        file_meta = {}
-        if file is not None and file.filename:
-            file_meta = save_file(file)
-
-        now = datetime.utcnow()
-
-        # Look up a matching pending requirement first, so we know the deadline
-        # this submission is being measured against.
-        requirement = (
-            db.query(ResourceRequirement)
-            .filter(
-                ResourceRequirement.session_id == session_id,
-                ResourceRequirement.resource_type == resource_type,
-                ResourceRequirement.status.in_(["Pending", "Overdue"]),
-            )
-            .first()
-        )
-
-        # No requirement configured for this session/type — self-declare one so
-        # this submission is still trackable (every completed session should have
-        # a trackable resource requirement, whether or not Ops pre-configured it).
-        if not requirement and session_id is not None:
-            requirement = ResourceRequirement(
-                session_id=session_id,
-                mentor_id=mentor_id,
-                mentor_name=mentor_name,
-                resource_type=resource_type,
-                resource_name=resource_title,
-                is_required=is_required,
-                status="Pending",
-            )
-            db.add(requirement)
-            db.commit()
-            db.refresh(requirement)
-
-        due_at = requirement.due_at if requirement else None
-        delay_minutes, delay_hours = compute_delay(due_at, now)
-
-        new_resource = Resource(
+        return _create_resource_core(
+            db,
             session_id=session_id,
             mentor_id=mentor_id,
             mentor_name=mentor_name,
             batch_name=batch_name,
             course_name=course_name,
             session_topic=session_topic,
+            session_date=session_date,
             resource_type=resource_type,
+            resource_category=resource_category,
             resource_title=resource_title,
             resource_url=resource_url,
-            file_path=file_meta.get("file_path"),
-            file_name=file_meta.get("file_name"),
-            file_size=file_meta.get("file_size"),
-            mime_type=file_meta.get("mime_type"),
             description=description,
             is_required=is_required,
-            status="Submitted",
-            submitted_at=now,
-            due_at=due_at,
-            received_at=now,
-            delay_minutes=delay_minutes,
-            delay_hours=delay_hours,
             created_by=created_by,
+            file=file,
         )
+    finally:
+        db.close()
 
-        db.add(new_resource)
-        db.commit()
-        db.refresh(new_resource)
 
-        if requirement:
-            requirement.received_at = now
-            refresh_requirement_status(requirement, now)
-            db.commit()
+# ----------------------------------------------------------
+# Public, token-scoped mentor submission (no login) — the session/mentor
+# identity is always derived from the token server-side, never trusted from
+# the client, so a mentor can only ever act on the one session the link was
+# generated for.
+# ----------------------------------------------------------
 
-        _log_audit(
+@app.get("/resources/submit/{token}")
+def get_submission_context(token: str, db: Session = Depends(get_db)):
+    session = get_session_by_token(db, token)
+    if not session:
+        return {"success": False, "message": "Invalid or expired link"}
+
+    detail = session_resource_detail(db, session.id)
+
+    return {
+        "success": True,
+        "session": {
+            "id": session.id,
+            "topic": session.topic,
+            "batch_name": session.batch_name,
+            "course_name": session.course_name,
+            "mentor_name": session.mentor_name,
+            "session_date": session.session_date,
+        },
+        "pending_requirements": [
+            _requirement_to_dict(r) for r in detail["requirements"]
+            if r.status in ("Pending", "Overdue")
+        ],
+        "submitted_resources": [_resource_to_dict(r) for r in detail["resources"]],
+    }
+
+
+@app.post("/resources/submit/{token}")
+def submit_resource_via_token(
+    token: str,
+    resource_type: str = Form(...),
+    resource_category: str = Form(None),
+    resource_title: str = Form(...),
+    resource_url: str = Form(None),
+    description: str = Form(None),
+    is_required: bool = Form(True),
+    file: UploadFile = File(None),
+):
+    db = SessionLocal()
+
+    try:
+        session = get_session_by_token(db, token)
+        if not session:
+            return {"success": False, "message": "Invalid or expired link"}
+
+        return _create_resource_core(
             db,
-            "Resource Created",
-            resource_id=new_resource.id,
-            session_id=session_id,
-            user=created_by,
+            session_id=session.id,
+            mentor_id=None,
+            mentor_name=session.mentor_name,
+            batch_name=session.batch_name,
+            course_name=session.course_name,
+            session_topic=session.topic,
+            session_date=session.session_date,
+            resource_type=resource_type,
+            resource_category=resource_category,
+            resource_title=resource_title,
+            resource_url=resource_url,
+            description=description,
+            is_required=is_required,
+            created_by="mentor-link",
+            file=file,
         )
-
-        recipient = _resolve_mentor_email(db, mentor_id=mentor_id, mentor_name=mentor_name)
-        confirm_subject, confirm_body = confirmation_email(new_resource)
-        _send_resource_email(
-            db,
-            recipient,
-            "Submission Confirmation",
-            confirm_subject,
-            confirm_body,
-            session_id=session_id,
-            mentor_id=mentor_id,
-        )
-
-        if OPS_NOTIFICATION_EMAIL:
-            ops_subject, ops_body = ops_notification_email(new_resource)
-            _send_resource_email(
-                db,
-                OPS_NOTIFICATION_EMAIL,
-                "Operations Notification",
-                ops_subject,
-                ops_body,
-                session_id=session_id,
-                mentor_id=mentor_id,
-            )
-
-        return {
-            "success": True,
-            "message": "Resource submitted successfully",
-            "id": new_resource.id,
-        }
-
     finally:
         db.close()
 
@@ -3164,6 +3311,7 @@ def list_resources(
     batch_name: str = None,
     course_name: str = None,
     resource_type: str = None,
+    resource_category: str = None,
     status: str = None,
     search: str = None,
 ):
@@ -3184,6 +3332,8 @@ def list_resources(
             query = query.filter(Resource.course_name == course_name)
         if resource_type:
             query = query.filter(Resource.resource_type == resource_type)
+        if resource_category:
+            query = query.filter(Resource.resource_category == resource_category)
         if status:
             query = query.filter(Resource.status == status)
         if search:
@@ -3326,68 +3476,109 @@ def delete_resource(resource_id: int):
 # Resource Requirements (what's required for a session)
 # ----------------------------------------------------------
 
+def _create_requirements_for_session(db, session, items, mentor_id=None, mentor_name=None, explicit_due_at=None):
+    """items: iterable of dicts with resource_type, resource_category (optional),
+    resource_name, is_required (optional, default True). Skips any item whose
+    (session, resource_type) already has a requirement. Sends the "Initial
+    Resource Request" email (with the session's submission link) if anything
+    new was created. Shared by the ops-facing POST /resource-requirements and
+    the auto-trigger on session completion."""
+    settings = get_settings(db)
+    due_at = explicit_due_at or compute_due_at(session, settings)
+    mentor_name = mentor_name or session.mentor_name
+
+    created = []
+    for item in items:
+        resource_type = item["resource_type"]
+        existing = (
+            db.query(ResourceRequirement)
+            .filter(
+                ResourceRequirement.session_id == session.id,
+                ResourceRequirement.resource_type == resource_type,
+            )
+            .first()
+        )
+        if existing:
+            continue
+
+        requirement = ResourceRequirement(
+            session_id=session.id,
+            mentor_id=mentor_id,
+            mentor_name=mentor_name,
+            resource_type=resource_type,
+            resource_category=item.get("resource_category"),
+            resource_name=item["resource_name"],
+            is_required=item.get("is_required", True),
+            due_at=due_at,
+            status="Pending",
+        )
+        db.add(requirement)
+        created.append(requirement)
+
+    db.commit()
+
+    for r in created:
+        db.refresh(r)
+        _log_audit(db, "Requirement Created", session_id=r.session_id, details=r.resource_name)
+
+    if created:
+        recipient = _resolve_mentor_email(db, session, mentor_id, mentor_name)
+        get_or_create_session_token(db, session)
+        link = submission_url(session)
+        subject, body = initial_request_email(session, created, submission_url=link)
+        _send_resource_email(
+            db,
+            recipient,
+            "Initial Resource Request",
+            subject,
+            body,
+            session_id=session.id,
+            mentor_id=mentor_id,
+        )
+
+    return created
+
+
+def _ensure_default_requirements(db, session):
+    """Auto-creates the standard resource requirement set the first time a
+    session is marked Completed — closes the workflow's own first step,
+    which otherwise has no UI or automatic trigger at all."""
+    already_configured = (
+        db.query(ResourceRequirement).filter(ResourceRequirement.session_id == session.id).first()
+    )
+    if already_configured:
+        return []
+
+    return _create_requirements_for_session(db, session, DEFAULT_REQUIREMENTS)
+
+
 @app.post("/resource-requirements")
 def create_resource_requirements(data: ResourceRequirementCreate):
     db = SessionLocal()
 
     try:
-        created = []
+        session = db.query(SessionModel).filter(SessionModel.id == data.session_id).first()
+        if not session:
+            return {"message": "Session not found", "created_count": 0, "ids": []}
 
-        settings = get_settings(db)
-        default_due_at = data.due_at or (datetime.utcnow() + timedelta(hours=settings.resource_default_deadline_hours))
+        items = [
+            {
+                "resource_type": item.resource_type,
+                "resource_category": item.resource_category,
+                "resource_name": item.resource_name,
+                "is_required": item.is_required,
+            }
+            for item in data.requirements
+        ]
 
-        for item in data.requirements:
-            existing = (
-                db.query(ResourceRequirement)
-                .filter(
-                    ResourceRequirement.session_id == data.session_id,
-                    ResourceRequirement.resource_type == item.resource_type,
-                )
-                .first()
-            )
-
-            if existing:
-                continue
-
-            requirement = ResourceRequirement(
-                session_id=data.session_id,
-                mentor_id=data.mentor_id,
-                mentor_name=data.mentor_name,
-                resource_type=item.resource_type,
-                resource_name=item.resource_name,
-                is_required=item.is_required,
-                due_at=default_due_at,
-                status="Pending",
-            )
-            db.add(requirement)
-            created.append(requirement)
-
-        db.commit()
-
-        for r in created:
-            db.refresh(r)
-            _log_audit(
-                db,
-                "Requirement Created",
-                session_id=r.session_id,
-                details=r.resource_name,
-            )
-
-        if created:
-            session = db.query(SessionModel).filter(SessionModel.id == data.session_id).first()
-
-            if session:
-                recipient = _resolve_mentor_email(db, session, data.mentor_id, data.mentor_name)
-                subject, body = initial_request_email(session, created)
-                _send_resource_email(
-                    db,
-                    recipient,
-                    "Initial Resource Request",
-                    subject,
-                    body,
-                    session_id=data.session_id,
-                    mentor_id=data.mentor_id,
-                )
+        created = _create_requirements_for_session(
+            db,
+            session,
+            items,
+            mentor_id=data.mentor_id,
+            mentor_name=data.mentor_name,
+            explicit_due_at=data.due_at,
+        )
 
         return {
             "message": f"{len(created)} requirement(s) created",
@@ -3404,6 +3595,7 @@ def list_resource_requirements(
     session_id: int = None,
     mentor_id: int = None,
     mentor_name: str = None,
+    resource_category: str = None,
     status: str = None,
 ):
     db = SessionLocal()
@@ -3417,6 +3609,8 @@ def list_resource_requirements(
             query = query.filter(ResourceRequirement.mentor_id == mentor_id)
         if mentor_name:
             query = query.filter(ResourceRequirement.mentor_name == mentor_name)
+        if resource_category:
+            query = query.filter(ResourceRequirement.resource_category == resource_category)
         if status:
             query = query.filter(ResourceRequirement.status == status)
 
@@ -3745,12 +3939,43 @@ def resource_scheduler_status(db: Session = Depends(get_db)):
     return {
         "enabled": settings.reminder_scheduler_enabled,
         "interval_hours": REMINDER_INTERVAL_HOURS,
+        "reminder_interval_hours": settings.reminder_interval_hours,
+        "reminder_window_start_hour": settings.reminder_window_start_hour,
+        "reminder_window_end_hour": settings.reminder_window_end_hour,
+        "reminder_timezone": settings.reminder_timezone,
+        "weekend_deadline_enabled": settings.weekend_deadline_enabled,
     }
 
 
 @app.post("/resource-scheduler/run")
 def resource_scheduler_run(dry_run: bool = True):
-    return run_reminder_check(dry_run=dry_run)
+    # respect_toggle=False: a manual/ops-triggered run always executes,
+    # bypassing both the enabled toggle and the reminder time window — those
+    # only gate the automatic background tick.
+    return run_reminder_check(dry_run=dry_run, respect_toggle=False)
+
+
+# ----------------------------------------------------------
+# Settings
+# ----------------------------------------------------------
+
+@app.get("/settings")
+def read_settings(db: Session = Depends(get_db)):
+    return settings_to_dict(get_settings(db))
+
+
+@app.put("/settings")
+def update_settings(data: AppSettingsUpdate, db: Session = Depends(get_db)):
+    settings = get_settings(db)
+
+    for field, value in data.dict(exclude_unset=True, exclude={"updated_by"}).items():
+        setattr(settings, field, value)
+
+    db.commit()
+    db.refresh(settings)
+    _log_audit(db, "Settings Updated", user=data.updated_by)
+
+    return settings_to_dict(settings)
 
 
 # ----------------------------------------------------------
@@ -3774,6 +3999,17 @@ def resource_analytics_mentors():
 
     try:
         return compute_mentor_performance(db)
+
+    finally:
+        db.close()
+
+
+@app.get("/resource-analytics/at-risk-mentors")
+def resource_analytics_at_risk_mentors():
+    db = SessionLocal()
+
+    try:
+        return compute_at_risk_mentors(db)
 
     finally:
         db.close()

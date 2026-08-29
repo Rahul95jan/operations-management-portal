@@ -49,3 +49,7 @@ class Session(Base):
     # Operations
     created_by = Column(String)
     remarks = Column(String)
+
+    # Resource Portal — stable, unguessable link so a mentor can submit this
+    # session's resources with no login (see resource_tokens.py)
+    resource_access_token = Column(String, unique=True, nullable=True, index=True)

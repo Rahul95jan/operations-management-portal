@@ -1108,3 +1108,381 @@ def generate_analytics_report(data, filter_desc="All data"):
 
     return filename
 
+
+def _mentor_360_footer(canvas_obj, doc_obj):
+    canvas_obj.saveState()
+    canvas_obj.setStrokeColor(BORDER)
+    canvas_obj.setLineWidth(0.5)
+    canvas_obj.line(16 * mm, 14 * mm, 194 * mm, 14 * mm)
+    canvas_obj.setFont("Helvetica", 8)
+    canvas_obj.setFillColor(colors.HexColor("#94a3b8"))
+    canvas_obj.drawCentredString(
+        105 * mm,
+        10 * mm,
+        f"Krish Naik Academy  ·  Mentor Business Performance Report  ·  Page {doc_obj.page}",
+    )
+    canvas_obj.restoreState()
+
+
+def _mentor_360_issues(row):
+    """Rule-based (not AI-generated) plain-language reasons a mentor is at-risk,
+    for the PDF's At-Risk Mentors section."""
+    issues = []
+    rc = row.get("resource_compliance")
+    if rc and rc["score"] is not None and rc["score"] < 75:
+        issues.append(f"Resource compliance {rc['score']}%")
+    delivery = row.get("delivery_performance")
+    if delivery and delivery["cancellation_percent"] > 5:
+        issues.append(f"Cancellation rate {delivery['cancellation_percent']}%")
+    learner = row.get("learner_experience")
+    if learner and learner["avg_instructor_rating"] < 4:
+        issues.append(f"Instructor rating {learner['avg_instructor_rating']}/5")
+    attendance = row.get("attendance_engagement")
+    if attendance and attendance["avg_attendance_percent"] < 70:
+        issues.append(f"Attendance {attendance['avg_attendance_percent']}%")
+    return "; ".join(issues) if issues else "Below overall score threshold"
+
+
+def generate_mentor_performance_report(data, filter_desc="All data"):
+    if not os.path.exists("pdfs"):
+        os.makedirs("pdfs")
+
+    filename = "pdfs/mentor_360_report.pdf"
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+
+    doc = SimpleDocTemplate(
+        filename,
+        pagesize=A4,
+        topMargin=0,
+        bottomMargin=22 * mm,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+    )
+
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        "MpTitleWhite", parent=styles["Normal"], textColor=colors.white, fontSize=18, fontName="Helvetica-Bold", leading=22,
+    )
+    subtitle_style = ParagraphStyle(
+        "MpSubtitleWhite", parent=styles["Normal"], textColor=YELLOW, fontSize=10, leading=13,
+    )
+    section_style = ParagraphStyle(
+        "MpSection", parent=styles["Heading2"], textColor=NAVY, fontSize=13, spaceBefore=16, spaceAfter=8,
+    )
+    body_style = ParagraphStyle(
+        "MpBody", parent=styles["Normal"], textColor=SLATE, fontSize=10, leading=14,
+    )
+    kpi_label_style = ParagraphStyle(
+        "MpKpiLabel", parent=styles["Normal"], textColor=colors.HexColor("#94a3b8"), fontSize=7.5,
+        fontName="Helvetica-Bold", alignment=1, leading=10,
+    )
+    kpi_value_style = ParagraphStyle(
+        "MpKpiValue", parent=styles["Normal"], textColor=NAVY, fontSize=14, fontName="Helvetica-Bold", alignment=1,
+    )
+
+    def bullet(title):
+        return Paragraph(f"<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;{title}", section_style)
+
+    def kpi_grid(pairs, per_row=4):
+        rows = []
+        for i in range(0, len(pairs), per_row):
+            chunk = pairs[i:i + per_row]
+            labels = [Paragraph(lbl.upper(), kpi_label_style) for lbl, _ in chunk]
+            values = [Paragraph(str(val), kpi_value_style) for _, val in chunk]
+            while len(labels) < per_row:
+                labels.append("")
+                values.append("")
+            rows.append(labels)
+            rows.append(values)
+
+        col_w = (178 / per_row) * mm
+        table = Table(rows, colWidths=[col_w] * per_row)
+        style = [
+            ("BACKGROUND", (0, 0), (-1, -1), BG_ALT),
+            ("BOX", (0, 0), (-1, -1), 0.75, BORDER),
+            ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+        ]
+        for r in range(0, len(rows), 2):
+            style.append(("TOPPADDING", (0, r), (-1, r), 10))
+            style.append(("BOTTOMPADDING", (0, r), (-1, r), 2))
+            style.append(("TOPPADDING", (0, r + 1), (-1, r + 1), 2))
+            style.append(("BOTTOMPADDING", (0, r + 1), (-1, r + 1), 12))
+            if r > 0:
+                style.append(("LINEABOVE", (0, r), (-1, r), 0.5, BORDER))
+        table.setStyle(TableStyle(style))
+        return table
+
+    def data_table(headers, rows, col_widths, empty_message="No data yet."):
+        if not rows:
+            return Paragraph(empty_message, body_style)
+
+        header_cells = [Paragraph(h, ParagraphStyle("MpTH", parent=styles["Normal"], textColor=colors.white, fontSize=9, fontName="Helvetica-Bold")) for h in headers]
+        table_data = [header_cells] + rows
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_ALT]),
+            ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        return table
+
+    elements = []
+
+    # ---- Header ----
+    if os.path.exists(LOGO_PATH):
+        logo_cell = Image(LOGO_PATH, width=30 * mm, height=11.5 * mm)
+    else:
+        logo_cell = ""
+
+    header_text = Table(
+        [[Paragraph("Krish Naik Academy", title_style)],
+         [Paragraph(f"Mentor Business Performance Report &nbsp;&bull;&nbsp; Generated {datetime.now().strftime('%d %b %Y')}", subtitle_style)],
+         [Paragraph(f"Scope: {filter_desc}", subtitle_style)]],
+        colWidths=[130 * mm],
+    )
+    header_text.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+
+    header = Table([[logo_cell, header_text]], colWidths=[38 * mm, 140 * mm])
+    header.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, 0), 6 * mm),
+        ("RIGHTPADDING", (0, 0), (0, 0), 2 * mm),
+        ("LEFTPADDING", (1, 0), (1, 0), 4 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 16),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+    ]))
+    elements.append(header)
+    elements.append(HRFlowable(width="100%", thickness=3, color=GOLD_LIGHT, spaceBefore=0, spaceAfter=18))
+
+    scorecard = data["scorecard"]
+    es = data["executive_summary"]
+
+    elements.append(bullet("Executive Summary"))
+    elements.append(kpi_grid([
+        ("Total Mentors", es["total_mentors"]),
+        ("Average Score", es["average_score"]),
+        ("Excellent", es["excellent"]),
+        ("Strong Performer", es["strong_performer"]),
+        ("Needs Attention", es["needs_attention"]),
+        ("At Risk", es["at_risk"]),
+        ("Critical", es["critical"]),
+    ], per_row=4))
+    elements.append(Spacer(1, 10))
+
+    elements.append(bullet("Mentor Performance Scorecard"))
+    sc_rows = [
+        [
+            m["mentor_name"],
+            str(m["overall_score"]),
+            str(m["delivery_performance"]["score"]) if m["delivery_performance"] else "N/A",
+            str(m["learner_experience"]["score"]) if m["learner_experience"] else "N/A",
+            str(m["session_quality"]["score"]) if m["session_quality"] else "N/A",
+            m["risk"],
+        ]
+        for m in scorecard
+    ]
+    elements.append(data_table(
+        ["Mentor", "Score", "Delivery", "Learner", "Quality", "Risk"],
+        sc_rows,
+        [46 * mm, 24 * mm, 27 * mm, 27 * mm, 27 * mm, 27 * mm],
+        "No mentors match this scope.",
+    ))
+    elements.append(Spacer(1, 10))
+
+    at_risk = [m for m in scorecard if m["risk"] in ("High", "Critical")]
+    elements.append(bullet("At-Risk Mentors"))
+    ar_rows = [
+        [
+            m["mentor_name"],
+            m["risk"],
+            str(m["overall_score"]),
+            _mentor_360_issues(m),
+            "Performance Review",
+        ]
+        for m in at_risk
+    ]
+    elements.append(data_table(
+        ["Mentor", "Risk", "Score", "Main Issues", "Recommended Action"],
+        ar_rows,
+        [32 * mm, 18 * mm, 18 * mm, 78 * mm, 32 * mm],
+        "No at-risk mentors in this scope.",
+    ))
+
+    doc.build(elements, onFirstPage=_mentor_360_footer, onLaterPages=_mentor_360_footer)
+
+    return filename
+
+
+def _webinar_footer(canvas_obj, doc_obj):
+    canvas_obj.saveState()
+    canvas_obj.setStrokeColor(BORDER)
+    canvas_obj.setLineWidth(0.5)
+    canvas_obj.line(16 * mm, 14 * mm, 194 * mm, 14 * mm)
+    canvas_obj.setFont("Helvetica", 8)
+    canvas_obj.setFillColor(colors.HexColor("#94a3b8"))
+    canvas_obj.drawCentredString(105 * mm, 10 * mm, f"Krish Naik Academy  ·  Webinar Operations Report  ·  Page {doc_obj.page}")
+    canvas_obj.restoreState()
+
+
+def generate_webinar_report_pdf(data, filter_desc="All data"):
+    if not os.path.exists("pdfs"):
+        os.makedirs("pdfs")
+
+    filename = "pdfs/webinar_operations_report.pdf"
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+
+    doc = SimpleDocTemplate(filename, pagesize=A4, topMargin=0, bottomMargin=22 * mm, leftMargin=16 * mm, rightMargin=16 * mm)
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle("WbTitleWhite", parent=styles["Normal"], textColor=colors.white, fontSize=18, fontName="Helvetica-Bold", leading=22)
+    subtitle_style = ParagraphStyle("WbSubtitleWhite", parent=styles["Normal"], textColor=YELLOW, fontSize=10, leading=13)
+    section_style = ParagraphStyle("WbSection", parent=styles["Heading2"], textColor=NAVY, fontSize=13, spaceBefore=16, spaceAfter=8)
+    body_style = ParagraphStyle("WbBody", parent=styles["Normal"], textColor=SLATE, fontSize=10, leading=14)
+    kpi_label_style = ParagraphStyle("WbKpiLabel", parent=styles["Normal"], textColor=colors.HexColor("#94a3b8"), fontSize=7.5, fontName="Helvetica-Bold", alignment=1, leading=10)
+    kpi_value_style = ParagraphStyle("WbKpiValue", parent=styles["Normal"], textColor=NAVY, fontSize=14, fontName="Helvetica-Bold", alignment=1)
+
+    def bullet(title):
+        return Paragraph(f"<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;{title}", section_style)
+
+    def kpi_grid(pairs, per_row=4):
+        rows = []
+        for i in range(0, len(pairs), per_row):
+            chunk = pairs[i:i + per_row]
+            labels = [Paragraph(lbl.upper(), kpi_label_style) for lbl, _ in chunk]
+            values = [Paragraph(str(val), kpi_value_style) for _, val in chunk]
+            while len(labels) < per_row:
+                labels.append("")
+                values.append("")
+            rows.append(labels)
+            rows.append(values)
+
+        col_w = (178 / per_row) * mm
+        table = Table(rows, colWidths=[col_w] * per_row)
+        style = [
+            ("BACKGROUND", (0, 0), (-1, -1), BG_ALT),
+            ("BOX", (0, 0), (-1, -1), 0.75, BORDER),
+            ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+        ]
+        for r in range(0, len(rows), 2):
+            style.append(("TOPPADDING", (0, r), (-1, r), 10))
+            style.append(("BOTTOMPADDING", (0, r), (-1, r), 2))
+            style.append(("TOPPADDING", (0, r + 1), (-1, r + 1), 2))
+            style.append(("BOTTOMPADDING", (0, r + 1), (-1, r + 1), 12))
+            if r > 0:
+                style.append(("LINEABOVE", (0, r), (-1, r), 0.5, BORDER))
+        table.setStyle(TableStyle(style))
+        return table
+
+    def data_table(headers, rows, col_widths, empty_message="No data yet."):
+        if not rows:
+            return Paragraph(empty_message, body_style)
+        header_cells = [Paragraph(h, ParagraphStyle("WbTH", parent=styles["Normal"], textColor=colors.white, fontSize=9, fontName="Helvetica-Bold")) for h in headers]
+        table_data = [header_cells] + rows
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_ALT]),
+            ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        return table
+
+    elements = []
+
+    if os.path.exists(LOGO_PATH):
+        logo_cell = Image(LOGO_PATH, width=30 * mm, height=11.5 * mm)
+    else:
+        logo_cell = ""
+
+    header_text = Table(
+        [[Paragraph("Krish Naik Academy", title_style)],
+         [Paragraph(f"Webinar Operations Report &nbsp;&bull;&nbsp; Generated {datetime.now().strftime('%d %b %Y')}", subtitle_style)],
+         [Paragraph(f"Scope: {filter_desc}", subtitle_style)]],
+        colWidths=[130 * mm],
+    )
+    header_text.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+
+    header = Table([[logo_cell, header_text]], colWidths=[38 * mm, 140 * mm])
+    header.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, 0), 6 * mm),
+        ("RIGHTPADDING", (0, 0), (0, 0), 2 * mm),
+        ("LEFTPADDING", (1, 0), (1, 0), 4 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 16),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+    ]))
+    elements.append(header)
+    elements.append(HRFlowable(width="100%", thickness=3, color=GOLD_LIGHT, spaceBefore=0, spaceAfter=18))
+
+    s = data["summary"]
+    elements.append(bullet("Executive Summary"))
+    elements.append(kpi_grid([
+        ("Total Webinars", s["total_webinars"]),
+        ("Completed", s["completed_webinars"]),
+        ("Registrations", s["total_registrations"]),
+        ("Attendees", s["total_attendees"]),
+        ("Avg Attendance", f"{s['average_attendance_percentage']}%" if s["average_attendance_percentage"] is not None else "N/A"),
+        ("Avg Rating", f"{s['average_rating']}/5" if s["average_rating"] is not None else "N/A"),
+        ("Qualified Leads", s["total_leads"]),
+        ("Converted", s["converted_leads"]),
+        ("Conversion Rate", f"{s['conversion_rate']}%" if s["conversion_rate"] is not None else "N/A"),
+        ("Mentor Payout", f"Rs {s['total_mentor_payout']}"),
+    ]))
+    elements.append(Spacer(1, 10))
+
+    elements.append(bullet("Webinar Performance"))
+    w_rows = [
+        [w["Webinar"] or "—", w["Mentor"] or "—", str(w["Registered"]), str(w["Attended"]), f"{w['Attendance %']}%", str(w["Rating"] or "—"), str(w["Qualified Leads"]), w["Payout Status"]]
+        for w in data["webinar_rows"]
+    ]
+    elements.append(data_table(
+        ["Webinar", "Mentor", "Reg.", "Att.", "Att %", "Rating", "Leads", "Payout"],
+        w_rows,
+        [42 * mm, 30 * mm, 16 * mm, 16 * mm, 18 * mm, 18 * mm, 16 * mm, 22 * mm],
+        "No webinars match this scope.",
+    ))
+    elements.append(Spacer(1, 10))
+
+    if data["insights"]["cards"]:
+        elements.append(bullet("Business Insights"))
+        for card in data["insights"]["cards"]:
+            elements.append(Paragraph(f"<b>{card['title']}:</b> {card['message']}", body_style))
+            elements.append(Spacer(1, 4))
+        elements.append(Spacer(1, 6))
+
+    elements.append(bullet("At-Risk / Follow-up Leads"))
+    lead_rows = [
+        [l["Name"], l["Email"], l["Webinar"] or "—", l["Lead Status"]]
+        for l in data["lead_rows"] if l["Lead Status"] in ("Interested", "Qualified", "Follow-up Required")
+    ][:20]
+    elements.append(data_table(
+        ["Name", "Email", "Webinar", "Lead Status"],
+        lead_rows,
+        [40 * mm, 55 * mm, 45 * mm, 38 * mm],
+        "No pending leads in this scope.",
+    ))
+
+    doc.build(elements, onFirstPage=_webinar_footer, onLaterPages=_webinar_footer)
+
+    return filename
+

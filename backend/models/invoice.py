@@ -27,4 +27,12 @@ class Invoice(Base):
 
     invoice_number = Column(String, unique=True, nullable=True)
 
+    # Webinar payout integration — additive, invoices created from a webinar
+    # payout still populate batch_name/month (with the webinar title / derived
+    # month) so every existing invoice-generator.js query keeps working
+    # unmodified. source_type distinguishes origin; webinar_id links back to
+    # the ZoomAnalytics row (same no-FK, plain-int convention as elsewhere).
+    source_type = Column(String, nullable=False, default="batch")
+    webinar_id = Column(Integer, nullable=True)
+
     

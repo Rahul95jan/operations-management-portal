@@ -1,9 +1,11 @@
+import json
 import pandas as pd
 from datetime import datetime, timedelta
 from fastapi.responses import FileResponse
 
 from fastapi import FastAPI, Depends, Form, File, UploadFile
 from typing import Optional
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from models.operations import OperationsAnalytics
 
@@ -41,6 +43,7 @@ from resource_export import build_export_rows
 from resource_tokens import get_or_create_session_token, get_session_by_token, submission_url
 from resource_scheduling import compute_due_at
 from resource_defaults import DEFAULT_REQUIREMENTS
+from mentor_performance import get_mentor_scorecard, get_mentor_trend
 import os
 
 OPS_NOTIFICATION_EMAIL = os.getenv("OPS_NOTIFICATION_EMAIL")
@@ -59,7 +62,7 @@ from schemas import NPSCreate
 from models.session_analytics import SessionAnalytics
 from database import engine
 from models.user import Base
-from pdf_generator import generate_invoice, generate_webinar_report, generate_nps_report, generate_analytics_report
+from pdf_generator import generate_invoice, generate_webinar_report, generate_nps_report, generate_analytics_report, generate_mentor_performance_report, generate_webinar_report_pdf
 from nps_insights import compute_nps_insights
 from models.invoice import Invoice
 from schemas import InvoiceCreate
@@ -157,6 +160,7 @@ def create_session(session: SessionCreate):
     db = SessionLocal()
 
     new_session = SessionModel(
+        project_name=session.topic,
         topic=session.topic,
         mentor_name=session.mentor_name,
         batch_name=session.batch_name,
@@ -2551,6 +2555,8 @@ def export_analytics_report(
 
 from sqlalchemy import func
 from models.zoom_analytics import ZoomAnalytics
+from models.webinar_participant import WebinarParticipant
+import webinar_operations as webinar_ops
 
 
 # ==========================================================
@@ -2558,7 +2564,13 @@ from models.zoom_analytics import ZoomAnalytics
 # ==========================================================
 
 @app.get("/webinars")
-def webinars(db: Session = Depends(get_db)):
+def webinars(db: Session = Depends(get_db), stats: bool = False):
+
+    # stats=true powers the Webinar List table (registration/attendance/
+    # leads/payout columns). Default (false) is the original thin dropdown
+    # projection zoom-analytics.js already relies on — unchanged.
+    if stats:
+        return webinar_ops.list_webinars_with_stats(db)
 
     data = db.query(ZoomAnalytics).all()
 
@@ -4022,5 +4034,739 @@ def resource_analytics_mentor_heatmap(weeks: int = 4):
     try:
         return compute_mentor_heatmap(db, weeks=weeks)
 
+    finally:
+        db.close()
+
+
+# ----------------------------------------------------------
+# Mentor 360 — Mentor Business Performance
+# ----------------------------------------------------------
+
+def _mentor_360_filter_description(course_name, batch_name, mentor_name, date_from, date_to):
+    parts = []
+    if course_name:
+        parts.append(f"Course = {course_name}")
+    if batch_name:
+        parts.append(f"Batch = {batch_name}")
+    if mentor_name:
+        parts.append(f"Mentor = {mentor_name}")
+    if date_from:
+        parts.append(f"From {date_from}")
+    if date_to:
+        parts.append(f"To {date_to}")
+    return "; ".join(parts) if parts else "All data (no filters applied)"
+
+
+def _mentor_360_scorecard_filtered(db, course_name, batch_name, mentor_name, date_from, date_to, classification=None, risk=None):
+    rows = get_mentor_scorecard(
+        db, mentor_name=mentor_name, course_name=course_name, batch_name=batch_name,
+        date_from=date_from, date_to=date_to,
+    )
+    if classification:
+        rows = [r for r in rows if r["classification"] == classification]
+    if risk:
+        rows = [r for r in rows if r["risk"] == risk]
+    return rows
+
+
+def _mentor_360_executive_summary(rows):
+    scored = [r for r in rows if isinstance(r["overall_score"], (int, float))]
+    avg_score = round(sum(r["overall_score"] for r in scored) / len(scored), 1) if scored else "N/A"
+
+    by_classification = {"Excellent": 0, "Strong Performer": 0, "Needs Attention": 0, "At Risk": 0, "Critical": 0}
+    for r in rows:
+        if r["classification"] in by_classification:
+            by_classification[r["classification"]] += 1
+
+    return {
+        "total_mentors": len(rows),
+        "average_score": avg_score,
+        "excellent": by_classification["Excellent"],
+        "strong_performer": by_classification["Strong Performer"],
+        "needs_attention": by_classification["Needs Attention"],
+        "at_risk": by_classification["At Risk"],
+        "critical": by_classification["Critical"],
+    }
+
+
+@app.get("/mentor-360/dashboard")
+def mentor_360_dashboard(
+    course_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    classification: Optional[str] = None,
+    risk: Optional[str] = None,
+):
+    db = SessionLocal()
+
+    try:
+        rows = _mentor_360_scorecard_filtered(db, course_name, batch_name, mentor_name, date_from, date_to, classification, risk)
+        return {
+            "kpis": _mentor_360_executive_summary(rows),
+            "mentors": rows,
+        }
+    finally:
+        db.close()
+
+
+@app.get("/mentor-360/scorecard")
+def mentor_360_scorecard(
+    course_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    classification: Optional[str] = None,
+    risk: Optional[str] = None,
+):
+    db = SessionLocal()
+
+    try:
+        return _mentor_360_scorecard_filtered(db, course_name, batch_name, mentor_name, date_from, date_to, classification, risk)
+    finally:
+        db.close()
+
+
+@app.get("/mentor-360/at-risk")
+def mentor_360_at_risk(
+    course_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    db = SessionLocal()
+
+    try:
+        rows = get_mentor_scorecard(db, course_name=course_name, batch_name=batch_name, date_from=date_from, date_to=date_to)
+        return [r for r in rows if r["risk"] in ("High", "Critical")]
+    finally:
+        db.close()
+
+
+@app.get("/mentor-360/export-excel")
+def mentor_360_export_excel(
+    course_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    classification: Optional[str] = None,
+    risk: Optional[str] = None,
+):
+    db = SessionLocal()
+
+    try:
+        rows = _mentor_360_scorecard_filtered(db, course_name, batch_name, mentor_name, date_from, date_to, classification, risk)
+        summary = _mentor_360_executive_summary(rows)
+
+        def g(row, dim, key, default="N/A"):
+            d = row.get(dim)
+            return d.get(key, default) if d else default
+
+        scorecard_rows = [{
+            "Mentor": r["mentor_name"],
+            "Overall Score": r["overall_score"],
+            "Delivery Score": g(r, "delivery_performance", "score"),
+            "Learner Experience": g(r, "learner_experience", "score"),
+            "Quality": g(r, "session_quality", "score"),
+            "Reliability": g(r, "reliability", "score"),
+            "Resource Compliance": g(r, "resource_compliance", "score"),
+            "Attendance": g(r, "attendance_engagement", "score"),
+            "Productivity": g(r, "productivity", "score"),
+            "Cost Efficiency": g(r, "cost_efficiency", "score"),
+            "Risk": r["risk"],
+            "Classification": r["classification"],
+        } for r in rows]
+
+        delivery_rows = [{
+            "Mentor": r["mentor_name"],
+            "Scheduled": g(r, "delivery_performance", "scheduled"),
+            "Completed": g(r, "delivery_performance", "completed"),
+            "Cancelled": g(r, "delivery_performance", "cancelled"),
+            "Completion %": g(r, "delivery_performance", "completion_percent"),
+            "Cancellation %": g(r, "delivery_performance", "cancellation_percent"),
+        } for r in rows if r.get("delivery_performance")]
+
+        learner_rows = [{
+            "Mentor": r["mentor_name"],
+            "Avg Instructor Rating": g(r, "learner_experience", "avg_instructor_rating"),
+            "Avg Doubt Rating": g(r, "learner_experience", "avg_doubt_rating"),
+            "NPS": g(r, "learner_experience", "nps_score"),
+            "Feedback Count": g(r, "learner_experience", "feedback_count"),
+        } for r in rows if r.get("learner_experience")]
+
+        resource_rows = [{
+            "Mentor": r["mentor_name"],
+            "Required": g(r, "resource_compliance", "required"),
+            "Received": g(r, "resource_compliance", "received"),
+            "Pending": g(r, "resource_compliance", "pending"),
+            "Delayed": g(r, "resource_compliance", "delayed"),
+            "On-Time %": g(r, "resource_compliance", "on_time_percent"),
+            "Avg Delay (hrs)": g(r, "resource_compliance", "avg_delay_hours"),
+        } for r in rows if r.get("resource_compliance")]
+
+        productivity_cost_rows = [{
+            "Mentor": r["mentor_name"],
+            "Sessions Delivered": g(r, "productivity", "sessions_delivered"),
+            "Learners Served": g(r, "productivity", "learners_served"),
+            "Batches Served": g(r, "productivity", "batches_served"),
+            "Cost / Session": g(r, "cost_efficiency", "cost_per_session"),
+            "Cost / Hour": g(r, "cost_efficiency", "cost_per_hour"),
+            "Total Cost": g(r, "cost_efficiency", "total_cost"),
+        } for r in rows if r.get("productivity") or r.get("cost_efficiency")]
+
+        file_name = f"Mentor_Performance_Report_{datetime.utcnow().strftime('%Y-%m-%d')}.xlsx"
+
+        with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
+            pd.DataFrame([summary]).to_excel(writer, sheet_name="Executive Summary", index=False)
+            pd.DataFrame(scorecard_rows).to_excel(writer, sheet_name="Mentor Scorecard", index=False)
+            pd.DataFrame(delivery_rows).to_excel(writer, sheet_name="Delivery Performance", index=False)
+            pd.DataFrame(learner_rows).to_excel(writer, sheet_name="Learner Experience", index=False)
+            pd.DataFrame(resource_rows).to_excel(writer, sheet_name="Resource Compliance", index=False)
+            pd.DataFrame(productivity_cost_rows).to_excel(writer, sheet_name="Productivity & Cost", index=False)
+
+        return FileResponse(
+            file_name,
+            filename=file_name,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    finally:
+        db.close()
+
+
+@app.get("/mentor-360/export-pdf")
+def mentor_360_export_pdf(
+    course_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    classification: Optional[str] = None,
+    risk: Optional[str] = None,
+):
+    db = SessionLocal()
+
+    try:
+        rows = _mentor_360_scorecard_filtered(db, course_name, batch_name, mentor_name, date_from, date_to, classification, risk)
+        data = {
+            "executive_summary": _mentor_360_executive_summary(rows),
+            "scorecard": rows,
+        }
+        filter_desc = _mentor_360_filter_description(course_name, batch_name, mentor_name, date_from, date_to)
+
+        pdf_path = generate_mentor_performance_report(data, filter_desc)
+
+        return FileResponse(
+            path=pdf_path,
+            filename="Mentor_Business_Performance_Report.pdf",
+            media_type="application/pdf",
+        )
+    finally:
+        db.close()
+
+
+# NOTE: the two /mentor-360/{mentor_name} routes below MUST stay after every
+# literal /mentor-360/... route above (export-excel, export-pdf, at-risk, etc.)
+# — FastAPI matches path routes in registration order, and {mentor_name} would
+# otherwise swallow "export-excel"/"export-pdf" as a mentor name.
+@app.get("/mentor-360/{mentor_name}")
+def mentor_360_detail(
+    mentor_name: str,
+    course_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    db = SessionLocal()
+
+    try:
+        rows = get_mentor_scorecard(db, mentor_name=mentor_name, course_name=course_name, batch_name=batch_name, date_from=date_from, date_to=date_to)
+        if not rows:
+            return {"success": False, "message": "No data found for this mentor in the selected scope."}
+        return {"success": True, "mentor": rows[0]}
+    finally:
+        db.close()
+
+
+@app.get("/mentor-360/{mentor_name}/trends")
+def mentor_360_trends(mentor_name: str, months: int = 6):
+    db = SessionLocal()
+
+    try:
+        return get_mentor_trend(db, mentor_name, months=months)
+    finally:
+        db.close()
+
+
+# ----------------------------------------------------------
+# Webinar Operations — Phase 1 (DB + backend: CRUD, participants,
+# reports, leads, payout). ZoomAnalytics IS the Webinar entity — no
+# separate Webinar table. The pre-existing /webinars, /webinar-report/
+# {session_id}, /zoom-summary etc. routes above are untouched.
+# ----------------------------------------------------------
+
+class WebinarCreate(BaseModel):
+    webinar_title: str
+    mentor_name: str
+    session_date: str
+    session_time: Optional[str] = None
+    duration: Optional[int] = None
+    platform: Optional[str] = None
+    webinar_status: Optional[str] = "Scheduled"
+    description: Optional[str] = None
+    category: Optional[str] = None
+    target_audience: Optional[str] = None
+    project_name: Optional[str] = None
+    batch_name: Optional[str] = None
+    course_name: Optional[str] = None
+
+
+class ParticipantCreate(BaseModel):
+    name: str
+    email: str
+    phone: Optional[str] = None
+    source: Optional[str] = None
+    course_interest: Optional[str] = None
+
+
+class ParticipantUpdate(BaseModel):
+    attended: Optional[bool] = None
+    attendance_duration: Optional[int] = None
+    attendance_percentage: Optional[float] = None
+    rating: Optional[int] = None
+    feedback: Optional[str] = None
+    course_interest: Optional[str] = None
+    lead_status: Optional[str] = None
+    sales_followup_status: Optional[str] = None
+    follow_up_date: Optional[datetime] = None
+
+
+class WebinarReportUpdate(BaseModel):
+    registered_learners: Optional[int] = None
+    attended_learners: Optional[int] = None
+    session_rating: Optional[float] = None
+    feedback_submitted: Optional[int] = None
+    average_watch_time: Optional[float] = None
+
+
+def _webinar_validation_error(data: WebinarCreate):
+    if data.duration is not None and data.duration <= 0:
+        return "Duration must be greater than 0."
+    if data.webinar_status and data.webinar_status not in webinar_ops.VALID_STATUSES:
+        return f"Status must be one of: {', '.join(webinar_ops.VALID_STATUSES)}"
+    return None
+
+
+@app.get("/webinars/leads")
+def webinars_leads(
+    mentor_name: Optional[str] = None,
+    lead_status: Optional[str] = None,
+    course_interest: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    db = SessionLocal()
+    try:
+        return webinar_ops.list_leads(
+            db, mentor_name=mentor_name, lead_status=lead_status,
+            course_interest=course_interest, date_from=date_from, date_to=date_to,
+        )
+    finally:
+        db.close()
+
+
+@app.get("/webinars/lead-profile")
+def webinars_lead_profile(email: str):
+    db = SessionLocal()
+    try:
+        profile = webinar_ops.lead_profile(db, email)
+        if not profile:
+            return {"success": False, "message": "No webinar activity found for this email."}
+        return {"success": True, "profile": profile}
+    finally:
+        db.close()
+
+
+@app.get("/webinars/mentor-performance/{mentor_name}")
+def webinars_mentor_performance(mentor_name: str):
+    """Supplementary webinar stats for one mentor — fetched by the existing
+    Mentor 360 detail page (/mentor-performance/{mentor}) as an additional
+    section, not a competing scoring system."""
+    db = SessionLocal()
+    try:
+        stats = webinar_ops.compute_mentor_webinar_performance(db, mentor_name)
+        if not stats:
+            return {"success": False, "message": "This mentor has no webinars on record."}
+        return {"success": True, "stats": stats}
+    finally:
+        db.close()
+
+
+@app.get("/webinars/payouts")
+def webinars_payouts_list(mentor_name: Optional[str] = None, payment_status: Optional[str] = None):
+    db = SessionLocal()
+    try:
+        return webinar_ops.list_webinar_payouts(db, mentor_name=mentor_name, payment_status=payment_status)
+    finally:
+        db.close()
+
+
+@app.get("/webinars/dashboard")
+def webinars_dashboard(
+    mentor_name: Optional[str] = None,
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    db = SessionLocal()
+    try:
+        return webinar_ops.compute_webinar_dashboard(
+            db, mentor_name=mentor_name, category=category, status=status, date_from=date_from, date_to=date_to,
+        )
+    finally:
+        db.close()
+
+
+@app.get("/webinars/business-insights")
+def webinars_business_insights(
+    mentor_name: Optional[str] = None,
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    db = SessionLocal()
+    try:
+        return webinar_ops.compute_business_insights(
+            db, mentor_name=mentor_name, category=category, status=status, date_from=date_from, date_to=date_to,
+        )
+    finally:
+        db.close()
+
+
+def _webinar_filter_description(mentor_name, category, status, date_from, date_to):
+    parts = []
+    if mentor_name:
+        parts.append(f"Mentor = {mentor_name}")
+    if category:
+        parts.append(f"Category = {category}")
+    if status:
+        parts.append(f"Status = {status}")
+    if date_from:
+        parts.append(f"From {date_from}")
+    if date_to:
+        parts.append(f"To {date_to}")
+    return "; ".join(parts) if parts else "All data (no filters applied)"
+
+
+@app.get("/webinars/export/excel")
+def webinars_export_excel(
+    mentor_name: Optional[str] = None,
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    db = SessionLocal()
+    try:
+        data = webinar_ops.build_export_data(db, mentor_name, category, status, date_from, date_to)
+        file_name = f"Webinar_Operations_Report_{datetime.utcnow().strftime('%Y-%m-%d')}.xlsx"
+
+        with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
+            pd.DataFrame([data["summary"]]).to_excel(writer, sheet_name="Executive Summary", index=False)
+            pd.DataFrame(data["webinar_rows"]).to_excel(writer, sheet_name="Webinars", index=False)
+            pd.DataFrame(data["lead_rows"]).to_excel(writer, sheet_name="Leads", index=False)
+            pd.DataFrame(data["payout_rows"]).to_excel(writer, sheet_name="Payouts", index=False)
+
+        return FileResponse(file_name, filename=file_name, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    finally:
+        db.close()
+
+
+@app.get("/webinars/export/pdf")
+def webinars_export_pdf(
+    mentor_name: Optional[str] = None,
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    db = SessionLocal()
+    try:
+        data = webinar_ops.build_export_data(db, mentor_name, category, status, date_from, date_to)
+        filter_desc = _webinar_filter_description(mentor_name, category, status, date_from, date_to)
+        pdf_path = generate_webinar_report_pdf(data, filter_desc)
+
+        return FileResponse(path=pdf_path, filename="Webinar_Operations_Report.pdf", media_type="application/pdf")
+    finally:
+        db.close()
+
+
+@app.post("/webinars/import/preview")
+async def webinars_import_preview(file: UploadFile = File(...)):
+    try:
+        file_bytes = await file.read()
+        return {"success": True, **webinar_ops.preview_import(file_bytes, file.filename)}
+    except Exception as e:
+        return {"success": False, "message": f"Could not read this file: {e}"}
+
+
+@app.post("/webinars")
+def webinars_create(data: WebinarCreate):
+    db = SessionLocal()
+    try:
+        error = _webinar_validation_error(data)
+        if error:
+            return {"success": False, "message": error}
+
+        mentor = db.query(Mentor).filter(Mentor.name == data.mentor_name).first()
+
+        webinar = ZoomAnalytics(
+            webinar_title=data.webinar_title,
+            description=data.description,
+            category=data.category,
+            target_audience=data.target_audience,
+            project_name=data.project_name,
+            batch_name=data.batch_name,
+            course_name=data.course_name,
+            mentor_name=data.mentor_name,
+            mentor_email=mentor.email if mentor else None,
+            session_date=data.session_date,
+            session_time=data.session_time,
+            duration=data.duration,
+            platform=data.platform,
+            webinar_status=data.webinar_status or "Scheduled",
+            created_at=datetime.utcnow().isoformat(),
+        )
+        db.add(webinar)
+        db.commit()
+        db.refresh(webinar)
+
+        return {"success": True, "message": "Webinar scheduled", "id": webinar.id}
+    finally:
+        db.close()
+
+
+@app.get("/webinars/{webinar_id}")
+def webinars_get(webinar_id: int):
+    db = SessionLocal()
+    try:
+        webinar = db.query(ZoomAnalytics).filter(ZoomAnalytics.id == webinar_id).first()
+        if not webinar:
+            return {"success": False, "message": "Webinar not found"}
+        return {"success": True, "webinar": {c.name: getattr(webinar, c.name) for c in ZoomAnalytics.__table__.columns}}
+    finally:
+        db.close()
+
+
+@app.patch("/webinars/{webinar_id}")
+def webinars_update(webinar_id: int, data: WebinarCreate):
+    db = SessionLocal()
+    try:
+        webinar = db.query(ZoomAnalytics).filter(ZoomAnalytics.id == webinar_id).first()
+        if not webinar:
+            return {"success": False, "message": "Webinar not found"}
+
+        error = _webinar_validation_error(data)
+        if error:
+            return {"success": False, "message": error}
+
+        mentor = db.query(Mentor).filter(Mentor.name == data.mentor_name).first()
+
+        webinar.webinar_title = data.webinar_title
+        webinar.description = data.description
+        webinar.category = data.category
+        webinar.target_audience = data.target_audience
+        webinar.project_name = data.project_name
+        webinar.batch_name = data.batch_name
+        webinar.course_name = data.course_name
+        webinar.mentor_name = data.mentor_name
+        webinar.mentor_email = mentor.email if mentor else webinar.mentor_email
+        webinar.session_date = data.session_date
+        webinar.session_time = data.session_time
+        webinar.duration = data.duration
+        webinar.platform = data.platform
+        webinar.webinar_status = data.webinar_status or webinar.webinar_status
+
+        db.commit()
+        return {"success": True, "message": "Webinar updated"}
+    finally:
+        db.close()
+
+
+@app.delete("/webinars/{webinar_id}")
+def webinars_delete(webinar_id: int):
+    db = SessionLocal()
+    try:
+        webinar = db.query(ZoomAnalytics).filter(ZoomAnalytics.id == webinar_id).first()
+        if not webinar:
+            return {"success": False, "message": "Webinar not found"}
+
+        has_participants = db.query(WebinarParticipant).filter(WebinarParticipant.webinar_id == webinar_id).first()
+        if has_participants:
+            return {"success": False, "message": "This webinar has participant records — mark it Cancelled instead of deleting."}
+
+        db.delete(webinar)
+        db.commit()
+        return {"success": True, "message": "Webinar deleted"}
+    finally:
+        db.close()
+
+
+@app.get("/webinars/{webinar_id}/participants")
+def webinars_participants_list(webinar_id: int):
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(WebinarParticipant)
+            .filter(WebinarParticipant.webinar_id == webinar_id)
+            .order_by(WebinarParticipant.registration_date.desc())
+            .all()
+        )
+        return [{c.name: getattr(r, c.name) for c in WebinarParticipant.__table__.columns} for r in rows]
+    finally:
+        db.close()
+
+
+@app.post("/webinars/{webinar_id}/participants")
+def webinars_participants_create(webinar_id: int, data: ParticipantCreate):
+    db = SessionLocal()
+    try:
+        webinar = db.query(ZoomAnalytics).filter(ZoomAnalytics.id == webinar_id).first()
+        if not webinar:
+            return {"success": False, "message": "Webinar not found"}
+
+        return webinar_ops.register_participant(
+            db, webinar_id,
+            name=data.name, email=data.email, phone=data.phone,
+            source=data.source, course_interest=data.course_interest,
+        )
+    finally:
+        db.close()
+
+
+@app.post("/webinars/{webinar_id}/import/participants")
+async def webinars_import_participants(webinar_id: int, file: UploadFile = File(...), column_mapping: str = Form(...)):
+    """column_mapping is a JSON string (sent as a form field alongside the
+    file) mapping target fields (name/email/phone/...) to the uploaded
+    file's actual column names — built from the /webinars/import/preview
+    step, so this works with any reasonably-shaped CSV/XLSX, not just one
+    hardcoded sheet layout."""
+    db = SessionLocal()
+    try:
+        try:
+            mapping = json.loads(column_mapping)
+        except json.JSONDecodeError:
+            return {"success": False, "message": "Invalid column mapping."}
+
+        file_bytes = await file.read()
+        return webinar_ops.commit_participant_import(db, webinar_id, file_bytes, file.filename, mapping)
+    except Exception as e:
+        return {"success": False, "message": f"Import failed: {e}"}
+    finally:
+        db.close()
+
+
+@app.patch("/webinars/{webinar_id}/participants/{participant_id}")
+def webinars_participants_update(webinar_id: int, participant_id: int, data: ParticipantUpdate):
+    db = SessionLocal()
+    try:
+        participant = (
+            db.query(WebinarParticipant)
+            .filter(WebinarParticipant.id == participant_id, WebinarParticipant.webinar_id == webinar_id)
+            .first()
+        )
+        if not participant:
+            return {"success": False, "message": "Participant not found"}
+
+        if data.rating is not None and not (1 <= data.rating <= 5):
+            return {"success": False, "message": "Rating must be between 1 and 5."}
+        if data.lead_status is not None and data.lead_status not in webinar_ops.VALID_LEAD_STATUSES:
+            return {"success": False, "message": f"Lead status must be one of: {', '.join(webinar_ops.VALID_LEAD_STATUSES)}"}
+
+        for field, value in data.dict(exclude_unset=True).items():
+            setattr(participant, field, value)
+
+        db.commit()
+        return {"success": True, "message": "Participant updated"}
+    finally:
+        db.close()
+
+
+@app.get("/webinars/{webinar_id}/report")
+def webinars_report_get(webinar_id: int):
+    db = SessionLocal()
+    try:
+        report = webinar_ops.compute_webinar_report(db, webinar_id)
+        if not report:
+            return {"success": False, "message": "Webinar not found"}
+        return {"success": True, **report}
+    finally:
+        db.close()
+
+
+@app.patch("/webinars/{webinar_id}/report")
+def webinars_report_update(webinar_id: int, data: WebinarReportUpdate):
+    """Manual report entry path — for webinars with no participant-level
+    data, ops can still record the aggregate outcome directly onto the
+    ZoomAnalytics row."""
+    db = SessionLocal()
+    try:
+        webinar = db.query(ZoomAnalytics).filter(ZoomAnalytics.id == webinar_id).first()
+        if not webinar:
+            return {"success": False, "message": "Webinar not found"}
+
+        if data.registered_learners is not None and data.attended_learners is not None:
+            if data.attended_learners > data.registered_learners:
+                return {"success": False, "message": "Attended cannot exceed registered."}
+
+        for field, value in data.dict(exclude_unset=True).items():
+            setattr(webinar, field, value)
+
+        if webinar.registered_learners:
+            webinar.attendance_rate = round((webinar.attended_learners or 0) / webinar.registered_learners * 100, 1)
+
+        db.commit()
+        return {"success": True, "message": "Report updated"}
+    finally:
+        db.close()
+
+
+@app.get("/webinars/{webinar_id}/payout")
+def webinars_payout_preview(webinar_id: int):
+    db = SessionLocal()
+    try:
+        webinar = db.query(ZoomAnalytics).filter(ZoomAnalytics.id == webinar_id).first()
+        if not webinar:
+            return {"success": False, "message": "Webinar not found"}
+
+        mentor = db.query(Mentor).filter(Mentor.name == webinar.mentor_name).first()
+        if not mentor or not mentor.hourly_rate:
+            return {"success": False, "message": "No hourly rate on file for this mentor."}
+
+        amount = webinar_ops.calculate_payout(mentor.hourly_rate, webinar.duration)
+        existing = db.query(Invoice).filter(Invoice.webinar_id == webinar_id, Invoice.source_type == "webinar").first()
+
+        return {
+            "success": True,
+            "mentor_name": webinar.mentor_name,
+            "duration_minutes": webinar.duration,
+            "hourly_rate": mentor.hourly_rate,
+            "estimated_amount": amount,
+            "already_invoiced": existing is not None,
+            "invoice_id": existing.id if existing else None,
+        }
+    finally:
+        db.close()
+
+
+@app.post("/webinars/{webinar_id}/payout")
+def webinars_payout_create(webinar_id: int):
+    db = SessionLocal()
+    try:
+        return webinar_ops.create_webinar_payout(db, webinar_id)
     finally:
         db.close()

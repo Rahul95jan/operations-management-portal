@@ -18,6 +18,9 @@ class ZoomAnalytics(Base):
     session_id = Column(Integer)
     meeting_id = Column(String)
     webinar_title = Column(String)
+    description = Column(String, nullable=True)
+    category = Column(String, nullable=True)
+    target_audience = Column(String, nullable=True)
 
     project_name = Column(String)
     batch_name = Column(String)

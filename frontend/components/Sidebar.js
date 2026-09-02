@@ -17,6 +17,14 @@ import {
   Clock,
   TrendingUp,
   Award,
+  Gauge,
+  Radio,
+  Presentation,
+  LayoutDashboard,
+  UserPlus,
+  Wallet,
+  Upload,
+  UserSearch,
   Settings as SettingsIcon,
   LogOut,
   ChevronDown,
@@ -31,6 +39,10 @@ export default function Sidebar() {
       router.pathname.startsWith("/resource-analytics")
   );
 
+  const [webinarsOpen, setWebinarsOpen] = useState(
+    router.pathname.startsWith("/webinars") || router.pathname === "/zoom-analytics"
+  );
+
   const logout = () => {
     localStorage.removeItem("loggedIn");
     router.push("/login");
@@ -41,6 +53,7 @@ export default function Sidebar() {
     router.pathname === "/resources" ||
     router.pathname.startsWith("/resources/") ||
     router.pathname.startsWith("/resource-analytics");
+  const webinarsGroupActive = router.pathname.startsWith("/webinars") || router.pathname === "/zoom-analytics";
 
   return (
     <div className="sidebar">
@@ -60,12 +73,39 @@ export default function Sidebar() {
           <NavItem href="/mentors" icon={Users} label="Mentors" active={isActive("/mentors")} />
           <NavItem href="/batches" icon={GraduationCap} label="Batches" active={isActive("/batches")} />
           <NavItem href="/analytics" icon={BarChart3} label="Analytics" active={isActive("/analytics")} />
+          <NavItem href="/mentor-performance" icon={Gauge} label="Mentor 360" active={isActive("/mentor-performance")} />
           <NavItem href="/invoice-generator" icon={Receipt} label="Invoice Generator" active={isActive("/invoice-generator")} />
 
           <NavGroupLabel>Learner Feedback</NavGroupLabel>
           <NavItem href="/nps" icon={ClipboardList} label="NPS Form" active={isActive("/nps")} />
           <NavItem href="/nps/analytics" icon={PieChart} label="NPS Analytics" active={isActive("/nps/analytics")} />
-          <NavItem href="/zoom-analytics" icon={Video} label="Zoom Analytics" active={isActive("/zoom-analytics")} />
+
+          <NavGroupLabel>Webinars</NavGroupLabel>
+          <li className={`nav-item ${webinarsGroupActive ? "nav-item-parent-active" : ""}`}>
+            <div className="nav-parent-row" onClick={() => setWebinarsOpen((prev) => !prev)}>
+              <Link href="/webinars" className="nav-link nav-link-parent">
+                <span className="nav-icon">
+                  <Radio size={16} strokeWidth={2} />
+                </span>
+                <span className="nav-label">Webinars</span>
+              </Link>
+              <span className={`nav-chevron ${webinarsOpen ? "nav-chevron-open" : ""}`}>
+                <ChevronDown size={14} strokeWidth={2.5} />
+              </span>
+            </div>
+
+            <div className={`nav-submenu ${webinarsOpen ? "nav-submenu-open" : ""}`}>
+              <ul className="nav-sublist">
+                <SubNavItem href="/webinars/dashboard" icon={LayoutDashboard} label="Webinar Dashboard" active={isActive("/webinars/dashboard")} />
+                <SubNavItem href="/webinars" icon={Presentation} label="Webinar Scheduler" active={isActive("/webinars")} />
+                <SubNavItem href="/webinars/leads" icon={UserPlus} label="Leads / Conversion" active={isActive("/webinars/leads")} />
+                <SubNavItem href="/webinars/payouts" icon={Wallet} label="Mentor Payouts" active={isActive("/webinars/payouts")} />
+                <SubNavItem href="/webinars/import" icon={Upload} label="Import Participants" active={isActive("/webinars/import")} />
+                <SubNavItem href="/webinars/learner-360" icon={UserSearch} label="Learner 360" active={isActive("/webinars/learner-360")} />
+                <SubNavItem href="/zoom-analytics" icon={Video} label="Zoom Analytics" active={isActive("/zoom-analytics")} />
+              </ul>
+            </div>
+          </li>
 
           <NavGroupLabel>Resource Portal</NavGroupLabel>
           <li className={`nav-item ${resourcesGroupActive ? "nav-item-parent-active" : ""}`}>

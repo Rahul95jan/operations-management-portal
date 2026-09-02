@@ -39,12 +39,34 @@ def _refresh_active_requirements(db):
     return [r for r in requirements if r.status != "Not Required"]
 
 
-def compute_mentor_performance(db):
+def compute_mentor_performance(db, date_from=None, date_to=None, course_name=None, batch_name=None):
     """Resource Compliance Score = On-Time Submissions / Total Required Submissions x 100,
-    per your spec's own formula — same value as on-time %, shown as two columns intentionally."""
+    per your spec's own formula — same value as on-time %, shown as two columns intentionally.
+
+    date_from/date_to/course_name/batch_name default to None, preserving the exact
+    original unfiltered behavior for existing callers (e.g. /resource-analytics/mentors).
+    When given, they filter to requirements whose session falls in that date range
+    and/or course/batch (ResourceRequirement itself has no date/course/batch fields,
+    so this joins via session_id -> Session, same Python-dict-join convention used
+    everywhere else in this codebase)."""
     from resource_tracking import compute_delay
 
     active = _refresh_active_requirements(db)
+
+    if date_from or date_to or course_name or batch_name:
+        from models.session import Session as SessionModel
+
+        sess_q = db.query(SessionModel)
+        if course_name:
+            sess_q = sess_q.filter(SessionModel.course_name == course_name)
+        if batch_name:
+            sess_q = sess_q.filter(SessionModel.batch_name == batch_name)
+        if date_from:
+            sess_q = sess_q.filter(SessionModel.session_date >= date_from)
+        if date_to:
+            sess_q = sess_q.filter(SessionModel.session_date <= date_to)
+        allowed_session_ids = {s.id for s in sess_q.all()}
+        active = [r for r in active if r.session_id in allowed_session_ids]
 
     groups = defaultdict(list)
     for r in active:

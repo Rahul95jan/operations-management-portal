@@ -10,6 +10,8 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [schedulerStatus, setSchedulerStatus] = useState(null);
+  const [mentorConfig, setMentorConfig] = useState(null);
+  const [webinarConfig, setWebinarConfig] = useState(null);
 
   const load = () => {
     fetch(`${API}/settings`)
@@ -23,6 +25,16 @@ export default function Settings() {
       .then((res) => res.json())
       .then(setSchedulerStatus)
       .catch(() => setSchedulerStatus(null));
+
+    fetch(`${API}/mentor-360/config`)
+      .then((res) => res.json())
+      .then(setMentorConfig)
+      .catch(() => setMentorConfig(null));
+
+    fetch(`${API}/webinars/config`)
+      .then((res) => res.json())
+      .then(setWebinarConfig)
+      .catch(() => setWebinarConfig(null));
   };
 
   useEffect(load, []);
@@ -84,7 +96,8 @@ export default function Settings() {
               <div className="page-hero-eyebrow">Configuration</div>
               <h1 className="page-hero-title">⚙️ Settings</h1>
               <p className="page-hero-subtitle">
-                Live configuration for the Resource Portal — changes take effect immediately, no restart needed.
+                One place for how every module in the portal behaves — Resource Portal settings are live and
+                editable here; Mentor 360 and Webinar Operations are shown read-only for now (see each card for why).
               </p>
             </div>
             <div className={`page-hero-stat ${liveStatus === "Active" ? "" : "page-hero-stat-muted"}`}>
@@ -99,6 +112,8 @@ export default function Settings() {
             </div>
           ) : (
             <>
+              <GroupHeader icon="📦" title="Resource Portal" />
+
               <Section
                 icon="✉️"
                 title="Email Notifications"
@@ -233,7 +248,7 @@ export default function Settings() {
                 </p>
               </Section>
 
-              <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "36px" }}>
                 <button onClick={handleSave} disabled={saving || !dirty} className="btn btn-save">
                   {saving ? "Saving..." : "Save Settings"}
                 </button>
@@ -243,6 +258,57 @@ export default function Settings() {
                   <span className="updated-text">Last updated {new Date(settings.updated_at).toLocaleString()}</span>
                 )}
               </div>
+
+              <GroupHeader icon="🎯" title="Mentor 360" />
+              <Section
+                icon="⚖️"
+                title="Business Score Weights"
+                description="How the 8 dimensions combine into the overall Mentor Business Score. Currently fixed in code, not database-backed — shown here for reference until it's made editable."
+                delay={0}
+              >
+                {mentorConfig ? (
+                  <>
+                    <div className="weights-grid">
+                      {Object.entries(mentorConfig.dimension_weights).map(([key, weight]) => (
+                        <div key={key} className="weight-row">
+                          <span className="weight-label">{key.replace(/_/g, " ")}</span>
+                          <span className="weight-value">{weight}%</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="hint-text" style={{ marginTop: "14px" }}>
+                      Classification bands: {mentorConfig.classification_bands.map((b) => `${b.label} ≥${b.min_score}`).join(" · ")}
+                    </p>
+                  </>
+                ) : (
+                  <p className="hint-text">Unable to load — is the backend running?</p>
+                )}
+              </Section>
+
+              <GroupHeader icon="🎥" title="Webinar Operations" />
+              <Section
+                icon="🏷️"
+                title="Status Vocabularies"
+                description="The fixed status values used across the Webinar Scheduler and Leads pages. Currently fixed in code, not database-backed — shown here for reference until it's made editable."
+                delay={0}
+              >
+                {webinarConfig ? (
+                  <>
+                    <Field label="Webinar Status">
+                      <div className="chip-row">
+                        {webinarConfig.webinar_statuses.map((s) => <span key={s} className="ref-chip">{s}</span>)}
+                      </div>
+                    </Field>
+                    <Field label="Lead Status">
+                      <div className="chip-row">
+                        {webinarConfig.lead_statuses.map((s) => <span key={s} className="ref-chip">{s}</span>)}
+                      </div>
+                    </Field>
+                  </>
+                ) : (
+                  <p className="hint-text">Unable to load — is the backend running?</p>
+                )}
+              </Section>
             </>
           )}
         </div>
@@ -392,6 +458,49 @@ export default function Settings() {
             margin-top: 4px;
           }
 
+          .weights-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+          }
+
+          .weight-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            background: #f8fafc;
+            border: 1px solid #eef2f7;
+            border-radius: 10px;
+          }
+
+          .weight-label {
+            font-size: 13px;
+            color: #334155;
+            text-transform: capitalize;
+          }
+
+          .weight-value {
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
+          }
+
+          .chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+          }
+
+          .ref-chip {
+            background: #eef2ff;
+            color: #3730a3;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 5px 12px;
+            border-radius: 999px;
+          }
+
           .btn {
             border: none;
             border-radius: 10px;
@@ -476,6 +585,16 @@ export default function Settings() {
         `}</style>
       </>
     </ProtectedRoute>
+  );
+}
+
+function GroupHeader({ icon, title }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "8px 0 14px" }}>
+      <span style={{ fontSize: "18px" }}>{icon}</span>
+      <h2 style={{ margin: 0, fontSize: "13px", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: "#64748b" }}>{title}</h2>
+      <div style={{ flex: 1, height: "1px", background: "#e2e8f0" }} />
+    </div>
   );
 }
 

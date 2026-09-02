@@ -43,7 +43,7 @@ from resource_export import build_export_rows
 from resource_tokens import get_or_create_session_token, get_session_by_token, submission_url
 from resource_scheduling import compute_due_at
 from resource_defaults import DEFAULT_REQUIREMENTS
-from mentor_performance import get_mentor_scorecard, get_mentor_trend
+from mentor_performance import get_mentor_scorecard, get_mentor_trend, DIMENSION_WEIGHTS, CLASSIFICATION_BANDS
 import os
 
 OPS_NOTIFICATION_EMAIL = os.getenv("OPS_NOTIFICATION_EMAIL")
@@ -4089,6 +4089,16 @@ def _mentor_360_executive_summary(rows):
     }
 
 
+@app.get("/mentor-360/config")
+def mentor_360_config():
+    """Read-only — surfaces the scoring constants (currently plain Python
+    config, not DB-backed) for display on the Settings page."""
+    return {
+        "dimension_weights": DIMENSION_WEIGHTS,
+        "classification_bands": [{"min_score": t, "label": l} for t, l in CLASSIFICATION_BANDS],
+    }
+
+
 @app.get("/mentor-360/dashboard")
 def mentor_360_dashboard(
     course_name: Optional[str] = None,
@@ -4402,6 +4412,16 @@ def webinars_mentor_performance(mentor_name: str):
         return {"success": True, "stats": stats}
     finally:
         db.close()
+
+
+@app.get("/webinars/config")
+def webinars_config():
+    """Read-only — surfaces the status/lead-status vocabularies (currently
+    plain Python constants, not DB-backed) for display on the Settings page."""
+    return {
+        "webinar_statuses": webinar_ops.VALID_STATUSES,
+        "lead_statuses": webinar_ops.VALID_LEAD_STATUSES,
+    }
 
 
 @app.get("/webinars/payouts")

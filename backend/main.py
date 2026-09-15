@@ -1,7 +1,7 @@
 import json
 import pandas as pd
 from datetime import datetime, timedelta
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from fastapi import FastAPI, Depends, Form, File, UploadFile
 from typing import Optional
@@ -44,6 +44,13 @@ from resource_tokens import get_or_create_session_token, get_session_by_token, s
 from resource_scheduling import compute_due_at
 from resource_defaults import DEFAULT_REQUIREMENTS
 from mentor_performance import get_mentor_scorecard, get_mentor_trend, DIMENSION_WEIGHTS, CLASSIFICATION_BANDS
+import session_reports
+from schemas import (
+    SessionReportUpdate,
+    ReportStatusUpdate,
+    SessionAttendanceCreate,
+    SessionAttendanceUpdate,
+)
 import os
 
 OPS_NOTIFICATION_EMAIL = os.getenv("OPS_NOTIFICATION_EMAIL")
@@ -62,7 +69,7 @@ from schemas import NPSCreate
 from models.session_analytics import SessionAnalytics
 from database import engine
 from models.user import Base
-from pdf_generator import generate_invoice, generate_webinar_report, generate_nps_report, generate_analytics_report, generate_mentor_performance_report, generate_webinar_report_pdf
+from pdf_generator import generate_invoice, generate_webinar_report, generate_nps_report, generate_analytics_report, generate_mentor_performance_report, generate_webinar_report_pdf, generate_session_report_pdf
 from nps_insights import compute_nps_insights
 from models.invoice import Invoice
 from schemas import InvoiceCreate
@@ -4790,3 +4797,204 @@ def webinars_payout_create(webinar_id: int):
         return webinar_ops.create_webinar_payout(db, webinar_id)
     finally:
         db.close()
+
+
+# ==========================================================
+# SESSION REPORTS
+# ==========================================================
+
+def _session_report_filters(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    status: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    course_name: Optional[str] = None,
+    session_type: Optional[str] = None,
+    recording_status: Optional[str] = None,
+    report_status: Optional[str] = None,
+):
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "status": status,
+        "mentor_name": mentor_name,
+        "batch_name": batch_name,
+        "course_name": course_name,
+        "session_type": session_type,
+        "recording_status": recording_status,
+        "report_status": report_status,
+    }
+
+
+@app.get("/session-reports")
+def get_session_reports(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    status: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    course_name: Optional[str] = None,
+    session_type: Optional[str] = None,
+    recording_status: Optional[str] = None,
+    report_status: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: str = "session_date",
+    sort_dir: str = "desc",
+    db: Session = Depends(get_db),
+):
+    filters = _session_report_filters(
+        date_from, date_to, status, mentor_name, batch_name,
+        course_name, session_type, recording_status, report_status,
+    )
+    return session_reports.list_session_reports(db, filters, page, page_size, sort_by, sort_dir, search)
+
+
+@app.get("/session-reports/summary")
+def get_session_reports_summary(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    status: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    course_name: Optional[str] = None,
+    session_type: Optional[str] = None,
+    recording_status: Optional[str] = None,
+    report_status: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    filters = _session_report_filters(
+        date_from, date_to, status, mentor_name, batch_name,
+        course_name, session_type, recording_status, report_status,
+    )
+    return session_reports.session_reports_summary(db, filters)
+
+
+@app.get("/session-reports/export")
+def export_session_reports(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    status: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    course_name: Optional[str] = None,
+    session_type: Optional[str] = None,
+    recording_status: Optional[str] = None,
+    report_status: Optional[str] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    filters = _session_report_filters(
+        date_from, date_to, status, mentor_name, batch_name,
+        course_name, session_type, recording_status, report_status,
+    )
+    csv_content = session_reports.build_csv(db, filters, search)
+
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=session_reports.csv"},
+    )
+
+
+@app.get("/session-reports/{session_id}")
+def get_session_report_detail(session_id: int, db: Session = Depends(get_db)):
+    bundle = session_reports.session_detail_bundle(db, session_id)
+    if not bundle:
+        return {"success": False, "message": "Session not found"}
+    return {"success": True, **bundle}
+
+
+@app.get("/session-reports/{session_id}/live-details")
+def get_session_live_details(session_id: int, db: Session = Depends(get_db)):
+    details = session_reports.live_details_bundle(db, session_id)
+    if not details:
+        return {"success": False, "message": "Session not found"}
+    return {"success": True, **details}
+
+
+@app.get("/session-reports/{session_id}/attendance")
+def get_session_attendance(session_id: int, db: Session = Depends(get_db)):
+    bundle = session_reports.attendance_bundle(db, session_id)
+    if not bundle:
+        return {"success": False, "message": "Session not found"}
+    return {"success": True, **bundle}
+
+
+@app.post("/session-reports/{session_id}/attendance")
+def create_session_attendance_row(session_id: int, data: SessionAttendanceCreate, db: Session = Depends(get_db)):
+    row = session_reports.add_attendance_row(db, session_id, data.dict())
+    return {"success": True, "id": row.id}
+
+
+@app.put("/session-reports/{session_id}/attendance/{attendance_id}")
+def update_session_attendance_row(session_id: int, attendance_id: int, data: SessionAttendanceUpdate, db: Session = Depends(get_db)):
+    row = session_reports.update_attendance_row(db, attendance_id, data.dict(exclude_unset=True))
+    if not row:
+        return {"success": False, "message": "Attendance record not found"}
+    return {"success": True}
+
+
+@app.delete("/session-reports/{session_id}/attendance/{attendance_id}")
+def delete_session_attendance_row(session_id: int, attendance_id: int, db: Session = Depends(get_db)):
+    deleted = session_reports.delete_attendance_row(db, attendance_id)
+    if not deleted:
+        return {"success": False, "message": "Attendance record not found"}
+    return {"success": True}
+
+
+@app.get("/session-reports/{session_id}/feedback")
+def get_session_feedback(session_id: int, db: Session = Depends(get_db)):
+    bundle = session_reports.feedback_bundle(db, session_id)
+    if not bundle:
+        return {"success": False, "message": "Session not found"}
+    return {"success": True, **bundle}
+
+
+@app.post("/session-reports/{session_id}")
+def create_session_report(session_id: int, data: SessionReportUpdate, db: Session = Depends(get_db)):
+    if not session_reports.get_session(db, session_id):
+        return {"success": False, "message": "Session not found"}
+    report = session_reports.upsert_report(db, session_id, data.dict(exclude_unset=True))
+    return {"success": True, "id": report.id}
+
+
+@app.put("/session-reports/{session_id}")
+def update_session_report(session_id: int, data: SessionReportUpdate, db: Session = Depends(get_db)):
+    if not session_reports.get_session(db, session_id):
+        return {"success": False, "message": "Session not found"}
+    session_reports.upsert_report(db, session_id, data.dict(exclude_unset=True))
+    return {"success": True, "message": "Report updated"}
+
+
+@app.put("/session-reports/{session_id}/status")
+def update_session_report_status(session_id: int, data: ReportStatusUpdate, db: Session = Depends(get_db)):
+    if not session_reports.get_session(db, session_id):
+        return {"success": False, "message": "Session not found"}
+    session_reports.update_report_status(db, session_id, data.report_status, data.reviewed_by)
+    return {"success": True, "message": "Report status updated"}
+
+
+@app.get("/session-reports/{session_id}/download")
+def download_session_report(session_id: int, db: Session = Depends(get_db)):
+    bundle = session_reports.session_detail_bundle(db, session_id)
+    if not bundle:
+        return {"success": False, "message": "Session not found"}
+
+    attendance = session_reports.attendance_bundle(db, session_id)
+    feedback = session_reports.feedback_bundle(db, session_id)
+
+    pdf_path = generate_session_report_pdf(bundle, attendance, feedback)
+
+    return FileResponse(
+        path=pdf_path,
+        filename=f"Session_Report_{session_id}.pdf",
+        media_type="application/pdf",
+    )
+
+
+@app.get("/dashboard/session-reports-today")
+def get_dashboard_session_reports_today(db: Session = Depends(get_db)):
+    return session_reports.dashboard_today_summary(db)

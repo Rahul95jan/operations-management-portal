@@ -23,8 +23,22 @@ function greeting(now) {
   return "Good evening";
 }
 
+function useSessionReportsToday() {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    fetch("http://127.0.0.1:8000/dashboard/session-reports-today")
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => setData(null));
+  }, []);
+
+  return data;
+}
+
 export default function Home() {
   const now = useClock();
+  const sessionReportsToday = useSessionReportsToday();
 
   return (
     <ProtectedRoute>
@@ -123,6 +137,22 @@ export default function Home() {
               <li>Generate mentor invoices</li>
               <li>Review learner feedback</li>
             </InfoPanel>
+          </div>
+
+          {/* Session Reports summary */}
+          <div className="session-reports-panel">
+            <div className="session-reports-panel-header">
+              <h2 className="section-heading" style={{ margin: 0 }}>Session Reports</h2>
+              <Link href="/session-reports" className="view-all-link">View All Reports →</Link>
+            </div>
+
+            <div className="session-reports-kpis">
+              <MiniStat label="Sessions Today" value={sessionReportsToday?.sessions_today} color="#3b82f6" />
+              <MiniStat label="Completed Today" value={sessionReportsToday?.completed_today} color="#16a34a" />
+              <MiniStat label="Live Now" value={sessionReportsToday?.live_now} color="#ef4444" />
+              <MiniStat label="Attendance Today" value={sessionReportsToday ? `${sessionReportsToday.attendance_today}%` : undefined} color="#22c55e" />
+              <MiniStat label="Pending Reports" value={sessionReportsToday?.pending_reports} color="#f59e0b" />
+            </div>
           </div>
         </div>
 
@@ -257,6 +287,41 @@ export default function Home() {
             margin-top: 8px;
           }
 
+          .session-reports-panel {
+            margin-top: 32px;
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 22px 24px;
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+            border: 1px solid #eef2f7;
+          }
+
+          .session-reports-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 16px;
+          }
+
+          .view-all-link {
+            font-size: 13px;
+            font-weight: 700;
+            color: #d97706;
+            text-decoration: none;
+          }
+
+          .view-all-link:hover {
+            text-decoration: underline;
+          }
+
+          .session-reports-kpis {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 14px;
+          }
+
           @keyframes heroShift {
             0% {
               background-position: 0% 50%;
@@ -378,6 +443,19 @@ function QuickCard({ title, link, icon, accent = "#3b82f6" }) {
         <h3 style={{ margin: 0, fontSize: "15px", color: "#1e293b" }}>{title}</h3>
       </div>
     </Link>
+  );
+}
+
+function MiniStat({ label, value, color }) {
+  return (
+    <div style={{ background: "#f8fafc", borderLeft: `3px solid ${color}`, padding: "12px 14px", borderRadius: "10px" }}>
+      <div style={{ fontSize: "10.5px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", color: "#94a3b8", marginBottom: "4px" }}>
+        {label}
+      </div>
+      <div style={{ fontSize: "18px", fontWeight: 800, color, fontVariantNumeric: "tabular-nums" }}>
+        {value === null || value === undefined ? "—" : value}
+      </div>
+    </div>
   );
 }
 

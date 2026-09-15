@@ -1486,3 +1486,210 @@ def generate_webinar_report_pdf(data, filter_desc="All data"):
 
     return filename
 
+
+# =====================================================
+# Session Report PDF
+# =====================================================
+
+def _session_report_footer(canvas_obj, doc_obj):
+    canvas_obj.saveState()
+    canvas_obj.setStrokeColor(BORDER)
+    canvas_obj.setLineWidth(0.5)
+    canvas_obj.line(16 * mm, 14 * mm, 194 * mm, 14 * mm)
+    canvas_obj.setFont("Helvetica", 8)
+    canvas_obj.setFillColor(colors.HexColor("#94a3b8"))
+    canvas_obj.drawCentredString(105 * mm, 10 * mm, f"Krish Naik Academy  ·  Session Report  ·  Page {doc_obj.page}")
+    canvas_obj.restoreState()
+
+
+def generate_session_report_pdf(bundle, attendance, feedback):
+    """bundle is the dict returned by session_reports.session_detail_bundle();
+    attendance/feedback are the dicts from attendance_bundle()/feedback_bundle()."""
+
+    if not os.path.exists("pdfs"):
+        os.makedirs("pdfs")
+
+    session_id = bundle["session_info"]["id"]
+    filename = f"pdfs/session_report_{session_id}.pdf"
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+
+    doc = SimpleDocTemplate(filename, pagesize=A4, topMargin=0, bottomMargin=22 * mm, leftMargin=16 * mm, rightMargin=16 * mm)
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle("SrTitleWhite", parent=styles["Normal"], textColor=colors.white, fontSize=18, fontName="Helvetica-Bold", leading=22)
+    subtitle_style = ParagraphStyle("SrSubtitleWhite", parent=styles["Normal"], textColor=YELLOW, fontSize=10, leading=13)
+    section_style = ParagraphStyle("SrSection", parent=styles["Heading2"], textColor=NAVY, fontSize=13, spaceBefore=16, spaceAfter=8)
+    body_style = ParagraphStyle("SrBody", parent=styles["Normal"], textColor=SLATE, fontSize=10, leading=14)
+    kpi_label_style = ParagraphStyle("SrKpiLabel", parent=styles["Normal"], textColor=colors.HexColor("#94a3b8"), fontSize=7.5, fontName="Helvetica-Bold", alignment=1, leading=10)
+    kpi_value_style = ParagraphStyle("SrKpiValue", parent=styles["Normal"], textColor=NAVY, fontSize=14, fontName="Helvetica-Bold", alignment=1)
+
+    def bullet(title):
+        return Paragraph(f"<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;{title}", section_style)
+
+    def kpi_grid(pairs, per_row=4):
+        rows = []
+        for i in range(0, len(pairs), per_row):
+            chunk = pairs[i:i + per_row]
+            labels = [Paragraph(lbl.upper(), kpi_label_style) for lbl, _ in chunk]
+            values = [Paragraph(str(val), kpi_value_style) for _, val in chunk]
+            while len(labels) < per_row:
+                labels.append("")
+                values.append("")
+            rows.append(labels)
+            rows.append(values)
+
+        col_w = (178 / per_row) * mm
+        table = Table(rows, colWidths=[col_w] * per_row)
+        style = [
+            ("BACKGROUND", (0, 0), (-1, -1), BG_ALT),
+            ("BOX", (0, 0), (-1, -1), 0.75, BORDER),
+            ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+        ]
+        for r in range(0, len(rows), 2):
+            style.append(("TOPPADDING", (0, r), (-1, r), 10))
+            style.append(("BOTTOMPADDING", (0, r), (-1, r), 2))
+            style.append(("TOPPADDING", (0, r + 1), (-1, r + 1), 2))
+            style.append(("BOTTOMPADDING", (0, r + 1), (-1, r + 1), 12))
+            if r > 0:
+                style.append(("LINEABOVE", (0, r), (-1, r), 0.5, BORDER))
+        table.setStyle(TableStyle(style))
+        return table
+
+    def data_table(headers, rows, col_widths, empty_message="No data yet."):
+        if not rows:
+            return Paragraph(empty_message, body_style)
+        header_cells = [Paragraph(h, ParagraphStyle("SrTH", parent=styles["Normal"], textColor=colors.white, fontSize=9, fontName="Helvetica-Bold")) for h in headers]
+        table_data = [header_cells] + rows
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_ALT]),
+            ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        return table
+
+    def field(label, value):
+        return Paragraph(f"<b>{label}:</b> {value if value not in (None, '') else '—'}", body_style)
+
+    elements = []
+
+    if os.path.exists(LOGO_PATH):
+        logo_cell = Image(LOGO_PATH, width=30 * mm, height=11.5 * mm)
+    else:
+        logo_cell = ""
+
+    info = bundle["session_info"]
+
+    header_text = Table(
+        [[Paragraph("Krish Naik Academy", title_style)],
+         [Paragraph(f"Session Report &nbsp;&bull;&nbsp; Generated {datetime.now().strftime('%d %b %Y')}", subtitle_style)],
+         [Paragraph(f"Session #{info['id']}: {info['topic'] or '—'}", subtitle_style)]],
+        colWidths=[130 * mm],
+    )
+    header_text.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+
+    header = Table([[logo_cell, header_text]], colWidths=[38 * mm, 140 * mm])
+    header.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, 0), 6 * mm),
+        ("RIGHTPADDING", (0, 0), (0, 0), 2 * mm),
+        ("LEFTPADDING", (1, 0), (1, 0), 4 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 16),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+    ]))
+    elements.append(header)
+    elements.append(HRFlowable(width="100%", thickness=3, color=GOLD_LIGHT, spaceBefore=0, spaceAfter=18))
+
+    # Session information
+    elements.append(bullet("Session Information"))
+    elements.append(field("Date / Time", f"{info['session_date'] or '—'} {info['session_time'] or ''}"))
+    elements.append(field("Course / Batch", f"{info['course_name'] or '—'} / {info['batch_name'] or '—'}"))
+    elements.append(field("Mentor", f"{info['mentor_name'] or '—'} ({info['mentor_email'] or '—'})"))
+    elements.append(field("Session Type", info["session_type"]))
+    elements.append(field("Status", info["status"]))
+    elements.append(Spacer(1, 8))
+
+    # Performance KPIs
+    perf = bundle["performance"]
+    elements.append(bullet("Session Performance"))
+    elements.append(kpi_grid([
+        ("Scheduled Duration", f"{perf['scheduled_duration'] or '—'} min"),
+        ("Actual Duration", f"{perf['actual_duration'] or '—'} min"),
+        ("Attendance %", f"{perf['attendance_percentage']}%"),
+        ("SLA Status", perf["sla_status"]),
+        ("Completion %", f"{perf['completion_percentage']}%" if perf["completion_percentage"] is not None else "N/A"),
+        ("Recording", "Available" if perf["recording_available"] else "Not Available"),
+        ("Report Status", bundle["report"]["report_status"]),
+        ("Mentor Feedback", "Submitted" if perf["mentor_feedback_submitted"] else "Pending"),
+    ]))
+    elements.append(Spacer(1, 10))
+
+    # Mentor information
+    mentor = bundle["mentor_info"]
+    elements.append(bullet("Mentor Information"))
+    elements.append(field("Name", mentor["mentor_name"]))
+    elements.append(field("Email", mentor["mentor_email"]))
+    elements.append(field("Expertise", mentor["expertise"]))
+    elements.append(field("Session Count", mentor["session_count"]))
+    elements.append(field("Average Feedback Score", mentor["average_feedback_score"]))
+    elements.append(Spacer(1, 8))
+
+    # Attendance summary + table
+    elements.append(bullet("Attendance Summary"))
+    elements.append(kpi_grid([
+        ("Total Learners", attendance["total_learners"]),
+        ("Present", attendance["present"]),
+        ("Absent", attendance["absent"]),
+        ("Late", attendance["late"]),
+    ]))
+    elements.append(Spacer(1, 8))
+
+    learner_rows = [
+        [l["learner_name"] or "—", l["learner_email"] or "—", l["join_time"] or "—", l["leave_time"] or "—", l["attendance_status"]]
+        for l in attendance["learners"][:40]
+    ]
+    elements.append(data_table(
+        ["Learner", "Email", "Join Time", "Leave Time", "Status"],
+        learner_rows,
+        [40 * mm, 55 * mm, 26 * mm, 26 * mm, 25 * mm],
+        "No individual attendance records captured for this session yet.",
+    ))
+    elements.append(Spacer(1, 10))
+
+    # Recording
+    elements.append(bullet("Recording"))
+    elements.append(field("Platform", info.get("platform")))
+    elements.append(field("Recording Link", bundle["content"]["recording_link"]))
+    elements.append(Spacer(1, 8))
+
+    # Feedback
+    elements.append(bullet("Feedback"))
+    elements.append(field("Average Rating", feedback["average_rating"]))
+    elements.append(field("NPS (approx., matched by batch + mentor)", feedback["nps"]["average_score"]))
+    elements.append(field("Mentor Feedback", feedback["mentor_feedback"]))
+    elements.append(field("Operations Feedback", feedback["operations_feedback"]))
+    elements.append(Spacer(1, 8))
+
+    # Session notes / report
+    report = bundle["report"]
+    elements.append(bullet("Session Notes"))
+    elements.append(field("Summary", report["summary"]))
+    elements.append(field("Topics Covered", report["topics_covered"]))
+    elements.append(field("Issues Faced", report["issues_faced"]))
+    elements.append(field("Technical Issues", report["technical_issues"]))
+    elements.append(field("Action Items", report["action_items"]))
+    elements.append(field("Follow-up Required", "Yes" if report["follow_up_required"] else "No"))
+    elements.append(field("Follow-up Date", report["follow_up_date"]))
+
+    doc.build(elements, onFirstPage=_session_report_footer, onLaterPages=_session_report_footer)
+
+    return filename
+

@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 
 class UserCreate(BaseModel):
@@ -92,3 +93,51 @@ class NPSCreate(BaseModel):
     nps_score: int
 
     feedback: str
+
+
+# ==========================================================
+# Session Reports
+# ==========================================================
+
+class SessionReportUpdate(BaseModel):
+    agenda: Optional[str] = None
+    learning_objectives: Optional[str] = None
+    topics_covered: Optional[str] = None
+    lms_content_link: Optional[str] = None
+    presentation_link: Optional[str] = None
+    assignment_link: Optional[str] = None
+
+    summary: Optional[str] = None
+    learner_questions: Optional[str] = None
+    discussion_points: Optional[str] = None
+    issues_faced: Optional[str] = None
+    technical_issues: Optional[str] = None
+    learner_engagement: Optional[str] = None
+    mentor_feedback: Optional[str] = None
+    operations_notes: Optional[str] = None
+    action_items: Optional[str] = None
+    follow_up_required: Optional[bool] = None
+    follow_up_date: Optional[str] = None
+
+
+class ReportStatusUpdate(BaseModel):
+    report_status: str
+    reviewed_by: Optional[str] = None
+
+
+class SessionAttendanceCreate(BaseModel):
+    learner_name: str
+    learner_email: Optional[str] = None
+    join_time: Optional[str] = None
+    leave_time: Optional[str] = None
+    duration_minutes: Optional[float] = None
+    attendance_status: Optional[str] = "Present"
+
+
+class SessionAttendanceUpdate(BaseModel):
+    learner_name: Optional[str] = None
+    learner_email: Optional[str] = None
+    join_time: Optional[str] = None
+    leave_time: Optional[str] = None
+    duration_minutes: Optional[float] = None
+    attendance_status: Optional[str] = None

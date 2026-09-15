@@ -17,6 +17,8 @@ from models.resource_download_log import ResourceDownloadLog
 from models.audit_log import AuditLog
 from models.app_settings import AppSettings
 from models.webinar_participant import WebinarParticipant
+from models.session_report import SessionReport
+from models.session_attendance import SessionAttendance
 
 # Create all database tables
 Base.metadata.create_all(bind=engine)

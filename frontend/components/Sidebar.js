@@ -19,6 +19,7 @@ import {
   Award,
   Gauge,
   Radio,
+  FileBarChart,
   Presentation,
   LayoutDashboard,
   UserPlus,
@@ -72,6 +73,12 @@ export default function Sidebar() {
           <NavItem href="/sessions" icon={Calendar} label="Sessions" active={isActive("/sessions")} />
           <NavItem href="/mentors" icon={Users} label="Mentors" active={isActive("/mentors")} />
           <NavItem href="/batches" icon={GraduationCap} label="Batches" active={isActive("/batches")} />
+          <NavItem
+            href="/session-reports"
+            icon={FileBarChart}
+            label="Session Reports"
+            active={router.pathname === "/session-reports" || router.pathname.startsWith("/session-reports/")}
+          />
           <NavItem href="/analytics" icon={BarChart3} label="Analytics" active={isActive("/analytics")} />
           <NavItem href="/mentor-performance" icon={Gauge} label="Mentor 360" active={isActive("/mentor-performance")} />
           <NavItem href="/invoice-generator" icon={Receipt} label="Invoice Generator" active={isActive("/invoice-generator")} />

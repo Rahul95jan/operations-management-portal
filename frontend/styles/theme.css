@@ -1,0 +1,40 @@
+/* Dark/light theme tokens for the dark-charcoal "Operations Command Center" pages
+   (Home, Sidebar, Header, Profile, User Management, Activity Logs). Toggled via
+   [data-theme] on <html> — see lib/theme.js and components/Header.js. */
+
+:root,
+:root[data-theme="dark"] {
+  --om-bg-page: #0b0f12;
+  --om-bg-card: #161d23;
+  --om-bg-header: #11171c;
+  --om-text-primary: #f8fafc;
+  --om-text-strong: #e2e8f0;
+  --om-text-body: #cbd5e1;
+  --om-text-muted: #94a3b8;
+  --om-text-faint: #64748b;
+  --om-border-1: rgba(255, 255, 255, 0.08);
+  --om-border-2: rgba(255, 255, 255, 0.06);
+  --om-border-3: rgba(255, 255, 255, 0.05);
+  --om-border-4: rgba(255, 255, 255, 0.04);
+  --om-border-strong: rgba(255, 255, 255, 0.1);
+}
+
+:root[data-theme="light"] {
+  --om-bg-page: #f4f7fb;
+  --om-bg-card: #ffffff;
+  --om-bg-header: #ffffff;
+  --om-text-primary: #0f172a;
+  --om-text-strong: #1e293b;
+  --om-text-body: #334155;
+  --om-text-muted: #64748b;
+  --om-text-faint: #475569;
+  --om-border-1: rgba(15, 23, 42, 0.1);
+  --om-border-2: rgba(15, 23, 42, 0.08);
+  --om-border-3: rgba(15, 23, 42, 0.06);
+  --om-border-4: rgba(15, 23, 42, 0.05);
+  --om-border-strong: rgba(15, 23, 42, 0.14);
+}
+
+body {
+  background: var(--om-bg-page);
+}

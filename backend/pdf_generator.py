@@ -1515,6 +1515,159 @@ def generate_webinar_report_pdf(data, filter_desc="All data"):
 
 
 # =====================================================
+# Session Reports — filtered list PDF (same template as the
+# Webinar Operations Report above)
+# =====================================================
+
+def _session_reports_list_footer(canvas_obj, doc_obj):
+    canvas_obj.saveState()
+    canvas_obj.setStrokeColor(BORDER)
+    canvas_obj.setLineWidth(0.5)
+    canvas_obj.line(16 * mm, 14 * mm, 194 * mm, 14 * mm)
+    canvas_obj.setFont("Helvetica", 8)
+    canvas_obj.setFillColor(colors.HexColor("#94a3b8"))
+    canvas_obj.drawCentredString(105 * mm, 10 * mm, f"Krish Naik Academy  ·  Session Reports  ·  Page {doc_obj.page}")
+    canvas_obj.restoreState()
+
+
+def generate_session_reports_list_pdf(rows, summary, filter_desc="All data"):
+    if not os.path.exists("pdfs"):
+        os.makedirs("pdfs")
+
+    filename = "pdfs/session_reports.pdf"
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+
+    doc = SimpleDocTemplate(filename, pagesize=A4, topMargin=0, bottomMargin=22 * mm, leftMargin=16 * mm, rightMargin=16 * mm)
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle("SrTitleWhite", parent=styles["Normal"], textColor=colors.white, fontSize=18, fontName="Helvetica-Bold", leading=22)
+    subtitle_style = ParagraphStyle("SrSubtitleWhite", parent=styles["Normal"], textColor=YELLOW, fontSize=10, leading=13)
+    section_style = ParagraphStyle("SrSection", parent=styles["Heading2"], textColor=NAVY, fontSize=13, spaceBefore=16, spaceAfter=8)
+    body_style = ParagraphStyle("SrBody", parent=styles["Normal"], textColor=SLATE, fontSize=10, leading=14)
+    kpi_label_style = ParagraphStyle("SrKpiLabel", parent=styles["Normal"], textColor=colors.HexColor("#94a3b8"), fontSize=7.5, fontName="Helvetica-Bold", alignment=1, leading=10)
+    kpi_value_style = ParagraphStyle("SrKpiValue", parent=styles["Normal"], textColor=NAVY, fontSize=14, fontName="Helvetica-Bold", alignment=1)
+
+    def bullet(title):
+        return Paragraph(f"<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;{title}", section_style)
+
+    def kpi_grid(pairs, per_row=4):
+        rows_ = []
+        for i in range(0, len(pairs), per_row):
+            chunk = pairs[i:i + per_row]
+            labels = [Paragraph(lbl.upper(), kpi_label_style) for lbl, _ in chunk]
+            values = [Paragraph(str(val), kpi_value_style) for _, val in chunk]
+            while len(labels) < per_row:
+                labels.append("")
+                values.append("")
+            rows_.append(labels)
+            rows_.append(values)
+
+        col_w = (178 / per_row) * mm
+        table = Table(rows_, colWidths=[col_w] * per_row)
+        style = [
+            ("BACKGROUND", (0, 0), (-1, -1), BG_ALT),
+            ("BOX", (0, 0), (-1, -1), 0.75, BORDER),
+            ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+        ]
+        for r in range(0, len(rows_), 2):
+            style.append(("TOPPADDING", (0, r), (-1, r), 10))
+            style.append(("BOTTOMPADDING", (0, r), (-1, r), 2))
+            style.append(("TOPPADDING", (0, r + 1), (-1, r + 1), 2))
+            style.append(("BOTTOMPADDING", (0, r + 1), (-1, r + 1), 12))
+            if r > 0:
+                style.append(("LINEABOVE", (0, r), (-1, r), 0.5, BORDER))
+        table.setStyle(TableStyle(style))
+        return table
+
+    def data_table(headers, data_rows, col_widths, empty_message="No data yet."):
+        if not data_rows:
+            return Paragraph(empty_message, body_style)
+        header_cells = [Paragraph(h, ParagraphStyle("SrTH", parent=styles["Normal"], textColor=colors.white, fontSize=9, fontName="Helvetica-Bold")) for h in headers]
+        table_data = [header_cells] + data_rows
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_ALT]),
+            ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        return table
+
+    elements = []
+
+    if os.path.exists(LOGO_PATH):
+        logo_cell = Image(LOGO_PATH, width=30 * mm, height=11.5 * mm)
+    else:
+        logo_cell = ""
+
+    header_text = Table(
+        [[Paragraph("Krish Naik Academy", title_style)],
+         [Paragraph(f"Session Reports &nbsp;&bull;&nbsp; Generated {datetime.now().strftime('%d %b %Y')}", subtitle_style)],
+         [Paragraph(f"Scope: {filter_desc}", subtitle_style)]],
+        colWidths=[130 * mm],
+    )
+    header_text.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+
+    header = Table([[logo_cell, header_text]], colWidths=[38 * mm, 140 * mm])
+    header.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, 0), 6 * mm),
+        ("RIGHTPADDING", (0, 0), (0, 0), 2 * mm),
+        ("LEFTPADDING", (1, 0), (1, 0), 4 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 16),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+    ]))
+    elements.append(header)
+    elements.append(HRFlowable(width="100%", thickness=3, color=GOLD_LIGHT, spaceBefore=0, spaceAfter=18))
+
+    elements.append(bullet("Executive Summary"))
+    elements.append(kpi_grid([
+        ("Total Sessions", summary.get("total_sessions", 0)),
+        ("Live", summary.get("live_sessions", 0)),
+        ("Completed", summary.get("completed_sessions", 0)),
+        ("Cancelled", summary.get("cancelled_sessions", 0)),
+        ("Upcoming", summary.get("upcoming_sessions", 0)),
+        ("Learners Attended", summary.get("total_learners_attended", 0)),
+        ("Avg Attendance", f"{summary.get('average_attendance_percentage', 0)}%"),
+        ("Avg Duration", f"{summary.get('average_session_duration', 0)} min"),
+        ("Avg Rating", f"{summary['average_rating']}/5" if summary.get("average_rating") else "N/A"),
+    ]))
+    elements.append(Spacer(1, 10))
+
+    elements.append(bullet("Session Reports"))
+    body_rows = [
+        [
+            f"#{r['id']} {r['topic'] or ''}"[:40],
+            r["mentor_name"] or "—",
+            r["batch_name"] or "—",
+            r["session_date"] or "—",
+            r["status"] or "—",
+            str(r["learner_count"]),
+            f"{r['attendance_percentage']}%",
+            f"{r['rating']}/5" if r.get("rating") else "—",
+        ]
+        for r in rows
+    ]
+    elements.append(data_table(
+        ["Session", "Mentor", "Batch", "Date", "Status", "Learners", "Att %", "Rating"],
+        body_rows,
+        [42 * mm, 30 * mm, 28 * mm, 22 * mm, 20 * mm, 18 * mm, 14 * mm, 16 * mm],
+        "No session reports match this scope.",
+    ))
+
+    doc.build(elements, onFirstPage=_session_reports_list_footer, onLaterPages=_session_reports_list_footer)
+
+    return filename
+
+
+# =====================================================
 # Session Report PDF
 # =====================================================
 

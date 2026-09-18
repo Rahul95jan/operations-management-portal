@@ -744,7 +744,7 @@ export default function Batches() {
       <Sidebar />
 
       <div
-        style={{ marginLeft: "280px", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}
+        style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}
         onClick={() => {
           if (openMenuId) setOpenMenuId(null);
           if (dateRangeOpen) setDateRangeOpen(false);

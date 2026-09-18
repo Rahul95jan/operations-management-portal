@@ -146,7 +146,7 @@ export default function MentorDetailPage() {
       <>
         <Sidebar />
 
-        <div style={{ marginLeft: "280px", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
+        <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
           <Link href="/mentor-performance" className="back-link">← Back to Mentor 360</Link>
 
           {loading && <div className="card empty-state">Loading…</div>}

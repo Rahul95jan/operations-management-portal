@@ -181,10 +181,29 @@ function initials(name) {
   if (!name) return "?";
   return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("");
 }
-function Avatar({ name, size = 32 }) {
+function mentorPhotoUrl(mentor) {
+  if (!mentor || !mentor.photo_path) return null;
+  return `${API}/mentors/${mentor.id}/photo?v=${encodeURIComponent(mentor.photo_path)}`;
+}
+function Avatar({ mentor, name, size = 32 }) {
+  const resolvedName = mentor?.name || name;
+  const url = mentorPhotoUrl(mentor);
+  const [broken, setBroken] = useState(false);
+
+  if (url && !broken) {
+    return (
+      <img
+        src={url}
+        alt={resolvedName}
+        onError={() => setBroken(true)}
+        style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", objectPosition: "center 22%", flexShrink: 0, border: "2px solid #ffffff", boxShadow: "0 0 0 1px #e2e8f0" }}
+      />
+    );
+  }
+
   return (
-    <div style={{ width: size, height: size, borderRadius: "50%", background: `${avatarColor(name)}22`, color: avatarColor(name), display: "flex", alignItems: "center", justifyContent: "center", fontSize: size <= 32 ? "12px" : "18px", fontWeight: 700, flexShrink: 0 }}>
-      {initials(name)}
+    <div style={{ width: size, height: size, borderRadius: "50%", background: `${avatarColor(resolvedName)}22`, color: avatarColor(resolvedName), display: "flex", alignItems: "center", justifyContent: "center", fontSize: size <= 32 ? "12px" : "18px", fontWeight: 700, flexShrink: 0 }}>
+      {initials(resolvedName)}
     </div>
   );
 }
@@ -264,6 +283,7 @@ export default function InvoiceGenerator() {
   const [batches, setBatches] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const mentorByName = (name) => mentors.find((m) => m.name === name);
   const [toast, setToast] = useState(null);
 
   const [form, setForm] = useState(EMPTY_FORM);
@@ -606,7 +626,7 @@ export default function InvoiceGenerator() {
       <>
         <Sidebar />
         <div
-          style={{ marginLeft: "280px", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}
+          style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}
           onClick={() => { if (openMenuId) setOpenMenuId(null); if (profileMenuOpen) setProfileMenuOpen(false); if (dateRangeOpen) setDateRangeOpen(false); }}
         >
           {/* Top bar — scoped to this page only */}

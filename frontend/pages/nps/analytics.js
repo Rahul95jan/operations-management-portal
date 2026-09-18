@@ -107,7 +107,7 @@ export default function NPSAnalyticsPage() {
           <Sidebar />
           <div
             style={{
-              marginLeft: "280px",
+              marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease",
               minHeight: "100vh",
               display: "flex",
               alignItems: "center",
@@ -161,7 +161,7 @@ export default function NPSAnalyticsPage() {
 
         <div
           style={{
-            marginLeft: "280px",
+            marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease",
             padding: "32px 36px 60px",
             background: "#f1f5f9",
             minHeight: "100vh",

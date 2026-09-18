@@ -291,7 +291,7 @@ export default function SessionReportDetail() {
       <ProtectedRoute>
         <>
           <Sidebar />
-          <div style={{ marginLeft: "280px", padding: "32px 36px", background: "#f1f5f9", minHeight: "100vh" }}>
+          <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px", background: "#f1f5f9", minHeight: "100vh" }}>
             <div className="card">Loading session report…</div>
           </div>
           <style jsx>{`.card { background: #fff; border-radius: 16px; padding: 22px 24px; box-shadow: 0 1px 3px rgba(15,23,42,0.06); border: 1px solid #eef2f7; }`}</style>
@@ -305,7 +305,7 @@ export default function SessionReportDetail() {
       <ProtectedRoute>
         <>
           <Sidebar />
-          <div style={{ marginLeft: "280px", padding: "32px 36px", background: "#f1f5f9", minHeight: "100vh" }}>
+          <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px", background: "#f1f5f9", minHeight: "100vh" }}>
             <div className="card">Session not found. <Link href="/session-reports">← Back to Session Reports</Link></div>
           </div>
           <style jsx>{`.card { background: #fff; border-radius: 16px; padding: 22px 24px; box-shadow: 0 1px 3px rgba(15,23,42,0.06); border: 1px solid #eef2f7; }`}</style>
@@ -322,7 +322,7 @@ export default function SessionReportDetail() {
       <>
         <Sidebar />
 
-        <div style={{ marginLeft: "280px", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
+        <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
           <Link href="/session-reports" className="back-link">← Back to Session Reports</Link>
 
           <div className="card" style={{ marginBottom: "24px" }}>

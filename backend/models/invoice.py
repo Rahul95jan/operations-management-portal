@@ -28,7 +28,6 @@ class Invoice(Base):
 
     invoice_number = Column(String, unique=True, nullable=True)
 
-<<<<<<< HEAD
     # Webinar payout integration — additive, invoices created from a webinar
     # payout still populate batch_name/month (with the webinar title / derived
     # month) so every existing invoice-generator.js query keeps working
@@ -37,8 +36,6 @@ class Invoice(Base):
     source_type = Column(String, nullable=False, default="batch")
     webinar_id = Column(Integer, nullable=True)
 
-    
-=======
     created_at = Column(DateTime, default=datetime.utcnow)
 
     due_date = Column(String, nullable=True)
@@ -52,4 +49,3 @@ class Invoice(Base):
     payment_reference = Column(String, nullable=True)
 
     notes = Column(String, nullable=True)
->>>>>>> 967f926 (Initial commit)

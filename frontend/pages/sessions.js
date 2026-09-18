@@ -297,6 +297,12 @@ function matchesTab(session, tab) {
 function Toast({ toast, onClose }) {
   if (!toast) return null;
   const isError = toast.type === "error";
+  const isWarning = toast.type === "warning";
+  const palette = isError
+    ? { bg: "#fee2e2", color: "#b91c1c", border: "#fecaca", icon: "⚠️" }
+    : isWarning
+    ? { bg: "#fef3c7", color: "#92400e", border: "#fde68a", icon: "📅" }
+    : { bg: "#dcfce7", color: "#15803d", border: "#bbf7d0", icon: "✅" };
   return (
     <div
       style={{
@@ -304,29 +310,57 @@ function Toast({ toast, onClose }) {
         top: "20px",
         right: "20px",
         zIndex: 999,
-        background: isError ? "#fee2e2" : "#dcfce7",
-        color: isError ? "#b91c1c" : "#15803d",
-        border: `1px solid ${isError ? "#fecaca" : "#bbf7d0"}`,
+        background: palette.bg,
+        color: palette.color,
+        border: `1px solid ${palette.border}`,
         padding: "12px 18px",
         borderRadius: "10px",
         fontSize: "14px",
         fontWeight: 600,
         boxShadow: "0 12px 24px -12px rgba(15,23,42,0.35)",
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         gap: "10px",
-        maxWidth: "360px",
+        maxWidth: "420px",
       }}
     >
-      <span>{isError ? "⚠️" : "✅"} {toast.message}</span>
+      <span style={{ whiteSpace: "pre-line", lineHeight: 1.4 }}>{palette.icon} {toast.message}</span>
       <button
         onClick={onClose}
-        style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", fontWeight: 700 }}
+        style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", fontWeight: 700, flexShrink: 0 }}
       >
         ✕
       </button>
     </div>
   );
+}
+
+function describeCalendarBlock(calendarBlock) {
+  if (!calendarBlock || !calendarBlock.blocked) return null;
+
+  const who = calendarBlock.mentor_name || "The mentor";
+  const when = calendarBlock.date && calendarBlock.time ? `${calendarBlock.date} at ${calendarBlock.time}` : "the scheduled slot";
+  const notification = calendarBlock.notification;
+
+  let notifyLine;
+  let warning = false;
+  if (!notification || notification.reason === "no_mentor_assigned") {
+    notifyLine = "No mentor is assigned, so no notification was sent.";
+    warning = true;
+  } else if (notification.notified) {
+    notifyLine = `Notification emailed to ${notification.mentor_email}.`;
+  } else if (notification.reason === "no_mentor_email") {
+    notifyLine = `${who} has no email on file, so the notification could not be sent.`;
+    warning = true;
+  } else {
+    notifyLine = `Email delivery isn't configured yet, so ${who} wasn't notified — the block is still saved on the portal calendar.`;
+    warning = true;
+  }
+
+  return {
+    message: `${who}'s calendar is now blocked for ${when}.\n${notifyLine}`,
+    type: warning ? "warning" : "success",
+  };
 }
 
 export default function Sessions() {
@@ -458,7 +492,9 @@ export default function Sessions() {
         body: JSON.stringify(form),
       });
       if (!res.ok) throw new Error("bad status");
-      showToast(editId ? "Session updated." : "Session created.", "success");
+      const data = await res.json();
+      const block = describeCalendarBlock(data.calendar_block);
+      showToast(block ? block.message : "Session created.", block ? block.type : "success");
       loadSessions();
       resetForm();
     } catch (err) {
@@ -474,7 +510,9 @@ export default function Sessions() {
         body: JSON.stringify(form),
       });
       if (!res.ok) throw new Error("bad status");
-      showToast("Session updated.", "success");
+      const data = await res.json();
+      const block = describeCalendarBlock(data.calendar_block);
+      showToast(block ? block.message : "Session updated.", block ? block.type : "success");
       loadSessions();
       resetForm();
     } catch (err) {
@@ -567,8 +605,9 @@ export default function Sessions() {
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error("bad status");
-
-      showToast("Session rescheduled.", "success");
+      const data = await res.json();
+      const block = describeCalendarBlock(data.calendar_block);
+      showToast(block ? block.message : "Session rescheduled.", block ? block.type : "success");
       setRescheduleSession(null);
       loadSessions();
     } catch (err) {
@@ -708,7 +747,7 @@ export default function Sessions() {
 
       <div
         style={{
-          marginLeft: "280px",
+          marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease",
           padding: "32px 36px 60px",
           background: "#f1f5f9",
           minHeight: "100vh",
@@ -1326,7 +1365,12 @@ export default function Sessions() {
                         ? "#22c55e"
                         : (SESSION_TYPE_STYLES[s.session_type] || SESSION_TYPE_STYLES["Live Session"]).dot;
                       return (
-                        <div key={s.id} className="calendar-session" title={`${s.topic} — ${s.mentor_name || "Not Assigned"}`}>
+                        <div
+                          key={s.id}
+                          className="calendar-session calendar-session-clickable"
+                          title={`${s.topic} — ${s.mentor_name || "Not Assigned"} (click for calendar block details)`}
+                          onClick={() => setViewSession(s)}
+                        >
                           <span className="legend-dot" style={{ background: typeColor }} />
                           <span className="calendar-session-time">{s.session_time}</span>
                           <span className="calendar-session-topic">{s.topic}</span>
@@ -1352,6 +1396,12 @@ export default function Sessions() {
               <h2 className="card-title" style={{ margin: 0 }}>Session Details</h2>
               <button className="btn btn-ghost" onClick={() => setViewSession(null)}>✕ Close</button>
             </div>
+
+            {viewSession.status === "Scheduled" && (
+              <div className="calendar-block-banner">
+                🔒 This slot is blocked on {viewSession.mentor_name || "the mentor"}&apos;s calendar for {viewSession.session_date} at {viewSession.session_time}.
+              </div>
+            )}
 
             <div className="info-grid">
               <div className="info-chip"><div className="info-chip-label">ID</div><div className="info-chip-value">{viewSession.id}</div></div>
@@ -2045,6 +2095,18 @@ export default function Sessions() {
           text-overflow: ellipsis;
         }
 
+        .calendar-session-clickable {
+          cursor: pointer;
+          border-radius: 4px;
+          padding: 1px 3px;
+          margin-left: -3px;
+          transition: background 0.12s ease;
+        }
+
+        .calendar-session-clickable:hover {
+          background: rgba(240, 199, 94, 0.16);
+        }
+
         .calendar-session-time {
           color: #64748b;
           flex-shrink: 0;
@@ -2105,6 +2167,17 @@ export default function Sessions() {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
           gap: 14px;
+        }
+
+        .calendar-block-banner {
+          background: rgba(240, 199, 94, 0.14);
+          border: 1px solid rgba(240, 199, 94, 0.35);
+          color: #92400e;
+          font-size: 13px;
+          font-weight: 600;
+          padding: 10px 14px;
+          border-radius: 10px;
+          margin-bottom: 16px;
         }
 
         :global(.info-chip) {

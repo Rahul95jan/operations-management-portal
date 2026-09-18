@@ -1,17 +1,11 @@
-<<<<<<< HEAD
 import json
-import pandas as pd
-from datetime import datetime, timedelta
-from fastapi.responses import FileResponse, Response
-=======
 import io
 import re
 import csv
 import pandas as pd
 from datetime import datetime, timedelta
 from dateutil import parser as date_parser
-from fastapi.responses import FileResponse
->>>>>>> 967f926 (Initial commit)
+from fastapi.responses import FileResponse, Response
 
 from fastapi import FastAPI, Depends, Form, File, UploadFile
 from typing import Optional
@@ -86,7 +80,7 @@ from schemas import NPSCreate
 from models.session_analytics import SessionAnalytics
 from database import engine
 from models.user import Base
-from pdf_generator import generate_invoice, generate_webinar_report, generate_nps_report, generate_analytics_report, generate_mentor_performance_report, generate_webinar_report_pdf, generate_session_report_pdf
+from pdf_generator import generate_invoice, generate_webinar_report, generate_nps_report, generate_analytics_report, generate_mentor_performance_report, generate_webinar_report_pdf, generate_session_report_pdf, generate_session_reports_list_pdf
 from nps_insights import compute_nps_insights
 from models.invoice import Invoice
 from schemas import InvoiceCreate, InvoicePaymentUpdate
@@ -437,13 +431,13 @@ def _notify_mentor_session_change(db, session_obj, action, old_date=None, old_ti
     from email_service import send_session_notification
 
     if not session_obj.mentor_name:
-        return
+        return {"notified": False, "reason": "no_mentor_assigned"}
 
     mentor = db.query(Mentor).filter(Mentor.name == session_obj.mentor_name).first()
     mentor_email = mentor.email if mentor else None
     if not mentor_email:
         print(f"⚠️  No email on file for mentor '{session_obj.mentor_name}' — skipping session notification.")
-        return
+        return {"notified": False, "reason": "no_mentor_email"}
 
     id_line = f"Zoom ID: {session_obj.zoom_id}" if session_obj.zoom_id else (f"Webinar ID: {session_obj.webinar_id}" if session_obj.webinar_id else None)
 
@@ -484,7 +478,8 @@ def _notify_mentor_session_change(db, session_obj, action, old_date=None, old_ti
             f"Regards,\nKrish Naik Academy Team"
         )
 
-    send_session_notification(mentor_email, subject, body)
+    sent = send_session_notification(mentor_email, subject, body)
+    return {"notified": sent, "reason": "sent" if sent else "email_unavailable", "mentor_email": mentor_email}
 
 
 @app.post("/sessions")
@@ -510,19 +505,25 @@ def create_session(session: SessionCreate, _user: User = Depends(require_permiss
     db.commit()
     db.refresh(new_session)
 
-<<<<<<< Updated upstream
     if new_session.status == "Completed":
         _ensure_default_requirements(db, new_session)
-=======
+
+    notification = None
     if new_session.status == "Scheduled":
-        _notify_mentor_session_change(db, new_session, "Scheduled")
->>>>>>> Stashed changes
+        notification = _notify_mentor_session_change(db, new_session, "Scheduled")
 
     db.close()
 
     return {
         "message": "Session Created Successfully",
-        "id": new_session.id
+        "id": new_session.id,
+        "calendar_block": {
+            "blocked": new_session.status == "Scheduled",
+            "mentor_name": new_session.mentor_name,
+            "date": new_session.session_date,
+            "time": new_session.session_time,
+            "notification": notification,
+        },
     }
 
 
@@ -548,13 +549,10 @@ def update_session(session_id: int, session: SessionCreate, _user: User = Depend
         db.close()
         return {"message": "Session Not Found"}
 
-<<<<<<< Updated upstream
     previous_status = existing_session.status
-=======
     old_date, old_time, old_status = existing_session.session_date, existing_session.session_time, existing_session.status
     just_cancelled = session.status == "Cancelled" and old_status != "Cancelled"
     rescheduled = (session.session_date != old_date or session.session_time != old_time) and old_status != "Cancelled" and session.status != "Cancelled"
->>>>>>> Stashed changes
 
     existing_session.topic = session.topic
     existing_session.mentor_name = session.mentor_name
@@ -571,20 +569,26 @@ def update_session(session_id: int, session: SessionCreate, _user: User = Depend
     db.commit()
     db.refresh(existing_session)
 
-<<<<<<< Updated upstream
     if existing_session.status == "Completed" and previous_status != "Completed":
         _ensure_default_requirements(db, existing_session)
-=======
+
+    notification = None
     if rescheduled:
-        _notify_mentor_session_change(db, existing_session, "Rescheduled", old_date=old_date, old_time=old_time)
+        notification = _notify_mentor_session_change(db, existing_session, "Rescheduled", old_date=old_date, old_time=old_time)
     elif just_cancelled:
-        _notify_mentor_session_change(db, existing_session, "Cancelled")
->>>>>>> Stashed changes
+        notification = _notify_mentor_session_change(db, existing_session, "Cancelled")
 
     db.close()
 
     return {
-        "message": "Session Updated Successfully"
+        "message": "Session Updated Successfully",
+        "calendar_block": {
+            "blocked": existing_session.status == "Scheduled",
+            "mentor_name": existing_session.mentor_name,
+            "date": existing_session.session_date,
+            "time": existing_session.session_time,
+            "notification": notification,
+        },
     }
 
 
@@ -3132,10 +3136,8 @@ def export_analytics_report(
 
 from sqlalchemy import func
 from models.zoom_analytics import ZoomAnalytics
-<<<<<<< HEAD
 from models.webinar_participant import WebinarParticipant
 import webinar_operations as webinar_ops
-=======
 from models.webinar_registration import WebinarRegistration
 
 
@@ -3212,7 +3214,6 @@ def delete_zoom_analytics(record_id: int, db: Session = Depends(get_db)):
         db.commit()
 
     return {"message": "Webinar Report Deleted Successfully"}
->>>>>>> 967f926 (Initial commit)
 
 
 # ==========================================================
@@ -6067,6 +6068,61 @@ def export_session_reports(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=session_reports.csv"},
     )
+
+
+def _session_reports_filter_description(date_from, date_to, status, mentor_name, batch_name,
+                                          course_name, session_type, recording_status, report_status, search):
+    parts = []
+    if date_from:
+        parts.append(f"From {date_from}")
+    if date_to:
+        parts.append(f"To {date_to}")
+    if status:
+        parts.append(f"Status = {status}")
+    if mentor_name:
+        parts.append(f"Mentor = {mentor_name}")
+    if batch_name:
+        parts.append(f"Batch = {batch_name}")
+    if course_name:
+        parts.append(f"Course = {course_name}")
+    if session_type:
+        parts.append(f"Type = {session_type}")
+    if recording_status:
+        parts.append(f"Recording = {recording_status}")
+    if report_status:
+        parts.append(f"Report = {report_status}")
+    if search:
+        parts.append(f'Search = "{search}"')
+    return "; ".join(parts) if parts else "All data (no filters applied)"
+
+
+@app.get("/session-reports/export/pdf")
+def export_session_reports_pdf(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    status: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    course_name: Optional[str] = None,
+    session_type: Optional[str] = None,
+    recording_status: Optional[str] = None,
+    report_status: Optional[str] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    filters = _session_report_filters(
+        date_from, date_to, status, mentor_name, batch_name,
+        course_name, session_type, recording_status, report_status,
+    )
+    rows = session_reports.list_session_reports(db, filters, page=1, page_size=100000, search=search)["items"]
+    summary = session_reports.session_reports_summary(db, filters)
+    filter_desc = _session_reports_filter_description(
+        date_from, date_to, status, mentor_name, batch_name,
+        course_name, session_type, recording_status, report_status, search,
+    )
+    pdf_path = generate_session_reports_list_pdf(rows, summary, filter_desc)
+
+    return FileResponse(path=pdf_path, filename="Session_Reports.pdf", media_type="application/pdf")
 
 
 @app.get("/session-reports/{session_id}")

@@ -19,17 +19,12 @@ import {
   TrendingUp,
   Award,
   Gauge,
-  Radio,
   FileBarChart,
-  Presentation,
-  LayoutDashboard,
-  UserPlus,
-  Wallet,
-  Upload,
-  UserSearch,
   Settings as SettingsIcon,
   LogOut,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   UserCog,
   History,
 } from "lucide-react";
@@ -50,19 +45,31 @@ function userPhotoUrl(user) {
 export default function Sidebar() {
   const router = useRouter();
   const [user, setUser] = useState(null);
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     fetch(`${API}/users/me`).then((r) => r.json()).then(setUser).catch(() => setUser(null));
   }, []);
 
+  useEffect(() => {
+    let stored = null;
+    try {
+      stored = localStorage.getItem("omSidebarCollapsed");
+    } catch (e) {}
+    if (stored === "1") setCollapsed(true);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty("--om-sidebar-width", collapsed ? "84px" : "280px");
+    try {
+      localStorage.setItem("omSidebarCollapsed", collapsed ? "1" : "0");
+    } catch (e) {}
+  }, [collapsed]);
+
   const [resourcesOpen, setResourcesOpen] = useState(
     router.pathname === "/resources" ||
       router.pathname.startsWith("/resources/") ||
       router.pathname.startsWith("/resource-analytics")
-  );
-
-  const [webinarsOpen, setWebinarsOpen] = useState(
-    router.pathname.startsWith("/webinars") || router.pathname === "/zoom-analytics"
   );
 
   const logout = () => {
@@ -75,10 +82,19 @@ export default function Sidebar() {
     router.pathname === "/resources" ||
     router.pathname.startsWith("/resources/") ||
     router.pathname.startsWith("/resource-analytics");
-  const webinarsGroupActive = router.pathname.startsWith("/webinars") || router.pathname === "/zoom-analytics";
 
   return (
-    <div className="sidebar">
+    <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
+      <button
+        type="button"
+        className="sidebar-collapse-btn"
+        onClick={() => setCollapsed((v) => !v)}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      >
+        {collapsed ? <ChevronRight size={13} strokeWidth={2.6} /> : <ChevronLeft size={13} strokeWidth={2.6} />}
+      </button>
+
       <div className="sidebar-scroll">
         <div className="brand">
           <div className="brand-logo">
@@ -93,64 +109,22 @@ export default function Sidebar() {
             <>
               <NavItem href="/" icon={Home} label="Home" active={isActive("/")} />
 
-<<<<<<< Updated upstream
-          <NavGroupLabel>Operations</NavGroupLabel>
-          <NavItem href="/sessions" icon={Calendar} label="Sessions" active={isActive("/sessions")} />
-          <NavItem href="/mentors" icon={Users} label="Mentors" active={isActive("/mentors")} />
-          <NavItem href="/batches" icon={GraduationCap} label="Batches" active={isActive("/batches")} />
-          <NavItem
-            href="/session-reports"
-            icon={FileBarChart}
-            label="Session Reports"
-            active={router.pathname === "/session-reports" || router.pathname.startsWith("/session-reports/")}
-          />
-          <NavItem href="/analytics" icon={BarChart3} label="Analytics" active={isActive("/analytics")} />
-          <NavItem href="/mentor-performance" icon={Gauge} label="Mentor 360" active={isActive("/mentor-performance")} />
-          <NavItem href="/invoice-generator" icon={Receipt} label="Invoice Generator" active={isActive("/invoice-generator")} />
-
-          <NavGroupLabel>Learner Feedback</NavGroupLabel>
-          <NavItem href="/nps" icon={ClipboardList} label="NPS Form" active={isActive("/nps")} />
-          <NavItem href="/nps/analytics" icon={PieChart} label="NPS Analytics" active={isActive("/nps/analytics")} />
-<<<<<<< HEAD
-
-          <NavGroupLabel>Webinars</NavGroupLabel>
-          <li className={`nav-item ${webinarsGroupActive ? "nav-item-parent-active" : ""}`}>
-            <div className="nav-parent-row" onClick={() => setWebinarsOpen((prev) => !prev)}>
-              <Link href="/webinars" className="nav-link nav-link-parent">
-                <span className="nav-icon">
-                  <Radio size={16} strokeWidth={2} />
-                </span>
-                <span className="nav-label">Webinars</span>
-              </Link>
-              <span className={`nav-chevron ${webinarsOpen ? "nav-chevron-open" : ""}`}>
-                <ChevronDown size={14} strokeWidth={2.5} />
-              </span>
-            </div>
-
-            <div className={`nav-submenu ${webinarsOpen ? "nav-submenu-open" : ""}`}>
-              <ul className="nav-sublist">
-                <SubNavItem href="/webinars/dashboard" icon={LayoutDashboard} label="Webinar Dashboard" active={isActive("/webinars/dashboard")} />
-                <SubNavItem href="/webinars" icon={Presentation} label="Webinar Scheduler" active={isActive("/webinars")} />
-                <SubNavItem href="/webinars/leads" icon={UserPlus} label="Leads / Conversion" active={isActive("/webinars/leads")} />
-                <SubNavItem href="/webinars/payouts" icon={Wallet} label="Mentor Payouts" active={isActive("/webinars/payouts")} />
-                <SubNavItem href="/webinars/import" icon={Upload} label="Import Participants" active={isActive("/webinars/import")} />
-                <SubNavItem href="/webinars/learner-360" icon={UserSearch} label="Learner 360" active={isActive("/webinars/learner-360")} />
-                <SubNavItem href="/zoom-analytics" icon={Video} label="Zoom Analytics" active={isActive("/zoom-analytics")} />
-              </ul>
-            </div>
-          </li>
-=======
-          <NavItem href="/webinar-analytics" icon={Video} label="Webinar Analytics" active={isActive("/webinar-analytics")} />
-          <NavItem href="/webinar-reports" icon={FilePlus2} label="Log Webinar Report" active={isActive("/webinar-reports")} />
->>>>>>> 967f926 (Initial commit)
-=======
               {(hasPermission(user, "sessions") || hasPermission(user, "mentors") || hasPermission(user, "batches") || hasPermission(user, "analytics") || hasPermission(user, "invoices")) && (
                 <NavGroupLabel>Operations</NavGroupLabel>
               )}
               {hasPermission(user, "sessions") && <NavItem href="/sessions" icon={Calendar} label="Sessions" active={isActive("/sessions")} />}
               {hasPermission(user, "mentors") && <NavItem href="/mentors" icon={Users} label="Mentors" active={isActive("/mentors")} />}
               {hasPermission(user, "batches") && <NavItem href="/batches" icon={GraduationCap} label="Batches" active={isActive("/batches")} />}
+              {hasPermission(user, "analytics") && (
+                <NavItem
+                  href="/session-reports"
+                  icon={FileBarChart}
+                  label="Session Reports"
+                  active={router.pathname === "/session-reports" || router.pathname.startsWith("/session-reports/")}
+                />
+              )}
               {hasPermission(user, "analytics") && <NavItem href="/analytics" icon={BarChart3} label="Analytics" active={isActive("/analytics")} />}
+              {hasPermission(user, "analytics") && <NavItem href="/mentor-performance" icon={Gauge} label="Mentor 360" active={isActive("/mentor-performance")} />}
               {hasPermission(user, "invoices") && <NavItem href="/invoice-generator" icon={Receipt} label="Invoice Generator" active={isActive("/invoice-generator")} />}
 
               {hasPermission(user, "feedback") && (
@@ -162,7 +136,6 @@ export default function Sidebar() {
                   <NavItem href="/webinar-reports" icon={FilePlus2} label="Log Webinar Report" active={isActive("/webinar-reports")} />
                 </>
               )}
->>>>>>> Stashed changes
 
               {hasPermission(user, "resources") && (
                 <>
@@ -207,19 +180,22 @@ export default function Sidebar() {
 
       <div className="sidebar-footer">
         <Link href="/profile" className="profile-row">
-          {userPhotoUrl(user) ? (
-            <img src={userPhotoUrl(user)} alt={user?.name} className="profile-avatar profile-avatar-img" />
-          ) : (
-            <div className="profile-avatar">{initials(user?.name)}</div>
-          )}
+          <div className="profile-avatar-wrap">
+            {userPhotoUrl(user) ? (
+              <img src={userPhotoUrl(user)} alt={user?.name} className="profile-avatar profile-avatar-img" />
+            ) : (
+              <div className="profile-avatar">{initials(user?.name)}</div>
+            )}
+            <span className="profile-online-dot" />
+          </div>
           <div className="profile-info">
             <div className="profile-name">{user?.name || "—"}</div>
             <div className="profile-role">{user?.role || "No role set"}</div>
           </div>
         </Link>
 
-        <button onClick={logout} className="logout-btn">
-          <LogOut size={16} strokeWidth={2.2} /> Logout
+        <button onClick={logout} className="logout-btn" title="Logout">
+          <LogOut size={16} strokeWidth={2.2} /> <span className="logout-label">Logout</span>
         </button>
       </div>
 
@@ -227,7 +203,7 @@ export default function Sidebar() {
         .sidebar {
           width: 280px;
           height: 100vh;
-          background: linear-gradient(180deg, #0B0F12 0%, var(--om-bg-header) 100%);
+          background: linear-gradient(180deg, #0B0F12 0%, #11171C 100%);
           color: white;
           position: fixed;
           left: 0;
@@ -236,8 +212,101 @@ export default function Sidebar() {
           flex-direction: column;
           justify-content: space-between;
           box-sizing: border-box;
-          border-right: 1px solid var(--om-border-2);
+          border-right: 1px solid rgba(255, 255, 255, 0.06);
           box-shadow: 4px 0 24px -12px rgba(0, 0, 0, 0.4);
+          transition: width 0.25s ease;
+          z-index: 25;
+        }
+
+        .sidebar-collapsed {
+          width: 84px;
+        }
+
+        .sidebar-collapse-btn {
+          position: absolute;
+          top: 76px;
+          right: -13px;
+          width: 26px;
+          height: 26px;
+          border-radius: 50%;
+          background: #171d24;
+          border: 1px solid rgba(240, 199, 94, 0.4);
+          color: #F0C75E;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          z-index: 30;
+          box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.6);
+          transition: background 0.15s ease, transform 0.15s ease;
+        }
+
+        .sidebar-collapse-btn:hover {
+          background: #232b34;
+          transform: scale(1.08);
+        }
+
+        .sidebar-collapsed .sidebar-scroll {
+          padding: 22px 10px 12px;
+        }
+
+        .sidebar-collapsed .brand {
+          padding: 6px 0 18px;
+        }
+
+        .sidebar-collapsed .brand-logo {
+          width: 50px;
+          height: 52px;
+          padding: 0;
+          overflow: hidden;
+          position: relative;
+        }
+
+        .sidebar-collapsed .brand-logo :global(img) {
+          position: absolute;
+          top: -10px;
+          left: -13px;
+          width: 200px;
+          max-width: none;
+          height: auto;
+        }
+
+        .sidebar-collapsed .brand-tagline,
+        .sidebar-collapsed .brand-title,
+        .sidebar-collapsed .profile-info,
+        .sidebar-collapsed .logout-label,
+        .sidebar-collapsed .nav-chevron {
+          display: none;
+        }
+
+        .sidebar-collapsed .nav-submenu {
+          display: none;
+        }
+
+        .sidebar-collapsed .nav-parent-row {
+          justify-content: center;
+        }
+
+        .sidebar-collapsed .logout-btn {
+          padding: 12px 0;
+        }
+
+        :global(.sidebar-collapsed .nav-link) {
+          justify-content: center;
+          padding: 8px;
+        }
+
+        :global(.sidebar-collapsed .nav-label),
+        :global(.sidebar-collapsed .nav-group-label) {
+          display: none;
+        }
+
+        :global(.sidebar-collapsed .nav-link-active::before) {
+          display: none;
+        }
+
+        :global(.sidebar-collapsed .profile-row) {
+          justify-content: center;
         }
 
         .sidebar::before {
@@ -253,14 +322,22 @@ export default function Sidebar() {
         }
 
         .sidebar-scroll {
+          flex: 1;
+          min-height: 0;
           overflow-y: auto;
           padding: 22px 16px 12px;
           scrollbar-width: thin;
           scrollbar-color: rgba(240, 199, 94, 0.3) transparent;
+          -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+          mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
         }
 
         .sidebar-scroll::-webkit-scrollbar {
           width: 6px;
+        }
+
+        .sidebar-scroll::-webkit-scrollbar-track {
+          background: transparent;
         }
 
         .sidebar-scroll::-webkit-scrollbar-thumb {
@@ -268,18 +345,33 @@ export default function Sidebar() {
           border-radius: 10px;
         }
 
+        .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+          background: rgba(240, 199, 94, 0.45);
+        }
+
         .brand {
           text-align: center;
           margin-bottom: 20px;
-          padding-bottom: 18px;
-          border-bottom: 1px solid var(--om-border-1);
+          padding: 6px 6px 18px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         }
 
         .brand-logo {
           display: inline-flex;
-          border-radius: 12px;
-          padding: 3px;
-          background: linear-gradient(120deg, rgba(212, 167, 44, 0.4), rgba(212, 167, 44, 0));
+          align-items: center;
+          justify-content: center;
+          border-radius: 16px;
+          padding: 12px 20px;
+          background: linear-gradient(150deg, rgba(240, 199, 94, 0.16), rgba(240, 199, 94, 0.02) 60%);
+          border: 1px solid rgba(240, 199, 94, 0.32);
+          box-shadow: 0 10px 26px -12px rgba(240, 199, 94, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+          transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+        }
+
+        .brand-logo:hover {
+          transform: translateY(-2px);
+          border-color: rgba(240, 199, 94, 0.55);
+          box-shadow: 0 14px 30px -10px rgba(240, 199, 94, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
         }
 
         .brand-tagline {
@@ -293,7 +385,7 @@ export default function Sidebar() {
 
         .brand-title {
           margin: 4px 0 0;
-          color: var(--om-text-primary);
+          color: #f8fafc;
           font-size: 15px;
           font-weight: 700;
           letter-spacing: 0.02em;
@@ -313,7 +405,7 @@ export default function Sidebar() {
           display: flex;
           align-items: center;
           gap: 12px;
-          color: var(--om-text-body);
+          color: #cbd5e1;
           text-decoration: none;
           font-size: 14px;
           font-weight: 600;
@@ -324,14 +416,14 @@ export default function Sidebar() {
         }
 
         :global(.nav-link:hover) {
-          background: var(--om-border-2);
-          color: var(--om-text-primary);
+          background: rgba(255, 255, 255, 0.06);
+          color: #f8fafc;
           transform: translateX(2px);
         }
 
         :global(.nav-link:hover .nav-icon) {
-          background: var(--om-border-strong);
-          color: var(--om-text-primary);
+          background: rgba(255, 255, 255, 0.1);
+          color: #f8fafc;
         }
 
         :global(.nav-link-active) {
@@ -364,8 +456,8 @@ export default function Sidebar() {
           width: 30px;
           height: 30px;
           border-radius: 9px;
-          background: var(--om-border-3);
-          color: var(--om-text-muted);
+          background: rgba(255, 255, 255, 0.05);
+          color: #94a3b8;
           flex-shrink: 0;
           transition: background 0.15s ease, color 0.15s ease;
         }
@@ -380,7 +472,7 @@ export default function Sidebar() {
           font-weight: 700;
           letter-spacing: 0.09em;
           text-transform: uppercase;
-          color: var(--om-text-faint);
+          color: #64748b;
           padding: 16px 12px 6px;
         }
 
@@ -394,7 +486,7 @@ export default function Sidebar() {
         }
 
         .nav-parent-row:hover {
-          background: var(--om-border-4);
+          background: rgba(255, 255, 255, 0.04);
         }
 
         :global(.nav-link-parent) {
@@ -419,7 +511,7 @@ export default function Sidebar() {
         .nav-chevron {
           display: flex;
           align-items: center;
-          color: var(--om-text-faint);
+          color: #64748b;
           transition: transform 0.2s ease, color 0.2s ease;
           margin-right: 14px;
           flex-shrink: 0;
@@ -444,14 +536,14 @@ export default function Sidebar() {
           list-style: none;
           padding: 4px 0 2px 14px;
           margin: 6px 0 0;
-          border-left: 2px solid var(--om-border-1);
+          border-left: 2px solid rgba(255, 255, 255, 0.08);
         }
 
         :global(.nav-sublink) {
           display: flex;
           align-items: center;
           gap: 10px;
-          color: var(--om-text-muted);
+          color: #94a3b8;
           text-decoration: none;
           font-size: 13px;
           font-weight: 600;
@@ -462,7 +554,7 @@ export default function Sidebar() {
         }
 
         :global(.nav-sublink:hover) {
-          background: var(--om-border-3);
+          background: rgba(255, 255, 255, 0.05);
           color: #f1f5f9;
         }
 
@@ -478,7 +570,7 @@ export default function Sidebar() {
 
         .sidebar-footer {
           padding: 14px 16px 16px;
-          border-top: 1px solid var(--om-border-1);
+          border-top: 1px solid rgba(255, 255, 255, 0.08);
         }
 
         :global(.profile-row) {
@@ -493,7 +585,12 @@ export default function Sidebar() {
         }
 
         :global(.profile-row:hover) {
-          background: var(--om-border-4);
+          background: rgba(255, 255, 255, 0.04);
+        }
+
+        .profile-avatar-wrap {
+          position: relative;
+          flex-shrink: 0;
         }
 
         .profile-avatar-img {
@@ -515,14 +612,25 @@ export default function Sidebar() {
           flex-shrink: 0;
         }
 
+        .profile-online-dot {
+          position: absolute;
+          bottom: -1px;
+          right: -1px;
+          width: 9px;
+          height: 9px;
+          border-radius: 50%;
+          background: #4ade80;
+          border: 2px solid #11171C;
+        }
+
         .profile-name {
-          color: var(--om-text-primary);
+          color: #f8fafc;
           font-size: 13px;
           font-weight: 700;
         }
 
         .profile-role {
-          color: var(--om-text-faint);
+          color: #64748b;
           font-size: 11px;
           font-weight: 600;
         }
@@ -565,7 +673,7 @@ export default function Sidebar() {
 function NavItem({ href, icon: Icon, label, active }) {
   return (
     <li className="nav-item">
-      <Link href={href} className={`nav-link ${active ? "nav-link-active" : ""}`}>
+      <Link href={href} className={`nav-link ${active ? "nav-link-active" : ""}`} title={label}>
         <span className="nav-icon">
           <Icon size={16} strokeWidth={2} />
         </span>

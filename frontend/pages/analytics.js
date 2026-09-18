@@ -389,7 +389,7 @@ export default function Analytics() {
       <ProtectedRoute>
         <>
           <Sidebar />
-          <div style={{ marginLeft: "280px", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "14px", background: "#f1f5f9" }}>
+          <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "14px", background: "#f1f5f9" }}>
             <div className="spinner" />
             <div style={{ color: "#64748b", fontSize: "14px" }}>Loading analytics…</div>
           </div>
@@ -406,7 +406,7 @@ export default function Analytics() {
     <ProtectedRoute>
       <>
         <Sidebar />
-        <div style={{ marginLeft: "280px", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
+        <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
           {/* Header */}
           <div className="top-header">
             <div>

@@ -66,6 +66,7 @@ def _row_dict(session, report_map):
         "attendance_percentage": session.attendance_percentage or 0,
         "recording_status": _recording_status(session),
         "report_status": report.report_status if report else "Pending",
+        "rating": session.feedback_score or None,
     }
 
 
@@ -140,6 +141,9 @@ def session_reports_summary(db, filters):
     duration_values = [r["duration"] for r in rows if r["duration"]]
     average_session_duration = round(sum(duration_values) / len(duration_values), 2) if duration_values else 0
 
+    rating_values = [r["rating"] for r in rows if r["rating"]]
+    average_rating = round(sum(rating_values) / len(rating_values), 2) if rating_values else None
+
     return {
         "total_sessions": total_sessions,
         "live_sessions": live_sessions,
@@ -149,6 +153,7 @@ def session_reports_summary(db, filters):
         "total_learners_attended": total_learners_attended,
         "average_attendance_percentage": average_attendance_percentage,
         "average_session_duration": average_session_duration,
+        "average_rating": average_rating,
     }
 
 

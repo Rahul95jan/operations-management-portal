@@ -129,7 +129,7 @@ export default function WebinarDetailPage() {
       <ProtectedRoute>
         <>
           <Sidebar />
-          <div style={{ marginLeft: "280px", padding: "32px 36px", background: "#f1f5f9", minHeight: "100vh" }}>
+          <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px", background: "#f1f5f9", minHeight: "100vh" }}>
             <div className="card">Loading…</div>
           </div>
         </>
@@ -142,7 +142,7 @@ export default function WebinarDetailPage() {
       <ProtectedRoute>
         <>
           <Sidebar />
-          <div style={{ marginLeft: "280px", padding: "32px 36px", background: "#f1f5f9", minHeight: "100vh" }}>
+          <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px", background: "#f1f5f9", minHeight: "100vh" }}>
             <div className="card">Webinar not found. <Link href="/webinars">← Back to Webinars</Link></div>
           </div>
         </>
@@ -155,7 +155,7 @@ export default function WebinarDetailPage() {
       <>
         <Sidebar />
 
-        <div style={{ marginLeft: "280px", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
+        <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
           <Link href="/webinars" className="back-link">← Back to Webinars</Link>
 
           <div className="card" style={{ marginBottom: "24px" }}>

@@ -23,7 +23,6 @@ import {
   Layers,
   FileWarning,
   Receipt,
-  CalendarDays,
   Activity,
   AlertTriangle,
   Plus,
@@ -104,6 +103,85 @@ function StatusPill({ status }) {
   );
 }
 
+const AVATAR_COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#22c55e", "#ec4899", "#06b6d4"];
+function avatarColor(name) {
+  if (!name) return AVATAR_COLORS[0];
+  const code = name.charCodeAt(0) + (name.charCodeAt(1) || 0);
+  return AVATAR_COLORS[code % AVATAR_COLORS.length];
+}
+function initials(name) {
+  if (!name) return "?";
+  return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("");
+}
+function mentorPhotoUrl(mentor) {
+  if (!mentor || !mentor.photo_path) return null;
+  return `${API}/mentors/${mentor.id}/photo?v=${encodeURIComponent(mentor.photo_path)}`;
+}
+function MentorAvatar({ mentor, name, size = 26 }) {
+  const resolvedName = mentor?.name || name;
+  const url = mentorPhotoUrl(mentor);
+  const [broken, setBroken] = useState(false);
+
+  if (url && !broken) {
+    return (
+      <img
+        src={url}
+        alt={resolvedName}
+        onError={() => setBroken(true)}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "50%",
+          objectFit: "cover",
+          objectPosition: "center 22%",
+          flexShrink: 0,
+          border: "2px solid var(--om-bg-card)",
+          boxShadow: "0 0 0 1px var(--om-border-1)",
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        background: resolvedName ? `${avatarColor(resolvedName)}22` : "var(--om-border-2)",
+        color: resolvedName ? avatarColor(resolvedName) : "var(--om-text-muted)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: size <= 28 ? "10.5px" : "13px",
+        fontWeight: 700,
+        flexShrink: 0,
+      }}
+    >
+      {initials(resolvedName)}
+    </div>
+  );
+}
+
+function useThemeChartColors() {
+  const [colors, setColors] = useState({ text: "#cbd5e1", grid: "rgba(148,163,184,0.14)" });
+
+  useEffect(() => {
+    const read = () => {
+      const style = getComputedStyle(document.documentElement);
+      const text = style.getPropertyValue("--om-text-body").trim();
+      const grid = style.getPropertyValue("--om-border-3").trim();
+      setColors({ text: text || "#cbd5e1", grid: grid || "rgba(148,163,184,0.14)" });
+    };
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+
+  return colors;
+}
+
 function useSessionReportsToday() {
   const [data, setData] = useState(null);
 
@@ -118,10 +196,7 @@ function useSessionReportsToday() {
 }
 
 export default function Home() {
-<<<<<<< Updated upstream
-  const now = useClock();
   const sessionReportsToday = useSessionReportsToday();
-=======
   const [now, setNow] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [mentors, setMentors] = useState([]);
@@ -155,6 +230,8 @@ export default function Home() {
       setLoading(false);
     });
   }, []);
+
+  const mentorByName = (name) => mentors.find((m) => m.name === name);
 
   const today = todayStr();
   const nowMs = now ? now.getTime() : Date.now();
@@ -297,29 +374,17 @@ export default function Home() {
     ],
   };
 
-  const chartTextColor = "var(--om-text-muted)";
-  const chartGrid = "var(--om-border-3)";
->>>>>>> Stashed changes
+  const { text: chartTextColor, grid: chartGrid } = useThemeChartColors();
 
   return (
     <ProtectedRoute>
       <>
         <Sidebar />
-        <div style={{ marginLeft: "280px", padding: "28px 32px 56px", background: "var(--om-bg-page)", minHeight: "100vh" }}>
+        <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "28px 32px 56px", background: "var(--om-bg-page)", minHeight: "100vh" }}>
           <Header notificationCount={notifCount} notifications={notifications} />
 
           <div className="page-head">
-            <div>
-              <h1 className="page-title">{greeting(now)}, Rahul! 👋</h1>
-              <p className="page-sub">Here&apos;s what&apos;s happening with your operations today.</p>
-            </div>
-            <div className="date-chip">
-              <CalendarDays size={16} strokeWidth={2.2} />
-              <div>
-                <div className="date-chip-main">{now ? now.toLocaleDateString(undefined, { weekday: "long", day: "2-digit", month: "short", year: "numeric" }) : ""}</div>
-                <div className="date-chip-sub">Make today productive!</div>
-              </div>
-            </div>
+            <h1 className="page-title">{greeting(now)}, Rahul! 👋</h1>
           </div>
 
           {/* KPI row */}
@@ -350,10 +415,10 @@ export default function Home() {
                   data={lineData}
                   options={{
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { position: "top", labels: { color: chartTextColor, boxWidth: 10, font: { size: 11 } } } },
+                    plugins: { legend: { position: "top", labels: { color: chartTextColor, boxWidth: 10, font: { size: 12, weight: 600 } } } },
                     scales: {
-                      x: { ticks: { color: chartTextColor, font: { size: 10.5 } }, grid: { color: chartGrid } },
-                      y: { beginAtZero: true, ticks: { color: chartTextColor, font: { size: 10.5 } }, grid: { color: chartGrid } },
+                      x: { ticks: { color: chartTextColor, font: { size: 11.5, weight: 600 } }, grid: { color: chartGrid } },
+                      y: { beginAtZero: true, ticks: { color: chartTextColor, font: { size: 11.5, weight: 600 } }, grid: { color: chartGrid } },
                     },
                   }}
                 />
@@ -401,6 +466,7 @@ export default function Home() {
                   {todaysSessions.slice(0, 5).map((s) => (
                     <div key={s.id} className="today-row">
                       <div className="today-time">{fmtTime(s)}</div>
+                      <MentorAvatar mentor={mentorByName(s.mentor_name)} name={s.mentor_name} size={24} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="strong">{s.topic || "Untitled Session"}</div>
                         <div className="muted" style={{ fontSize: "11.5px" }}>By {s.mentor_name || "Not Assigned"}</div>
@@ -435,7 +501,12 @@ export default function Home() {
                       {mentorPerformance.map((m, i) => (
                         <tr key={m.name}>
                           <td className="muted">{i + 1}</td>
-                          <td className="strong">{m.name}</td>
+                          <td className="strong">
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <MentorAvatar mentor={mentorByName(m.name)} name={m.name} />
+                              <span>{m.name}</span>
+                            </div>
+                          </td>
                           <td>{m.sessions}</td>
                           <td>{m.hours} hrs</td>
                           <td>{m.rating === null ? "—" : <span className="rating-star">★ {m.rating.toFixed(1)}</span>}</td>
@@ -460,11 +531,11 @@ export default function Home() {
                   data={engagementData}
                   options={{
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { position: "top", labels: { color: chartTextColor, boxWidth: 10, font: { size: 11 } } } },
+                    plugins: { legend: { position: "top", labels: { color: chartTextColor, boxWidth: 10, font: { size: 12, weight: 600 } } } },
                     scales: {
-                      x: { ticks: { color: chartTextColor, font: { size: 10.5 } }, grid: { color: chartGrid } },
-                      y: { position: "left", min: 0, max: 100, ticks: { color: chartTextColor, font: { size: 10.5 } }, grid: { color: chartGrid } },
-                      y1: { position: "right", min: 0, max: 5, ticks: { color: chartTextColor, font: { size: 10.5 } }, grid: { drawOnChartArea: false } },
+                      x: { ticks: { color: chartTextColor, font: { size: 11.5, weight: 600 } }, grid: { color: chartGrid } },
+                      y: { position: "left", min: 0, max: 100, ticks: { color: chartTextColor, font: { size: 11.5, weight: 600 } }, grid: { color: chartGrid } },
+                      y1: { position: "right", min: 0, max: 5, ticks: { color: chartTextColor, font: { size: 11.5, weight: 600 } }, grid: { drawOnChartArea: false } },
                     },
                   }}
                 />
@@ -550,12 +621,7 @@ export default function Home() {
 
         <style jsx>{`
           .page-head {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 20px;
             margin-bottom: 20px;
-            flex-wrap: wrap;
           }
 
           .page-title {
@@ -563,35 +629,6 @@ export default function Home() {
             font-weight: 800;
             color: var(--om-text-primary);
             margin: 0 0 4px;
-          }
-
-          .page-sub {
-            font-size: 13.5px;
-            color: var(--om-text-muted);
-            margin: 0;
-          }
-
-          .date-chip {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            background: var(--om-bg-card);
-            border: 1px solid var(--om-border-1);
-            border-radius: 12px;
-            padding: 10px 16px;
-            color: #f0c75e;
-          }
-
-          .date-chip-main {
-            font-size: 12.5px;
-            font-weight: 700;
-            color: var(--om-text-strong);
-          }
-
-          .date-chip-sub {
-            font-size: 10.5px;
-            color: var(--om-text-faint);
-            margin-top: 1px;
           }
 
           .kpi-row {
@@ -604,10 +641,10 @@ export default function Home() {
           :global(.kpi-card) {
             background: var(--om-bg-card);
             border-radius: 14px;
-            padding: 16px;
+            padding: 18px;
             border: 1px solid var(--om-border-2);
             display: flex;
-            gap: 12px;
+            gap: 14px;
             align-items: flex-start;
             transition: transform 0.15s ease, border-color 0.15s ease;
           }
@@ -618,9 +655,9 @@ export default function Home() {
           }
 
           :global(.kpi-icon) {
-            width: 38px;
-            height: 38px;
-            border-radius: 10px;
+            width: 44px;
+            height: 44px;
+            border-radius: 11px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -628,17 +665,18 @@ export default function Home() {
           }
 
           :global(.kpi-value) {
-            font-size: 22px;
+            font-size: 32px;
             font-weight: 800;
             color: var(--om-text-primary);
             line-height: 1.1;
+            letter-spacing: -0.01em;
           }
 
           :global(.kpi-label) {
-            font-size: 11.5px;
+            font-size: 12.5px;
             color: var(--om-text-muted);
-            font-weight: 600;
-            margin-top: 2px;
+            font-weight: 700;
+            margin-top: 3px;
           }
 
           :global(.kpi-sub) {
@@ -668,14 +706,12 @@ export default function Home() {
             margin-bottom: 16px;
           }
 
-<<<<<<< Updated upstream
           .session-reports-panel {
-            margin-top: 32px;
-            background: #ffffff;
-            border-radius: 16px;
-            padding: 22px 24px;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
-            border: 1px solid #eef2f7;
+            margin-top: 16px;
+            background: var(--om-bg-card);
+            border-radius: 14px;
+            padding: 18px 20px;
+            border: 1px solid var(--om-border-2);
           }
 
           .session-reports-panel-header {
@@ -690,7 +726,7 @@ export default function Home() {
           .view-all-link {
             font-size: 13px;
             font-weight: 700;
-            color: #d97706;
+            color: #f0c75e;
             text-decoration: none;
           }
 
@@ -704,16 +740,6 @@ export default function Home() {
             gap: 14px;
           }
 
-          @keyframes heroShift {
-            0% {
-              background-position: 0% 50%;
-            }
-            50% {
-              background-position: 100% 50%;
-            }
-            100% {
-              background-position: 0% 50%;
-=======
           .grid-3b {
             display: grid;
             grid-template-columns: 1.2fr 1fr 1fr;
@@ -743,13 +769,14 @@ export default function Home() {
             margin-bottom: 14px;
           }
 
-          :global(.card-title) {
+          :global(.card-title),
+          :global(.section-heading) {
             display: flex;
             align-items: center;
             gap: 7px;
             font-size: 14.5px;
             font-weight: 700;
-            color: #f1f5f9;
+            color: var(--om-text-primary);
           }
 
           :global(.card-sub) {
@@ -954,7 +981,6 @@ export default function Home() {
             .grid-3a,
             .grid-3b {
               grid-template-columns: 1fr 1fr;
->>>>>>> Stashed changes
             }
           }
 
@@ -975,7 +1001,7 @@ function KPICard({ icon: Icon, accent, value, label, sub, trend }) {
   return (
     <div className="kpi-card">
       <div className="kpi-icon" style={{ background: `${accent}1a`, color: accent }}>
-        <Icon size={17} strokeWidth={2.2} />
+        <Icon size={20} strokeWidth={2.2} />
       </div>
       <div>
         <div className="kpi-value">{value}</div>
@@ -986,60 +1012,19 @@ function KPICard({ icon: Icon, accent, value, label, sub, trend }) {
           sub && <div className="kpi-sub">{sub}</div>
         )}
       </div>
-<<<<<<< Updated upstream
-    </Link>
+    </div>
   );
 }
 
 function MiniStat({ label, value, color }) {
   return (
-    <div style={{ background: "#f8fafc", borderLeft: `3px solid ${color}`, padding: "12px 14px", borderRadius: "10px" }}>
-      <div style={{ fontSize: "10.5px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", color: "#94a3b8", marginBottom: "4px" }}>
+    <div style={{ background: "var(--om-bg-page)", borderLeft: `3px solid ${color}`, padding: "12px 14px", borderRadius: "10px" }}>
+      <div style={{ fontSize: "10.5px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--om-text-muted)", marginBottom: "4px" }}>
         {label}
       </div>
-      <div style={{ fontSize: "18px", fontWeight: 800, color, fontVariantNumeric: "tabular-nums" }}>
+      <div style={{ fontSize: "23px", fontWeight: 800, color, fontVariantNumeric: "tabular-nums" }}>
         {value === null || value === undefined ? "—" : value}
       </div>
-    </div>
-  );
-}
-
-function InfoPanel({ icon, title, accent, children }) {
-  return (
-    <div
-      style={{
-        background: "#ffffff",
-        padding: "22px",
-        borderRadius: "14px",
-        borderLeft: `4px solid ${accent}`,
-        boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)",
-      }}
-    >
-      <h2
-        style={{
-          margin: "0 0 12px",
-          fontSize: "16px",
-          display: "flex",
-          alignItems: "center",
-          gap: "8px",
-          color: "#1e293b",
-        }}
-      >
-        <span>{icon}</span> {title}
-      </h2>
-      <ul
-        style={{
-          margin: 0,
-          paddingLeft: "18px",
-          color: "#475569",
-          fontSize: "14px",
-          lineHeight: 1.9,
-        }}
-      >
-        {children}
-      </ul>
-=======
->>>>>>> Stashed changes
     </div>
   );
 }

@@ -4,7 +4,6 @@ import ProtectedRoute from "../components/ProtectedRoute";
 import AnalyticsCard from "../components/AnalyticsCard";
 
 import ZoomAttendanceChart from "../components/ZoomAttendanceChart";
-import ZoomChatChart from "../components/ZoomChatChart";
 import ZoomPollChart from "../components/ZoomPollChart";
 
 const selectStyle = {
@@ -45,11 +44,39 @@ function InfoChip({ label, value }) {
   );
 }
 
-export default function ZoomAnalytics() {
+const HEALTH_STYLES = {
+  Excellent: { bg: "#dcfce7", color: "#15803d" },
+  Good: { bg: "#dbeafe", color: "#1d4ed8" },
+  "Needs Improvement": { bg: "#fef3c7", color: "#b45309" },
+  Poor: { bg: "#fee2e2", color: "#b91c1c" },
+};
+
+function HealthBadge({ status }) {
+  const s = HEALTH_STYLES[status] || { bg: "#e2e8f0", color: "#475569" };
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        background: s.bg,
+        color: s.color,
+        fontSize: "13px",
+        fontWeight: 700,
+        padding: "6px 14px",
+        borderRadius: "999px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {status || "—"}
+    </span>
+  );
+}
+
+export default function WebinarAnalytics() {
   const [summary, setSummary] = useState(null);
 
   const [attendanceTrend, setAttendanceTrend] = useState([]);
-  const [chatData, setChatData] = useState([]);
   const [pollData, setPollData] = useState([]);
 
   const [webinars, setWebinars] = useState([]);
@@ -57,8 +84,8 @@ export default function ZoomAnalytics() {
   const [selectedWebinar, setSelectedWebinar] = useState("");
   const [selectedMentor, setSelectedMentor] = useState("");
   const [selectedCourse, setSelectedCourse] = useState("");
-  const [selectedBatch, setSelectedBatch] = useState("");
   const [selectedReport, setSelectedReport] = useState(null);
+  const [registrations, setRegistrations] = useState([]);
 
   useEffect(() => {
     fetch("http://127.0.0.1:8000/zoom-summary")
@@ -68,10 +95,6 @@ export default function ZoomAnalytics() {
     fetch("http://127.0.0.1:8000/zoom-attendance-trend")
       .then((res) => res.json())
       .then((data) => setAttendanceTrend(data));
-
-    fetch("http://127.0.0.1:8000/zoom-chat-analytics")
-      .then((res) => res.json())
-      .then((data) => setChatData(data));
 
     fetch("http://127.0.0.1:8000/zoom-poll-analytics")
       .then((res) => res.json())
@@ -91,9 +114,13 @@ export default function ZoomAnalytics() {
     fetch(`http://127.0.0.1:8000/webinar-report/${selectedWebinar}`)
       .then((res) => res.json())
       .then((data) => {
-        console.log("Webinar Report:", data);
         setSelectedReport(data);
       })
+      .catch((err) => console.error(err));
+
+    fetch(`http://127.0.0.1:8000/webinar-registrations/${selectedWebinar}`)
+      .then((res) => res.json())
+      .then((data) => setRegistrations(data))
       .catch((err) => console.error(err));
   };
 
@@ -193,17 +220,6 @@ export default function ZoomAnalytics() {
                 </select>
               </Field>
 
-              <Field label="🎓 Batch">
-                <select className="styled-input" style={selectStyle} value={selectedBatch} onChange={(e) => setSelectedBatch(e.target.value)}>
-                  <option value="">All Batches</option>
-                  {[...new Set(webinars.map((item) => item.batch))].map((batch) => (
-                    <option key={batch} value={batch}>
-                      {batch}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
               <Field label="🎥 Webinar">
                 <select className="styled-input" style={selectStyle} value={selectedWebinar} onChange={(e) => setSelectedWebinar(e.target.value)}>
                   <option value="">Select Webinar</option>
@@ -211,8 +227,7 @@ export default function ZoomAnalytics() {
                     .filter((item) => {
                       const dateMatch = selectedDate === "" || item.date === selectedDate;
                       const mentorMatch = selectedMentor === "" || item.mentor === selectedMentor;
-                      const batchMatch = selectedBatch === "" || item.batch === selectedBatch;
-                      return dateMatch && mentorMatch && batchMatch;
+                      return dateMatch && mentorMatch;
                     })
                     .map((item) => (
                       <option key={item.session_id} value={item.session_id}>
@@ -261,6 +276,49 @@ export default function ZoomAnalytics() {
                 <AnalyticsCard title="Engagement Score" value={selectedReport.engagement_score} color="#ea580c" />
               </div>
 
+              <h3 className="subsection-title">🩺 Webinar Health</h3>
+              <div className="health-row">
+                <div className="health-score">
+                  <div className="health-score-value">{selectedReport.webinar_health_score}</div>
+                  <div className="health-score-label">Health Score / 100</div>
+                </div>
+                <HealthBadge status={selectedReport.webinar_health_status} />
+                <div className="info-grid" style={{ flex: 1 }}>
+                  <InfoChip label="Dropout Rate" value={`${selectedReport.dropout_rate}%`} />
+                  <InfoChip label="Q&A Resolution Rate" value={`${selectedReport.qa_resolution_rate}%`} />
+                  <InfoChip label="Learner Satisfaction" value={`⭐ ${selectedReport.learner_satisfaction}`} />
+                </div>
+              </div>
+
+              <h3 className="subsection-title">🧑‍🎓 Registered Learners ({registrations.length})</h3>
+              <div className="table-scroll">
+                <table className="reg-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Email</th>
+                      <th>Phone</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {registrations.length === 0 && (
+                      <tr>
+                        <td colSpan={3} style={{ textAlign: "center", color: "#94a3b8", padding: "16px" }}>
+                          No registration records for this webinar.
+                        </td>
+                      </tr>
+                    )}
+                    {registrations.map((learner) => (
+                      <tr key={learner.id}>
+                        <td>{learner.learner_name}</td>
+                        <td className="muted">{learner.learner_email}</td>
+                        <td className="muted">{learner.phone ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
               <h3 className="subsection-title">📊 Attendance Summary</h3>
               <div className="info-grid">
                 <InfoChip label="Registered Learners" value={selectedReport.registered_learners} />
@@ -303,21 +361,25 @@ export default function ZoomAnalytics() {
           </div>
 
           {/* Overall Dashboard */}
-          <h2 className="section-title">📊 Overall Dashboard</h2>
+          <div className="section-title-row">
+            <h2 className="section-title">📊 Overall Dashboard</h2>
+            <div className="overall-health">
+              <span className="overall-health-label">Overall Webinar Health</span>
+              <HealthBadge status={summary.webinar_health_status} />
+            </div>
+          </div>
 
           <div className="kpi-grid" style={{ marginBottom: "10px" }}>
             <AnalyticsCard title="Total Webinars" value={summary.total_webinars} color="#2563eb" />
             <AnalyticsCard title="Registered Learners" value={summary.registered_learners} color="#16a34a" />
             <AnalyticsCard title="Attended Learners" value={summary.attended_learners} color="#0891b2" />
             <AnalyticsCard title="Attendance Rate" value={`${summary.attendance_rate}%`} color="#9333ea" />
-            <AnalyticsCard title="Avg Watch Time" value={`${summary.average_watch_time} mins`} color="#ea580c" />
-            <AnalyticsCard title="Engagement Score" value={summary.engagement_score} color="#dc2626" />
+            <AnalyticsCard title="Poll Response Rate" value={`${summary.poll_response_rate}%`} color="#0d9488" />
             <AnalyticsCard title="Session Rating" value={`⭐ ${summary.session_rating}`} color="#059669" />
-            <AnalyticsCard title="Recording Views" value={summary.recording_views} color="#7c3aed" />
+            <AnalyticsCard title="Health Score" value={`${summary.webinar_health_score} / 100`} color="#be123c" />
           </div>
 
           <ZoomAttendanceChart data={attendanceTrend} />
-          <ZoomChatChart data={chatData} />
           <ZoomPollChart data={pollData} />
         </div>
 
@@ -536,6 +598,97 @@ export default function ZoomAnalytics() {
             font-size: 20px;
             color: #1e293b;
             margin: 0 0 16px;
+          }
+
+          .section-title-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 16px;
+          }
+
+          .section-title-row .section-title {
+            margin: 0;
+          }
+
+          .overall-health {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #ffffff;
+            border: 1px solid #eef2f7;
+            border-radius: 999px;
+            padding: 6px 8px 6px 16px;
+          }
+
+          .overall-health-label {
+            font-size: 12px;
+            font-weight: 700;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+          }
+
+          .health-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            padding: 16px;
+            background: #f8fafc;
+            border: 1px solid #eef2f7;
+            border-radius: 12px;
+          }
+
+          .health-score {
+            text-align: center;
+            flex-shrink: 0;
+          }
+
+          .health-score-value {
+            font-size: 30px;
+            font-weight: 800;
+            color: #1e293b;
+          }
+
+          .health-score-label {
+            font-size: 11px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+          }
+
+          .table-scroll {
+            overflow-x: auto;
+          }
+
+          .reg-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+          }
+
+          .reg-table th {
+            text-align: left;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: #94a3b8;
+            padding: 10px 12px;
+            border-bottom: 2px solid #eef2f7;
+            white-space: nowrap;
+          }
+
+          .reg-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #f1f5f9;
+            white-space: nowrap;
+          }
+
+          .reg-table .muted {
+            color: #64748b;
           }
 
           @keyframes heroShift {

@@ -106,7 +106,7 @@ export default function Home() {
           <QuickNavGroup label="Learner Feedback" delay={1}>
             <QuickCard icon="📝" title="NPS Form" link="/nps" accent="#8b5cf6" />
             <QuickCard icon="📊" title="NPS Analytics" link="/nps/analytics" accent="#8b5cf6" />
-            <QuickCard icon="📹" title="Zoom Analytics" link="/zoom-analytics" accent="#8b5cf6" />
+            <QuickCard icon="📹" title="Webinar Analytics" link="/webinar-analytics" accent="#8b5cf6" />
           </QuickNavGroup>
 
           <QuickNavGroup label="Resource Portal" delay={2}>

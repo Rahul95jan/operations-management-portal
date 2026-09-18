@@ -20,7 +20,7 @@ export default function ZoomAttendanceChart({ data }) {
       }}
     >
       <h2 style={{ marginBottom: "20px" }}>
-        📈 Zoom Attendance Trend
+        📈 Webinar Attendance Trend
       </h2>
 
       <ResponsiveContainer width="100%" height={350}>

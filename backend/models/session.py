@@ -8,7 +8,7 @@ class Session(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     # Project Details
-    project_name = Column(String, nullable=False)
+    project_name = Column(String)
     category = Column(String)
     topic = Column(String)
 
@@ -30,9 +30,13 @@ class Session(Base):
     platform = Column(String)           # Zoom / Google Meet
     meeting_link = Column(String)
     recording_link = Column(String)
+    webinar_id = Column(String)         # Zoom Webinar ID, for Webinar Session type
 
     # Status
     status = Column(String)             # Scheduled, Completed, Cancelled
+
+    # Session Type
+    session_type = Column(String, default="Live Session")   # Live Session / Webinar Session
 
     # Attendance
     registered_students = Column(Integer, default=0)

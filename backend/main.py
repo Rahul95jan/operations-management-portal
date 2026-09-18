@@ -1,7 +1,17 @@
+<<<<<<< HEAD
 import json
 import pandas as pd
 from datetime import datetime, timedelta
 from fastapi.responses import FileResponse, Response
+=======
+import io
+import re
+import csv
+import pandas as pd
+from datetime import datetime, timedelta
+from dateutil import parser as date_parser
+from fastapi.responses import FileResponse
+>>>>>>> 967f926 (Initial commit)
 
 from fastapi import FastAPI, Depends, Form, File, UploadFile
 from typing import Optional
@@ -72,7 +82,7 @@ from models.user import Base
 from pdf_generator import generate_invoice, generate_webinar_report, generate_nps_report, generate_analytics_report, generate_mentor_performance_report, generate_webinar_report_pdf, generate_session_report_pdf
 from nps_insights import compute_nps_insights
 from models.invoice import Invoice
-from schemas import InvoiceCreate
+from schemas import InvoiceCreate, InvoicePaymentUpdate
 import os
 
 from email_service import send_invoice_email
@@ -89,6 +99,7 @@ from schemas import (
     BatchCreate,
     InvoiceCreate,
     SessionAnalyticsCreate,
+    ZoomAnalyticsCreate,
 )
 
 app = FastAPI()
@@ -173,7 +184,10 @@ def create_session(session: SessionCreate):
         batch_name=session.batch_name,
         session_date=session.session_date,
         session_time=session.session_time,
-        status=session.status
+        status=session.status,
+        session_type=session.session_type,
+        webinar_id=session.webinar_id,
+        remarks=session.remarks
     )
 
     db.add(new_session)
@@ -221,6 +235,10 @@ def update_session(session_id: int, session: SessionCreate):
     existing_session.session_date = session.session_date
     existing_session.session_time = session.session_time
     existing_session.status = session.status
+    existing_session.session_type = session.session_type
+    existing_session.webinar_id = session.webinar_id
+    if session.remarks is not None:
+        existing_session.remarks = session.remarks
 
     db.commit()
     db.refresh(existing_session)
@@ -271,7 +289,8 @@ def create_mentor(mentor: MentorCreate):
         phone=mentor.phone,
         expertise=mentor.expertise,
         linkedin=mentor.linkedin,
-        hourly_rate=mentor.hourly_rate
+        hourly_rate=mentor.hourly_rate,
+        status=mentor.status or "Active"
     )
 
     db.add(new_mentor)
@@ -317,6 +336,7 @@ def update_mentor(mentor_id: int, mentor: MentorCreate):
     existing_mentor.expertise = mentor.expertise
     existing_mentor.linkedin = mentor.linkedin
     existing_mentor.hourly_rate = mentor.hourly_rate
+    existing_mentor.status = mentor.status or existing_mentor.status or "Active"
 
     db.commit()
     db.refresh(existing_mentor)
@@ -349,6 +369,40 @@ def delete_mentor(mentor_id: int):
         "message": "Mentor Deleted Successfully"
     }
 
+
+@app.post("/mentors/{mentor_id}/photo")
+async def upload_mentor_photo(mentor_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+
+    mentor = db.query(Mentor).filter(Mentor.id == mentor_id).first()
+    if not mentor:
+        raise HTTPException(status_code=404, detail="Mentor not found.")
+
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image files (JPG, PNG, WEBP) are allowed.")
+
+    contents = await file.read()
+    if len(contents) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image must be 2MB or smaller.")
+    file.file.seek(0)
+
+    file_meta = save_file(file)
+    mentor.photo_path = file_meta["file_path"]
+    db.commit()
+
+    return {"message": "Photo uploaded successfully", "has_photo": True}
+
+
+@app.get("/mentors/{mentor_id}/photo")
+def get_mentor_photo(mentor_id: int, db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+
+    mentor = db.query(Mentor).filter(Mentor.id == mentor_id).first()
+    if not mentor or not mentor.photo_path or not os.path.exists(mentor.photo_path):
+        raise HTTPException(status_code=404, detail="No photo found for this mentor.")
+
+    return FileResponse(mentor.photo_path)
+
 # ==========================
 # BATCHES
 # ==========================
@@ -362,7 +416,8 @@ def create_batch(batch: BatchCreate):
         batch_name=batch.batch_name,
         course_name=batch.course_name,
         strength=batch.strength,
-        mentor_name=batch.mentor_name
+        mentor_name=batch.mentor_name,
+        status=batch.status or "Active"
     )
 
     db.add(new_batch)
@@ -396,6 +451,7 @@ def update_batch(batch_id: int, batch: BatchCreate):
     existing_batch.course_name = batch.course_name
     existing_batch.strength = batch.strength
     existing_batch.mentor_name = batch.mentor_name
+    existing_batch.status = batch.status or existing_batch.status or "Active"
 
     db.commit()
     db.refresh(existing_batch)
@@ -580,6 +636,86 @@ def export_sessions():
         filename=file_name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+@app.get("/export-batches")
+def export_batches():
+
+    db = SessionLocal()
+
+    batches = db.query(Batch).all()
+
+    data = []
+
+    for batch in batches:
+        data.append({
+            "ID": batch.id,
+            "Batch": batch.batch_name,
+            "Course": batch.course_name,
+            "Strength": batch.strength,
+            "Mentor": batch.mentor_name,
+            "Status": batch.status
+        })
+
+    df = pd.DataFrame(data)
+
+    file_name = "batches.xlsx"
+
+    df.to_excel(
+        file_name,
+        index=False
+    )
+
+    db.close()
+
+    return FileResponse(
+        file_name,
+        filename=file_name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+@app.get("/export-invoices")
+def export_invoices():
+
+    db = SessionLocal()
+
+    invoices = db.query(Invoice).all()
+
+    data = []
+
+    for inv in invoices:
+        data.append({
+            "Invoice No.": inv.invoice_number,
+            "Mentor": inv.mentor_name,
+            "Batch": inv.batch_name,
+            "Month": inv.month,
+            "Sessions": inv.total_sessions,
+            "Hours": inv.total_hours,
+            "Hourly Rate": inv.hourly_rate,
+            "Amount": inv.total_amount,
+            "Invoice Date": inv.created_at.strftime("%Y-%m-%d") if inv.created_at else None,
+            "Due Date": inv.due_date,
+            "Status": inv.payment_status,
+            "Payment Date": inv.payment_date,
+            "Payment Mode": inv.payment_mode,
+        })
+
+    df = pd.DataFrame(data)
+
+    file_name = "invoices.xlsx"
+
+    df.to_excel(
+        file_name,
+        index=False
+    )
+
+    db.close()
+
+    return FileResponse(
+        file_name,
+        filename=file_name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
 @app.get("/dashboard/overview")
 def dashboard_overview(db: Session = Depends(get_db)):
     print("1")
@@ -879,6 +1015,10 @@ def create_invoice(invoice: InvoiceCreate):
         # Create Invoice
         # =====================================
 
+        due_date = invoice.due_date
+        if not due_date:
+            due_date = (datetime.utcnow() + timedelta(days=15)).strftime("%Y-%m-%d")
+
         new_invoice = Invoice(
             invoice_number=invoice_number,
             mentor_name=invoice.mentor_name,
@@ -890,6 +1030,8 @@ def create_invoice(invoice: InvoiceCreate):
             hourly_rate=invoice.hourly_rate,
             total_amount=invoice.total_amount,
             payment_status="Pending",
+            due_date=due_date,
+            notes=invoice.notes,
         )
 
         db.add(new_invoice)
@@ -1094,6 +1236,13 @@ def get_invoices(db: Session = Depends(get_db)):
             "hourly_rate": invoice.hourly_rate,
             "total_amount": invoice.total_amount,
             "payment_status": invoice.payment_status,
+            "invoice_date": invoice.created_at.strftime("%Y-%m-%d") if invoice.created_at else None,
+            "due_date": invoice.due_date,
+            "payment_date": invoice.payment_date,
+            "payment_mode": invoice.payment_mode,
+            "transaction_id": invoice.transaction_id,
+            "payment_reference": invoice.payment_reference,
+            "notes": invoice.notes,
         })
 
     return result
@@ -1141,7 +1290,7 @@ def invoice_summary():
     }
 
 @app.put("/invoice-paid/{invoice_id}")
-def mark_invoice_paid(invoice_id: int):
+def mark_invoice_paid(invoice_id: int, payment: InvoicePaymentUpdate | None = None):
 
     db = SessionLocal()
 
@@ -1154,6 +1303,13 @@ def mark_invoice_paid(invoice_id: int):
         return {"message": "Invoice not found"}
 
     invoice.payment_status = "Paid"
+    invoice.payment_date = (payment.payment_date if payment and payment.payment_date else None) or datetime.utcnow().strftime("%Y-%m-%d")
+    if payment and payment.payment_mode:
+        invoice.payment_mode = payment.payment_mode
+    if payment and payment.transaction_id:
+        invoice.transaction_id = payment.transaction_id
+    if payment and payment.payment_reference:
+        invoice.payment_reference = payment.payment_reference
 
     db.commit()
     db.refresh(invoice)
@@ -1198,6 +1354,10 @@ def update_invoice(invoice_id: int, updated_invoice: InvoiceCreate):
     invoice.hourly_rate = updated_invoice.hourly_rate
     invoice.total_amount = updated_invoice.total_amount
     invoice.payment_status = updated_invoice.payment_status
+    if updated_invoice.due_date is not None:
+        invoice.due_date = updated_invoice.due_date
+    if updated_invoice.notes is not None:
+        invoice.notes = updated_invoice.notes
 
     db.commit()
     db.refresh(invoice)
@@ -2296,201 +2456,273 @@ def placement_status():
     ]
 
 
-def _gather_analytics_data(db, course_name=None, mentor_name=None, date_from=None, date_to=None):
+def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=None, date_from=None, date_to=None):
     """Builds every section of the Analytics Dashboard as plain dicts/lists,
-    applying the same course/mentor/date filters as the individual endpoints.
-    Shared by the Excel and PDF export endpoints so both stay in sync with
-    what's actually shown on screen."""
+    applying the same batch/mentor/session-type/date filters as the frontend.
+    Mirrors the client-side aggregation in pages/analytics.js exactly, so the
+    exported report always matches what's on screen. Shared by the Excel and
+    PDF export endpoints."""
 
-    # Sessions
+    from datetime import datetime as _dt
+
+    def session_dt(s):
+        if not s.session_date:
+            return None
+        try:
+            return _dt.strptime(f"{s.session_date} {s.session_time or '00:00'}", "%Y-%m-%d %H:%M")
+        except Exception:
+            return None
+
+    def overall_rating(n):
+        return (n.instructor_rating + n.doubt_rating + n.website_rating) / 3
+
+    def avg(values):
+        values = [v for v in values if v is not None]
+        return (sum(values) / len(values)) if values else None
+
+    now = _dt.now()
+
+    # ---- Sessions ----
     session_query = db.query(SessionModel)
-    if course_name:
-        session_query = session_query.filter(SessionModel.course_name == course_name)
+    if batch_name:
+        session_query = session_query.filter(SessionModel.batch_name == batch_name)
     if mentor_name:
         session_query = session_query.filter(SessionModel.mentor_name == mentor_name)
+    if session_type:
+        session_query = session_query.filter(SessionModel.session_type == session_type)
     if date_from:
         session_query = session_query.filter(SessionModel.session_date >= date_from)
     if date_to:
         session_query = session_query.filter(SessionModel.session_date <= date_to)
+    sessions = session_query.all()
 
-    total_sessions = session_query.count()
-    completed_sessions = session_query.filter(SessionModel.status == "Completed").count()
-    scheduled_sessions = session_query.filter(SessionModel.status == "Scheduled").count()
-    cancelled_sessions = session_query.filter(SessionModel.status == "Cancelled").count()
+    total_sessions = len(sessions)
+    completed_sessions = len([s for s in sessions if s.status == "Completed"])
+    cancelled_sessions = len([s for s in sessions if s.status == "Cancelled"])
+    upcoming_sessions = len([s for s in sessions if s.status == "Scheduled" and session_dt(s) and session_dt(s) > now])
+    rescheduled_sessions = len([s for s in sessions if s.remarks and "Rescheduled from" in s.remarks])
 
-    session_summary = {
-        "total_sessions": total_sessions,
-        "completed_sessions": completed_sessions,
-        "scheduled_sessions": scheduled_sessions,
-        "cancelled_sessions": cancelled_sessions,
-    }
+    total_session_minutes = sum(s.duration or 0 for s in sessions)
+    sessions_with_duration = [s for s in sessions if (s.duration or 0) > 0]
+    avg_duration_hours = (total_session_minutes / len(sessions_with_duration) / 60) if sessions_with_duration else None
 
-    # Batches
-    batch_query = db.query(Batch)
-    if course_name:
-        batch_query = batch_query.filter(Batch.course_name == course_name)
-    if mentor_name:
-        batch_query = batch_query.filter(Batch.mentor_name == mentor_name)
-    batches = batch_query.all()
-    total_batches = len(batches)
+    sessions_with_attendance = [s for s in sessions if (s.registered_students or 0) > 0]
+    avg_attendance = avg([s.attendance_percentage or 0 for s in sessions_with_attendance])
 
-    batch_summary = {
-        "total_batches": total_batches,
-        "completed_batches": len([b for b in batches if b.status == "Completed"]),
-        "ongoing_batches": len([b for b in batches if b.status == "Ongoing"]),
-        "delayed_batches": len([b for b in batches if b.status == "Delayed"]),
-        "average_attendance": round(sum(b.attendance_percentage or 0 for b in batches) / total_batches, 2) if total_batches else 0,
-        "average_completion": round(sum(b.completion_percentage or 0 for b in batches) / total_batches, 2) if total_batches else 0,
-        "average_health": round(sum(b.health_score or 0 for b in batches) / total_batches, 2) if total_batches else 0,
-    }
+    sessions_with_feedback = [s for s in sessions if (s.feedback_score or 0) > 0]
+    avg_session_rating = avg([s.feedback_score for s in sessions_with_feedback])
 
-    batch_performance = [
-        {
-            "batch_name": b.batch_name,
-            "mentor_name": b.mentor_name,
-            "strength": b.strength,
-            "attendance_percentage": b.attendance_percentage,
-            "completion_percentage": b.completion_percentage,
-            "health_score": b.health_score,
-            "status": b.status,
-        }
-        for b in batches
+    mentor_sla = ((total_sessions - cancelled_sessions) / total_sessions * 100) if total_sessions else None
+    completion_rate = (completed_sessions / total_sessions * 100) if total_sessions else 0
+
+    session_issues = [
+        {"label": "Sessions without mentor", "value": len([s for s in sessions if not s.mentor_name])},
+        {"label": "Low attendance (< 50%)", "value": len([s for s in sessions if (s.registered_students or 0) > 0 and (s.attendance_percentage or 0) < 50])},
+        {"label": "Low rating (< 3.0)", "value": len([s for s in sessions if (s.feedback_score or 0) > 0 and s.feedback_score < 3])},
+        {"label": "Missing recording", "value": len([s for s in sessions if s.status == "Completed" and not s.recording_link])},
+        {"label": "Missing feedback", "value": len([s for s in sessions if s.status == "Completed" and not ((s.feedback_score or 0) > 0)])},
     ]
+    session_issues = [i for i in session_issues if i["value"] > 0]
 
-    at_risk_batches = [
-        {
-            "batch_name": b.batch_name,
-            "mentor_name": b.mentor_name,
-            "attendance": b.attendance_percentage,
-            "completion": b.completion_percentage,
-            "health": b.health_score,
-            "status": b.status,
-        }
-        for b in batches
-        if (b.health_score or 0) < 70
-    ]
-
-    # Mentors
-    mentor_query = db.query(Mentor)
-    if mentor_name:
-        mentor_query = mentor_query.filter(Mentor.name == mentor_name)
-    elif course_name:
-        course_mentor_names = [b.mentor_name for b in batches if b.mentor_name]
-        mentor_query = mentor_query.filter(Mentor.name.in_(course_mentor_names))
-    mentors = mentor_query.all()
+    # ---- Mentors & Batches (master lists, not session-filtered — matches the UI) ----
+    mentors = db.query(Mentor).all()
     total_mentors = len(mentors)
+    active_mentors = len([m for m in mentors if m.status != "Inactive"])
 
-    total_rate = 0
-    for m in mentors:
-        try:
-            total_rate += int(m.hourly_rate)
-        except Exception:
-            pass
+    batches = db.query(Batch).all()
+    total_batches = len(batches)
+    active_batches = len([b for b in batches if b.status != "Inactive"])
 
-    mentor_summary = {
-        "total_mentors": total_mentors,
-        "active_mentors": len([m for m in mentors if m.status == "Active"]),
-        "inactive_mentors": len([m for m in mentors if m.status == "Inactive"]),
-        "average_hourly_rate": round(total_rate / total_mentors, 2) if total_mentors else 0,
-    }
-
-    top_mentors = []
-    for m in mentors:
-        sq = db.query(SessionModel).filter(SessionModel.mentor_name == m.name)
-        if course_name:
-            sq = sq.filter(SessionModel.course_name == course_name)
-        session_count = sq.count()
-        try:
-            rate = int(m.hourly_rate)
-        except Exception:
-            rate = 0
-        top_mentors.append({
-            "mentor_name": m.name,
-            "sessions": session_count,
-            "hourly_rate": rate,
-            "revenue": session_count * 2 * rate,
-        })
-    top_mentors.sort(key=lambda x: x["revenue"], reverse=True)
-
-    top_batches = []
-    for b in batches:
-        session_count = db.query(SessionModel).filter(SessionModel.batch_name == b.batch_name).count()
-        top_batches.append({
-            "batch_name": b.batch_name,
-            "course_name": b.course_name,
-            "mentor_name": b.mentor_name,
-            "strength": b.strength,
-            "sessions": session_count,
-        })
-    top_batches.sort(key=lambda x: x["sessions"], reverse=True)
-
-    # Learners
-    learner_summary = {
-        "total_learners": sum(b.strength or 0 for b in batches),
-        "active_learners": sum(b.active_learners or 0 for b in batches),
-        "inactive_learners": sum(b.inactive_learners or 0 for b in batches),
-        "dropout_count": sum(b.dropout_count or 0 for b in batches),
-        "average_completion": round(sum(b.course_completion or 0 for b in batches) / total_batches, 2) if total_batches else 0,
-    }
-
-    # Operations
-    ops_query = db.query(OperationsAnalytics)
-    if course_name:
-        batch_names = [b.batch_name for b in batches if b.batch_name]
-        ops_query = ops_query.filter(OperationsAnalytics.batch_name.in_(batch_names))
+    # ---- NPS feedback (filtered by batch/mentor/date, matching the UI) ----
+    nps_query = db.query(NPSFeedback)
+    if batch_name:
+        nps_query = nps_query.filter(NPSFeedback.batch_name == batch_name)
     if mentor_name:
-        ops_query = ops_query.filter(OperationsAnalytics.mentor_name == mentor_name)
-    operations = ops_query.all()
-    ops_count = len(operations)
+        nps_query = nps_query.filter(NPSFeedback.mentor_name == mentor_name)
+    nps_all = nps_query.all()
+    if date_from:
+        nps_all = [n for n in nps_all if not n.created_at or n.created_at.strftime("%Y-%m-%d") >= date_from]
+    if date_to:
+        nps_all = [n for n in nps_all if not n.created_at or n.created_at.strftime("%Y-%m-%d") <= date_to]
 
-    operations_summary = {
-        "total_projects": ops_count,
-        "total_sessions": sum(o.total_sessions or 0 for o in operations),
-        "completed_sessions": sum(o.completed_sessions or 0 for o in operations),
-        "cancelled_sessions": sum(o.cancelled_sessions or 0 for o in operations),
-        "average_sla": round(sum(o.sla_percentage or 0 for o in operations) / ops_count, 2) if ops_count else 0,
-        "average_completion": round(sum(o.completion_percentage or 0 for o in operations) / ops_count, 2) if ops_count else 0,
-        "average_mentor_utilization": round(sum(o.mentor_utilization or 0 for o in operations) / ops_count, 2) if ops_count else 0,
-        "average_resource_utilization": round(sum(o.resource_utilization or 0 for o in operations) / ops_count, 2) if ops_count else 0,
-        "average_productivity": round(sum(o.productivity_score or 0 for o in operations) / ops_count, 2) if ops_count else 0,
-    }
+    # ---- Mentor stats ----
+    mentor_stats = []
+    for m in mentors:
+        if mentor_name and m.name != mentor_name:
+            continue
+        m_sessions = [s for s in sessions if s.mentor_name == m.name]
+        hours = sum(s.duration or 0 for s in m_sessions) / 60
+        att_list = [s.attendance_percentage or 0 for s in m_sessions if (s.registered_students or 0) > 0]
+        m_nps = [n for n in nps_all if n.mentor_name == m.name]
+        non_cancelled = len([s for s in m_sessions if s.status != "Cancelled"])
+        mentor_stats.append({
+            "name": m.name,
+            "sessions": len(m_sessions),
+            "hours": round(hours, 1),
+            "attendance": avg(att_list),
+            "teaching": avg([n.instructor_rating for n in m_nps]),
+            "doubt": avg([n.doubt_rating for n in m_nps]),
+            "overall": avg([overall_rating(n) for n in m_nps]),
+            "sla": (non_cancelled / len(m_sessions) * 100) if m_sessions else None,
+        })
 
-    # Executive summary (total_projects/active_issues/health_score are not
-    # yet tracked per-course — shown as overall figures, same as the UI)
-    completion_rate = round((completed_sessions / total_sessions) * 100, 1) if total_sessions else 0
+    sessions_conducted = sum(m["sessions"] for m in mentor_stats)
+    total_mentor_hours = round(sum(m["hours"] for m in mentor_stats), 1)
+    mentor_avg_rating = avg([m["overall"] for m in mentor_stats])
+    mentor_avg_attendance = avg([m["attendance"] for m in mentor_stats])
+    mentor_avg_sla = avg([m["sla"] for m in mentor_stats])
+    top_mentors_by_sessions = sorted(mentor_stats, key=lambda m: m["sessions"], reverse=True)[:5]
 
-    executive_summary = {
-        "total_projects": 12,
-        "total_sessions": total_sessions,
-        "total_batches": total_batches,
-        "total_mentors": total_mentors,
-        "total_learners": learner_summary["total_learners"],
-        "completion_rate": completion_rate,
-        "active_issues": 3,
-        "health_score": 92,
-    }
+    # ---- Batch stats ----
+    batch_stats = []
+    for b in batches:
+        if batch_name and b.batch_name != batch_name:
+            continue
+        b_sessions = [s for s in sessions if b.batch_name and s.batch_name == b.batch_name]
+        with_reg = [s for s in b_sessions if (s.registered_students or 0) > 0]
+        attendance = avg([s.attendance_percentage or 0 for s in with_reg])
+        completion_sessions = [s for s in with_reg if s.assignment_given]
+        completion = avg([(s.assignment_completed or 0) / s.registered_students * 100 for s in completion_sessions]) if completion_sessions else None
+        health = "Not Enough Data" if not with_reg else ("Healthy" if attendance >= 75 else "At Risk")
+        b_nps = [n for n in nps_all if n.batch_name == b.batch_name]
+        rating = avg([overall_rating(n) for n in b_nps])
+        completed_count = len([s for s in b_sessions if s.status == "Completed"])
+        all_done = len(b_sessions) > 0 and all(s.status != "Scheduled" for s in b_sessions)
+        batch_stats.append({
+            "batch_name": b.batch_name or "Untitled",
+            "mentor_name": b.mentor_name or "Not Assigned",
+            "sessions": len(b_sessions),
+            "completed_count": completed_count,
+            "attendance": attendance,
+            "rating": rating,
+            "completion": completion,
+            "health": health,
+            "status": "Completed" if all_done else ("Inactive" if b.status == "Inactive" else "Active"),
+        })
+
+    completed_batches = len([b for b in batch_stats if b["status"] == "Completed"])
+    batch_total_sessions = sum(b["sessions"] for b in batch_stats)
+    batch_avg_attendance = avg([b["attendance"] for b in batch_stats])
+    batch_avg_rating = avg([b["rating"] for b in batch_stats])
+    batch_avg_completion = avg([b["completion"] for b in batch_stats])
+    health_counts = {"Healthy": 0, "At Risk": 0, "Not Enough Data": 0}
+    for b in batch_stats:
+        health_counts[b["health"]] += 1
+
+    # ---- Session Feedback Analytics (real, from NPS Form data) ----
+    feedback_responses = len(nps_all)
+    avg_teaching = avg([n.instructor_rating for n in nps_all])
+    avg_doubt = avg([n.doubt_rating for n in nps_all])
+    avg_overall_exp = avg([n.website_rating for n in nps_all])
+    avg_overall_rating = avg([overall_rating(n) for n in nps_all])
+    positive_pct = (len([n for n in nps_all if n.nps_score >= 9]) / feedback_responses * 100) if feedback_responses else 0
+    negative_pct = (len([n for n in nps_all if n.nps_score <= 6]) / feedback_responses * 100) if feedback_responses else 0
+
+    negative_candidates = [n for n in nps_all if overall_rating(n) <= 2.5 and n.feedback]
+    negative_candidates.sort(key=lambda n: n.created_at or _dt.min, reverse=True)
+    recent_negative_feedback = [
+        {
+            "date": n.created_at.strftime("%Y-%m-%d") if n.created_at else "—",
+            "batch_name": n.batch_name,
+            "mentor_name": n.mentor_name,
+            "rating": round(overall_rating(n), 1),
+            "feedback": n.feedback,
+        }
+        for n in negative_candidates[:5]
+    ]
+
+    # ---- Attendance Analytics ----
+    total_registrations = sum(s.registered_students or 0 for s in sessions)
+    total_attendees = sum(s.attended_students or 0 for s in sessions)
+    no_show_rate = ((total_registrations - total_attendees) / total_registrations * 100) if total_registrations else None
+
+    low_attendance_sorted = sorted(
+        [s for s in sessions_with_attendance if (s.attendance_percentage or 0) < 60],
+        key=lambda s: s.attendance_percentage or 0,
+    )
+    low_attendance_sessions = [
+        {"topic": s.topic or "Untitled", "attendance": s.attendance_percentage}
+        for s in low_attendance_sorted[:6]
+    ]
 
     return {
-        "executive_summary": executive_summary,
-        "session_summary": session_summary,
-        "mentor_summary": mentor_summary,
-        "batch_summary": batch_summary,
-        "batch_performance": batch_performance,
-        "at_risk_batches": at_risk_batches,
-        "learner_summary": learner_summary,
-        "operations_summary": operations_summary,
-        "top_mentors": top_mentors,
-        "top_batches": top_batches,
-        "placement_summary": placement_summary(),
+        "executive_summary": {
+            "total_sessions": total_sessions,
+            "completed_sessions": completed_sessions,
+            "cancelled_sessions": cancelled_sessions,
+            "upcoming_sessions": upcoming_sessions,
+            "total_mentors": total_mentors,
+            "active_mentors": active_mentors,
+            "total_batches": total_batches,
+            "active_batches": active_batches,
+            "total_session_hours": round(total_session_minutes / 60, 1),
+            "avg_attendance": avg_attendance,
+            "avg_session_rating": avg_session_rating,
+            "mentor_sla": mentor_sla,
+            "completion_rate": completion_rate,
+        },
+        "session_summary": {
+            "total_sessions": total_sessions,
+            "completed_sessions": completed_sessions,
+            "cancelled_sessions": cancelled_sessions,
+            "rescheduled_sessions": rescheduled_sessions,
+            "upcoming_sessions": upcoming_sessions,
+            "total_hours": round(total_session_minutes / 60, 1),
+            "avg_duration_hours": avg_duration_hours,
+            "avg_attendance": avg_attendance,
+        },
+        "session_issues": session_issues,
+        "mentor_summary": {
+            "total_mentors": total_mentors,
+            "active_mentors": active_mentors,
+            "sessions_conducted": sessions_conducted,
+            "total_mentor_hours": total_mentor_hours,
+            "avg_rating": mentor_avg_rating,
+            "avg_attendance": mentor_avg_attendance,
+            "avg_sla": mentor_avg_sla,
+        },
+        "mentor_stats": mentor_stats,
+        "top_mentors_by_sessions": top_mentors_by_sessions,
+        "batch_summary": {
+            "total_batches": total_batches,
+            "active_batches": active_batches,
+            "completed_batches": completed_batches,
+            "total_sessions": batch_total_sessions,
+            "avg_attendance": batch_avg_attendance,
+            "avg_rating": batch_avg_rating,
+            "avg_completion": batch_avg_completion,
+        },
+        "batch_stats": batch_stats,
+        "health_counts": health_counts,
+        "feedback_summary": {
+            "responses": feedback_responses,
+            "avg_overall_rating": avg_overall_rating,
+            "avg_teaching": avg_teaching,
+            "avg_doubt": avg_doubt,
+            "avg_overall_experience": avg_overall_exp,
+            "positive_pct": positive_pct,
+            "negative_pct": negative_pct,
+        },
+        "recent_negative_feedback": recent_negative_feedback,
+        "attendance_summary": {
+            "total_registrations": total_registrations,
+            "total_attendees": total_attendees,
+            "avg_attendance": avg_attendance,
+            "avg_duration_hours": avg_duration_hours,
+            "no_show_rate": no_show_rate,
+        },
+        "low_attendance_sessions": low_attendance_sessions,
     }
 
 
-def _filter_description(course_name, mentor_name, date_from, date_to):
+def _filter_description(batch_name, mentor_name, session_type, date_from, date_to):
     parts = []
-    if course_name:
-        parts.append(f"Course = {course_name}")
+    if batch_name:
+        parts.append(f"Batch = {batch_name}")
     if mentor_name:
         parts.append(f"Mentor = {mentor_name}")
+    if session_type:
+        parts.append(f"Type = {session_type}")
     if date_from:
         parts.append(f"From {date_from}")
     if date_to:
@@ -2500,30 +2732,31 @@ def _filter_description(course_name, mentor_name, date_from, date_to):
 
 @app.get("/export-analytics")
 def export_analytics(
-    course_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
     mentor_name: Optional[str] = None,
+    session_type: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ):
     db = SessionLocal()
 
     try:
-        data = _gather_analytics_data(db, course_name, mentor_name, date_from, date_to)
+        data = _gather_analytics_data(db, batch_name, mentor_name, session_type, date_from, date_to)
 
         file_name = "analytics_report.xlsx"
 
         with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
             pd.DataFrame([data["executive_summary"]]).to_excel(writer, sheet_name="Executive Summary", index=False)
             pd.DataFrame([data["session_summary"]]).to_excel(writer, sheet_name="Session Analytics", index=False)
+            pd.DataFrame(data["session_issues"]).to_excel(writer, sheet_name="Session Issues", index=False)
             pd.DataFrame([data["mentor_summary"]]).to_excel(writer, sheet_name="Mentor Analytics", index=False)
+            pd.DataFrame(data["mentor_stats"]).to_excel(writer, sheet_name="Mentor Performance", index=False)
             pd.DataFrame([data["batch_summary"]]).to_excel(writer, sheet_name="Batch Analytics", index=False)
-            pd.DataFrame(data["batch_performance"]).to_excel(writer, sheet_name="Batch Performance", index=False)
-            pd.DataFrame([data["learner_summary"]]).to_excel(writer, sheet_name="Learner Analytics", index=False)
-            pd.DataFrame([data["operations_summary"]]).to_excel(writer, sheet_name="Operations Analytics", index=False)
-            pd.DataFrame(data["at_risk_batches"]).to_excel(writer, sheet_name="At-Risk Batches", index=False)
-            pd.DataFrame(data["top_mentors"]).to_excel(writer, sheet_name="Top Mentors", index=False)
-            pd.DataFrame(data["top_batches"]).to_excel(writer, sheet_name="Top Batches", index=False)
-            pd.DataFrame([data["placement_summary"]]).to_excel(writer, sheet_name="Placement (sample data)", index=False)
+            pd.DataFrame(data["batch_stats"]).to_excel(writer, sheet_name="Batch Performance", index=False)
+            pd.DataFrame([data["feedback_summary"]]).to_excel(writer, sheet_name="Session Feedback", index=False)
+            pd.DataFrame(data["recent_negative_feedback"]).to_excel(writer, sheet_name="Negative Feedback", index=False)
+            pd.DataFrame([data["attendance_summary"]]).to_excel(writer, sheet_name="Attendance Analytics", index=False)
+            pd.DataFrame(data["low_attendance_sessions"]).to_excel(writer, sheet_name="Low Attendance Sessions", index=False)
 
         return FileResponse(
             file_name,
@@ -2537,16 +2770,17 @@ def export_analytics(
 
 @app.get("/export-analytics-report")
 def export_analytics_report(
-    course_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
     mentor_name: Optional[str] = None,
+    session_type: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ):
     db = SessionLocal()
 
     try:
-        data = _gather_analytics_data(db, course_name, mentor_name, date_from, date_to)
-        filter_desc = _filter_description(course_name, mentor_name, date_from, date_to)
+        data = _gather_analytics_data(db, batch_name, mentor_name, session_type, date_from, date_to)
+        filter_desc = _filter_description(batch_name, mentor_name, session_type, date_from, date_to)
 
         pdf_path = generate_analytics_report(data, filter_desc)
 
@@ -2562,8 +2796,87 @@ def export_analytics_report(
 
 from sqlalchemy import func
 from models.zoom_analytics import ZoomAnalytics
+<<<<<<< HEAD
 from models.webinar_participant import WebinarParticipant
 import webinar_operations as webinar_ops
+=======
+from models.webinar_registration import WebinarRegistration
+
+
+def compute_webinar_health_status(health_score: float) -> str:
+    if health_score >= 85:
+        return "Excellent"
+    if health_score >= 70:
+        return "Good"
+    if health_score >= 50:
+        return "Needs Improvement"
+    return "Poor"
+
+
+def apply_zoom_analytics_fields(record: ZoomAnalytics, data: ZoomAnalyticsCreate):
+    for field, value in data.dict().items():
+        setattr(record, field, value)
+
+    record.no_show_learners = max(data.registered_learners - data.attended_learners, 0)
+    record.attendance_rate = (
+        round(data.attended_learners / data.registered_learners * 100, 1)
+        if data.registered_learners else 0
+    )
+    record.no_show_rate = (
+        round(record.no_show_learners / data.registered_learners * 100, 1)
+        if data.registered_learners else 0
+    )
+
+
+# ==========================================================
+# Webinar Report Data Entry (CRUD)
+# ==========================================================
+
+@app.post("/zoom-analytics")
+def create_zoom_analytics(data: ZoomAnalyticsCreate, db: Session = Depends(get_db)):
+
+    record = ZoomAnalytics()
+    apply_zoom_analytics_fields(record, data)
+    record.created_at = datetime.now().isoformat()
+
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+
+    return {"message": "Webinar Report Saved Successfully", "id": record.id}
+
+
+@app.get("/zoom-analytics")
+def list_zoom_analytics(db: Session = Depends(get_db)):
+    return db.query(ZoomAnalytics).all()
+
+
+@app.put("/zoom-analytics/{record_id}")
+def update_zoom_analytics(record_id: int, data: ZoomAnalyticsCreate, db: Session = Depends(get_db)):
+
+    record = db.query(ZoomAnalytics).filter(ZoomAnalytics.id == record_id).first()
+
+    if not record:
+        return {"message": "Webinar Report Not Found"}
+
+    apply_zoom_analytics_fields(record, data)
+
+    db.commit()
+
+    return {"message": "Webinar Report Updated Successfully"}
+
+
+@app.delete("/zoom-analytics/{record_id}")
+def delete_zoom_analytics(record_id: int, db: Session = Depends(get_db)):
+
+    record = db.query(ZoomAnalytics).filter(ZoomAnalytics.id == record_id).first()
+
+    if record:
+        db.delete(record)
+        db.commit()
+
+    return {"message": "Webinar Report Deleted Successfully"}
+>>>>>>> 967f926 (Initial commit)
 
 
 # ==========================================================
@@ -2601,45 +2914,44 @@ def webinars(db: Session = Depends(get_db), stats: bool = False):
 @app.get("/zoom-summary")
 def zoom_summary(db: Session = Depends(get_db)):
 
-    total_webinars = db.query(ZoomAnalytics).count()
+    row = db.query(
+        func.count(ZoomAnalytics.id),
+        func.sum(ZoomAnalytics.registered_learners),
+        func.sum(ZoomAnalytics.attended_learners),
+        func.avg(ZoomAnalytics.attendance_rate),
+        func.avg(ZoomAnalytics.average_watch_time),
+        func.avg(ZoomAnalytics.engagement_score),
+        func.avg(ZoomAnalytics.session_rating),
+        func.sum(ZoomAnalytics.recording_views),
+        func.avg(ZoomAnalytics.poll_response_rate),
+        func.avg(ZoomAnalytics.webinar_health_score),
+    ).one()
 
-    registered = db.query(
-        func.sum(ZoomAnalytics.registered_learners)
-    ).scalar() or 0
-
-    attended = db.query(
-        func.sum(ZoomAnalytics.attended_learners)
-    ).scalar() or 0
-
-    attendance_rate = db.query(
-        func.avg(ZoomAnalytics.attendance_rate)
-    ).scalar() or 0
-
-    average_watch_time = db.query(
-        func.avg(ZoomAnalytics.average_watch_time)
-    ).scalar() or 0
-
-    engagement_score = db.query(
-        func.avg(ZoomAnalytics.engagement_score)
-    ).scalar() or 0
-
-    session_rating = db.query(
-        func.avg(ZoomAnalytics.session_rating)
-    ).scalar() or 0
-
-    recording_views = db.query(
-        func.sum(ZoomAnalytics.recording_views)
-    ).scalar() or 0
+    (
+        total_webinars,
+        registered,
+        attended,
+        attendance_rate,
+        average_watch_time,
+        engagement_score,
+        session_rating,
+        recording_views,
+        poll_response_rate,
+        webinar_health_score,
+    ) = row
 
     return {
-        "total_webinars": total_webinars,
-        "registered_learners": registered,
-        "attended_learners": attended,
-        "attendance_rate": round(attendance_rate, 1),
-        "average_watch_time": round(average_watch_time, 1),
-        "engagement_score": round(engagement_score, 1),
-        "session_rating": round(session_rating, 1),
-        "recording_views": recording_views,
+        "total_webinars": total_webinars or 0,
+        "registered_learners": registered or 0,
+        "attended_learners": attended or 0,
+        "attendance_rate": round(attendance_rate or 0, 1),
+        "average_watch_time": round(average_watch_time or 0, 1),
+        "engagement_score": round(engagement_score or 0, 1),
+        "session_rating": round(session_rating or 0, 1),
+        "recording_views": recording_views or 0,
+        "poll_response_rate": round(poll_response_rate or 0, 1),
+        "webinar_health_score": round(webinar_health_score or 0, 1),
+        "webinar_health_status": compute_webinar_health_status(webinar_health_score or 0),
     }
 
 
@@ -2799,10 +3111,532 @@ def webinar_report(session_id: int, db: Session = Depends(get_db)):
     # AI / Health
     "engagement_score": webinar.engagement_score,
     "webinar_health_score": webinar.webinar_health_score,
+    "webinar_health_status": compute_webinar_health_status(webinar.webinar_health_score or 0),
     "learner_satisfaction": webinar.learner_satisfaction,
+
+    # Derived Metrics
+    "dropout_rate": round((webinar.early_exit_learners / webinar.attended_learners * 100), 1)
+        if webinar.attended_learners else 0,
+    "qa_resolution_rate": round((webinar.resolved_questions / webinar.questions_asked * 100), 1)
+        if webinar.questions_asked else 0,
 
     "remarks": webinar.remarks,
 }
+
+
+# ==========================================================
+# Webinar Registrations (List of Registered Learners)
+# ==========================================================
+
+@app.get("/webinar-registrations/{session_id}")
+def webinar_registrations(session_id: int, db: Session = Depends(get_db)):
+
+    registrations = (
+        db.query(WebinarRegistration)
+        .filter(WebinarRegistration.session_id == session_id)
+        .all()
+    )
+
+    return [
+        {
+            "id": r.id,
+            "learner_name": r.learner_name,
+            "learner_email": r.learner_email,
+            "phone": r.phone,
+            "registered_at": r.registered_at,
+            "attended": r.attended,
+            "join_time": r.join_time,
+            "leave_time": r.leave_time,
+            "attendance_duration_minutes": r.attendance_duration_minutes,
+        }
+        for r in registrations
+    ]
+
+
+@app.delete("/webinar-registrations/{session_id}")
+def delete_webinar_registrations(session_id: int, db: Session = Depends(get_db)):
+
+    deleted = (
+        db.query(WebinarRegistration)
+        .filter(WebinarRegistration.session_id == session_id)
+        .delete()
+    )
+    db.commit()
+
+    return {"message": f"Deleted {deleted} registration(s) for this webinar.", "deleted": deleted}
+
+
+@app.delete("/webinar-registrations/{session_id}/attendance")
+def delete_webinar_attendance(session_id: int, db: Session = Depends(get_db)):
+    """Clears attendance data (join/leave/duration/attended) from every
+    learner in this webinar without deleting the learners themselves — used
+    to undo a bad Attendance import while keeping the registration list."""
+
+    registrations = (
+        db.query(WebinarRegistration)
+        .filter(WebinarRegistration.session_id == session_id)
+        .all()
+    )
+
+    for r in registrations:
+        r.attended = False
+        r.join_time = None
+        r.leave_time = None
+        r.attendance_duration_minutes = 0
+
+    db.commit()
+
+    return {
+        "message": f"Cleared attendance data for {len(registrations)} learner(s).",
+        "cleared": len(registrations),
+    }
+
+
+# Zoom export column headers vary by report type (Registration report vs
+# Attendee/Attendance report) and by Zoom account settings, so we normalize
+# headers and match against every alias we've seen rather than one fixed name.
+ZOOM_COLUMN_ALIASES = {
+    "learner_name": ["name", "name_original_name", "attendee_name", "full_name", "user_name"],
+    "first_name": ["first_name"],
+    "last_name": ["last_name"],
+    "learner_email": ["email", "user_email", "email_address"],
+    "phone": ["phone", "phone_number"],
+    "registered_at": ["registration_time", "approval_time", "registered_at", "date"],
+    "join_time": ["join_time", "join_time1"],
+    "leave_time": ["leave_time", "leave_time1"],
+    "duration": ["duration_minutes", "duration_min", "duration", "time_in_session_minutes"],
+    "approval_status": ["approval_status", "status"],
+    "attended_flag": ["attended", "attended_session"],
+}
+
+# Zoom's Registration Report leads with a one-row "meeting summary" table
+# (Topic, ID, Scheduled Time, Duration, # Registrants, # Cancelled/Approved/
+# Denied registrants) before the real "Attendee Details" table. It's useful
+# on its own — it gives an authoritative registered-learner count straight
+# from Zoom — so we pull it out separately from the learner rows.
+ZOOM_SUMMARY_ALIASES = {
+    "topic": ["topic"],
+    "meeting_id": ["id", "webinar_id"],
+    "scheduled_time": ["scheduled_time"],
+    "duration_minutes": ["duration_minutes", "actual_duration_minutes"],
+    "total_registrants": ["registrants"],
+    "cancelled_registrants": ["cancelled_registrants"],
+    "approved_registrants": ["approved_registrants"],
+    "denied_registrants": ["denied_registrants"],
+    "total_participants": ["participants", "unique_viewers"],
+}
+
+APPROVED_STATUSES = {"approved", "", "nan", "none"}
+
+# Zoom writes these as literal cell text for "no value" depending on report
+# type — treat them all as empty so they never get stored or misread as real
+# data (e.g. a literal "--" in a Join Time column must not count as attended).
+EMPTY_CELL_VALUES = {"", "nan", "none", "--", "-"}
+
+
+def clean_cell(value) -> str:
+    text = str(value).strip() if value is not None else ""
+    return "" if text.lower() in EMPTY_CELL_VALUES else text
+
+
+def normalize_header(col) -> str:
+    col = str(col).strip().lower()
+    col = re.sub(r"[^a-z0-9]+", "_", col)
+    return col.strip("_")
+
+
+def find_header_row(raw_rows, max_scan=15):
+    # Zoom labels the real per-learner table "Attendee Details" across every
+    # report type (Registration, Attendance, Attendee). A fuller "Attendee
+    # Report" export also has "Host Details" / "Panelist Details" sections
+    # ABOVE it whose headers also happen to contain "Email" — scanning for
+    # the first email-looking header would grab one of those instead and
+    # silently drop the real attendee rows, so the section marker takes
+    # priority whenever it's present.
+    for i, row in enumerate(raw_rows):
+        cells = [normalize_header(c) for c in row]
+        if len(cells) <= 2 and any(c == "attendee_details" for c in cells):
+            return i + 1
+
+    for i, row in enumerate(raw_rows[:max_scan]):
+        cells = [normalize_header(c) for c in row]
+        if any(c in ZOOM_COLUMN_ALIASES["learner_email"] for c in cells):
+            return i
+    return 0
+
+
+def extract_meeting_summary(raw_rows, max_scan=15):
+    for i, row in enumerate(raw_rows[:max_scan]):
+        cells = [normalize_header(c) for c in row]
+        if "topic" in cells and ("registrants" in cells or "participants" in cells) and i + 1 < len(raw_rows):
+            data_row = raw_rows[i + 1]
+            summary = {}
+            for field, aliases in ZOOM_SUMMARY_ALIASES.items():
+                for alias in aliases:
+                    if alias in cells:
+                        idx = cells.index(alias)
+                        if idx < len(data_row):
+                            summary[field] = data_row[idx]
+                        break
+            return summary or None
+    return None
+
+
+def decode_csv_bytes(contents: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            return contents.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return contents.decode("utf-8", errors="ignore")
+
+
+def read_import_table(contents: bytes, filename: str):
+    """Returns (DataFrame of learner rows, meeting summary dict or None)."""
+    is_csv = (filename or "").lower().endswith(".csv")
+
+    if is_csv:
+        text = decode_csv_bytes(contents)
+
+        # Zoom's CSV exports open with a few metadata rows (report title,
+        # topic, meeting ID, ...) that don't have the same column count as
+        # the actual table further down, AND — in the fuller "Attendee
+        # Report" export — many data rows themselves have a stray trailing
+        # comma (an extra empty field) that others in the same table don't.
+        # pandas' CSV readers lock the column count to one row and choke or
+        # silently misalign on both, so we skip them entirely: read every
+        # line with csv.reader (which just returns whatever cells are on
+        # that line, ragged or not) and zip each data row against the header
+        # by position ourselves, padding short rows and dropping any cells
+        # past the header's width.
+        raw_rows = list(csv.reader(io.StringIO(text)))
+        header_row = find_header_row(raw_rows)
+        summary = extract_meeting_summary(raw_rows)
+
+        headers = [normalize_header(c) for c in raw_rows[header_row]] if header_row < len(raw_rows) else []
+        width = len(headers)
+        records = []
+        for row in raw_rows[header_row + 1:]:
+            if not any(cell.strip() for cell in row):
+                continue
+            padded = (row + [""] * width)[:width]
+            records.append(dict(zip(headers, padded)))
+
+        df = pd.DataFrame(records, columns=headers)
+        return df, summary
+
+    raw = pd.read_excel(io.BytesIO(contents), header=None, dtype=str)
+    header_row = find_header_row(raw.values.tolist())
+    summary = extract_meeting_summary(raw.values.tolist())
+    df = pd.read_excel(io.BytesIO(contents), header=header_row, dtype=str)
+    return df, summary
+
+
+@app.post("/webinar-registrations/{session_id}/import")
+async def import_webinar_registrations(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+
+    contents = await file.read()
+
+    df, meeting_summary = read_import_table(contents, file.filename)
+    df.columns = [normalize_header(c) for c in df.columns]
+
+    def col_for(field):
+        for alias in ZOOM_COLUMN_ALIASES[field]:
+            if alias in df.columns:
+                return alias
+        return None
+
+    email_col = col_for("learner_email")
+    if not email_col:
+        return {"message": "Could not find an email column in this file.", "imported": 0, "updated": 0}
+
+    name_col = col_for("learner_name")
+    first_col = col_for("first_name")
+    last_col = col_for("last_name")
+    registered_col = col_for("registered_at")
+    join_col = col_for("join_time")
+    leave_col = col_for("leave_time")
+    duration_col = col_for("duration")
+    status_col = col_for("approval_status")
+    phone_col = col_for("phone")
+    attended_col = col_for("attended_flag")
+
+    def parse_dt(value):
+        try:
+            return date_parser.parse(value)
+        except (ValueError, TypeError, OverflowError):
+            return None
+
+    # Zoom lists the same person more than once whenever they leave and
+    # rejoin (a dropped connection, switching devices, ...) — each occurrence
+    # is its own row with its own Join/Leave/Duration. We aggregate those by
+    # email before writing anything, summing the minutes attended and taking
+    # the earliest join / latest leave, instead of letting the last row seen
+    # silently overwrite the ones before it.
+    aggregated = {}
+    skipped, not_approved = 0, 0
+
+    for _, row in df.iterrows():
+        email = clean_cell(row.get(email_col))
+        if not email:
+            skipped += 1
+            continue
+
+        # Only approved registrations are real registered learners for our
+        # purposes — a cancelled/denied signup shouldn't inflate the count
+        # or show up in the learner list.
+        if status_col:
+            status = clean_cell(row.get(status_col)).lower()
+            if status and status not in APPROVED_STATUSES:
+                not_approved += 1
+                continue
+
+        if name_col:
+            name = clean_cell(row.get(name_col))
+        elif first_col:
+            name = f"{clean_cell(row.get(first_col))} {clean_cell(row.get(last_col))}".strip()
+        else:
+            name = ""
+        name = " ".join(name.split())
+
+        join_time = clean_cell(row.get(join_col)) if join_col else ""
+        leave_time = clean_cell(row.get(leave_col)) if leave_col else ""
+
+        duration_raw = row.get(duration_col) if duration_col else None
+        try:
+            duration = int(float(duration_raw)) if clean_cell(duration_raw) else 0
+        except (ValueError, TypeError):
+            duration = 0
+
+        # Some Zoom exports give Join/Leave Time but no separate Duration
+        # column — derive it ourselves so attendance length is never blank
+        # just because that one column happened to be missing.
+        if not duration and join_time and leave_time:
+            join_dt, leave_dt = parse_dt(join_time), parse_dt(leave_time)
+            if join_dt and leave_dt:
+                duration = max(int(round((leave_dt - join_dt).total_seconds() / 60)), 0)
+
+        if attended_col:
+            attended = clean_cell(row.get(attended_col)).lower() in ("yes", "true", "1")
+        else:
+            attended = bool(join_time) or duration > 0
+
+        phone = clean_cell(row.get(phone_col)).lstrip("'") if phone_col else ""
+        registered_at = clean_cell(row.get(registered_col)) if registered_col else ""
+
+        entry = aggregated.setdefault(email, {
+            "name": "", "phone": "", "registered_at": "",
+            "join_time": None, "leave_time": None, "duration": 0, "attended": False,
+        })
+        entry["name"] = name or entry["name"]
+        entry["phone"] = phone or entry["phone"]
+        entry["registered_at"] = registered_at or entry["registered_at"]
+        entry["attended"] = entry["attended"] or attended
+        entry["duration"] += duration
+
+        if join_time:
+            existing_dt, new_dt = parse_dt(entry["join_time"]) if entry["join_time"] else None, parse_dt(join_time)
+            if not entry["join_time"] or (existing_dt and new_dt and new_dt < existing_dt):
+                entry["join_time"] = join_time
+        if leave_time:
+            existing_dt, new_dt = parse_dt(entry["leave_time"]) if entry["leave_time"] else None, parse_dt(leave_time)
+            if not entry["leave_time"] or (existing_dt and new_dt and new_dt > existing_dt):
+                entry["leave_time"] = leave_time
+
+    existing = {
+        r.learner_email: r
+        for r in db.query(WebinarRegistration).filter(WebinarRegistration.session_id == session_id).all()
+    }
+
+    imported, updated = 0, 0
+
+    for email, entry in aggregated.items():
+        record = existing.get(email)
+        if record:
+            record.learner_name = entry["name"] or record.learner_name
+            if entry["phone"]:
+                record.phone = entry["phone"]
+            if entry["registered_at"]:
+                record.registered_at = entry["registered_at"]
+            if entry["join_time"]:
+                record.join_time = entry["join_time"]
+            if entry["leave_time"]:
+                record.leave_time = entry["leave_time"]
+            if entry["duration"]:
+                record.attendance_duration_minutes = entry["duration"]
+            record.attended = record.attended or entry["attended"]
+            updated += 1
+        else:
+            db.add(WebinarRegistration(
+                session_id=session_id,
+                learner_name=entry["name"] or email.split("@")[0],
+                learner_email=email,
+                phone=entry["phone"] or None,
+                registered_at=entry["registered_at"],
+                attended=entry["attended"],
+                join_time=entry["join_time"],
+                leave_time=entry["leave_time"],
+                attendance_duration_minutes=entry["duration"],
+            ))
+            imported += 1
+
+    db.commit()
+
+    message = f"Imported {imported} new, updated {updated} existing, skipped {skipped} rows."
+    if not_approved:
+        message += f" Excluded {not_approved} cancelled/denied registration(s)."
+
+    return {
+        "message": message,
+        "imported": imported,
+        "updated": updated,
+        "skipped": skipped,
+        "not_approved": not_approved,
+        "meeting_summary": meeting_summary,
+    }
+
+
+POLL_IDENTIFIER_COLUMNS = {"", "user_name", "email_address", "submitted_date_and_time"}
+
+
+def _section_marker_row(raw_rows, label, start=0):
+    """Find a row whose only non-empty cell matches `label` exactly (case-insensitive)."""
+    target = label.strip().lower()
+    for i in range(start, len(raw_rows)):
+        cells = [c.strip() for c in raw_rows[i]]
+        if cells and cells[0].lower() == target and not any(cells[1:]):
+            return i
+    return None
+
+
+def compute_poll_health_status(avg_rating: float) -> str:
+    if not avg_rating:
+        return "No Data"
+    return "Good" if avg_rating >= 4.3 else "Poor"
+
+
+def parse_poll_report(raw_rows):
+    """Parses Zoom's Poll Report export: an Overview block, a "Launched Polls"
+    summary table, then one response table per poll (named after the poll
+    itself) with a dynamic set of rating-question columns (1-5) plus an
+    optional free-text Remarks column."""
+
+    overview = {}
+    overview_row = _section_marker_row(raw_rows, "Overview")
+    if overview_row is not None and overview_row + 2 < len(raw_rows):
+        header = [normalize_header(c) for c in raw_rows[overview_row + 1]]
+        data = raw_rows[overview_row + 2]
+        for field in ("generate_time", "meeting_topic", "meeting_webinar_id", "actual_start_time"):
+            if field in header:
+                idx = header.index(field)
+                if idx < len(data):
+                    overview[field] = data[idx]
+
+    launched = []
+    launched_row = _section_marker_row(raw_rows, "Launched Polls")
+    if launched_row is not None and launched_row + 1 < len(raw_rows):
+        header = [normalize_header(c) for c in raw_rows[launched_row + 1]]
+        j = launched_row + 2
+        while j < len(raw_rows) and any(c.strip() for c in raw_rows[j]):
+            data = raw_rows[j]
+            launched.append({col: (data[k] if k < len(data) else "") for k, col in enumerate(header)})
+            j += 1
+
+    polls = []
+    search_from = 0
+    for entry in launched:
+        poll_name = entry.get("poll_name", "").strip()
+        if not poll_name:
+            continue
+
+        marker = _section_marker_row(raw_rows, poll_name, start=search_from)
+        if marker is None or marker + 1 >= len(raw_rows):
+            continue
+        search_from = marker + 1
+
+        headers = [normalize_header(c) for c in raw_rows[marker + 1]]
+        width = len(headers)
+
+        data_rows = []
+        j = marker + 2
+        while j < len(raw_rows) and any(c.strip() for c in raw_rows[j][:width]):
+            data_rows.append((raw_rows[j] + [""] * width)[:width])
+            j += 1
+
+        rating_cols = []
+        for idx, col in enumerate(headers):
+            if col in POLL_IDENTIFIER_COLUMNS or col == "remarks":
+                continue
+            values = [r[idx].strip() for r in data_rows]
+            non_empty = [v for v in values if v]
+            numeric = [v for v in non_empty if v.isdigit() and 1 <= int(v) <= 5]
+            if non_empty and len(numeric) >= max(1, len(non_empty) * 0.5):
+                rating_cols.append(idx)
+
+        # Business rule: average each question's responses on its own first
+        # (e.g. every "teaching style" score across all 176 people), then
+        # average those per-question averages together — not one blended
+        # average across every individual answer, which would weight
+        # respondents differently if some skipped a question.
+        question_averages = []
+        for idx in rating_cols:
+            scores = [int(r[idx].strip()) for r in data_rows if r[idx].strip().isdigit()]
+            if scores:
+                question_averages.append(round(sum(scores) / len(scores), 2))
+
+        avg_rating = round(sum(question_averages) / len(question_averages), 2) if question_averages else 0
+
+        polls.append({
+            "name": poll_name,
+            "questions": entry.get("questions", ""),
+            "responses": len(data_rows),
+            "question_averages": question_averages,
+            "average_rating": avg_rating,
+        })
+
+    total_responses = sum(p["responses"] for p in polls)
+    overall_avg = (
+        round(sum(p["average_rating"] * p["responses"] for p in polls) / total_responses, 2)
+        if total_responses else 0
+    )
+    highest = max((p["average_rating"] for p in polls), default=0)
+
+    return {
+        "overview": overview,
+        "polls": polls,
+        "polls_conducted": len(polls),
+        "poll_responses": total_responses,
+        "poll_average_rating": overall_avg,
+        "highest_rated_poll": highest,
+    }
+
+
+@app.post("/webinar-registrations/{session_id}/import-polls")
+async def import_webinar_polls(session_id: int, file: UploadFile = File(...)):
+
+    contents = await file.read()
+    is_csv = (file.filename or "").lower().endswith(".csv")
+
+    if is_csv:
+        text = decode_csv_bytes(contents)
+        raw_rows = list(csv.reader(io.StringIO(text)))
+    else:
+        raw = pd.read_excel(io.BytesIO(contents), header=None, dtype=str)
+        raw_rows = [["" if pd.isna(c) else str(c) for c in row] for row in raw.values.tolist()]
+
+    result = parse_poll_report(raw_rows)
+    health = compute_poll_health_status(result["poll_average_rating"])
+
+    message = (
+        f"Parsed {result['polls_conducted']} poll(s), {result['poll_responses']} total responses. "
+        f"Average rating {result['poll_average_rating']}/5 — Poll Health: {health}."
+    )
+
+    return {
+        "message": message,
+        **result,
+        "poll_health_status": health,
+    }
 
 
 @app.get("/export-webinar-pdf/{session_id}")

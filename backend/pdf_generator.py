@@ -1,7 +1,5 @@
 from reportlab.lib.colors import HexColor
-from reportlab.lib.utils import ImageReader
 from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
 import os
 from datetime import datetime
 from reportlab.lib import colors
@@ -286,6 +284,32 @@ def generate_invoice(invoice):
 # Webinar Analytics PDF
 # =====================================================
 
+def _webinar_health_status(score):
+    score = score or 0
+    if score >= 85:
+        return "Excellent", HexColor("#15803d"), HexColor("#dcfce7")
+    if score >= 70:
+        return "Good", HexColor("#1d4ed8"), HexColor("#dbeafe")
+    if score >= 50:
+        return "Needs Improvement", HexColor("#b45309"), HexColor("#fef3c7")
+    return "Poor", HexColor("#b91c1c"), HexColor("#fee2e2")
+
+
+def _webinar_footer(canvas_obj, doc_obj):
+    canvas_obj.saveState()
+    canvas_obj.setStrokeColor(BORDER)
+    canvas_obj.setLineWidth(0.5)
+    canvas_obj.line(16 * mm, 14 * mm, 194 * mm, 14 * mm)
+    canvas_obj.setFont("Helvetica", 8)
+    canvas_obj.setFillColor(colors.HexColor("#94a3b8"))
+    canvas_obj.drawCentredString(
+        105 * mm,
+        10 * mm,
+        f"Krish Naik Academy  ·  Webinar Analytics Report  ·  Page {doc_obj.page}",
+    )
+    canvas_obj.restoreState()
+
+
 def generate_webinar_report(report):
 
     if not os.path.exists("pdfs"):
@@ -293,219 +317,229 @@ def generate_webinar_report(report):
 
     filename = f"pdfs/webinar_{report.session_id}.pdf"
 
-    c = canvas.Canvas(filename, pagesize=A4)
-
-    # =====================================
-    # Company Logo
-    # =====================================
-
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
 
-    print("WEBINAR LOGO:", LOGO_PATH)
-    print("Logo exists:", os.path.exists(LOGO_PATH))
+    doc = SimpleDocTemplate(
+        filename,
+        pagesize=A4,
+        topMargin=0,
+        bottomMargin=22 * mm,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+    )
 
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        "WbTitleWhite", parent=styles["Normal"], textColor=colors.white, fontSize=18, fontName="Helvetica-Bold", leading=22,
+    )
+    subtitle_style = ParagraphStyle(
+        "WbSubtitleWhite", parent=styles["Normal"], textColor=YELLOW, fontSize=10, leading=13,
+    )
+    section_style = ParagraphStyle(
+        "WbSection", parent=styles["Heading2"], textColor=NAVY, fontSize=13, spaceBefore=16, spaceAfter=8,
+    )
+    body_style = ParagraphStyle(
+        "WbBody", parent=styles["Normal"], textColor=SLATE, fontSize=10, leading=14,
+    )
+    kpi_label_style = ParagraphStyle(
+        "WbKpiLabel", parent=styles["Normal"], textColor=colors.HexColor("#94a3b8"), fontSize=7.5,
+        fontName="Helvetica-Bold", alignment=1, leading=10,
+    )
+    kpi_value_style = ParagraphStyle(
+        "WbKpiValue", parent=styles["Normal"], textColor=NAVY, fontSize=14, fontName="Helvetica-Bold", alignment=1,
+    )
+    info_label_style = ParagraphStyle(
+        "WbInfoLabel", parent=styles["Normal"], textColor=colors.HexColor("#94a3b8"), fontSize=7.5,
+        fontName="Helvetica-Bold", leading=10,
+    )
+    info_value_style = ParagraphStyle(
+        "WbInfoValue", parent=styles["Normal"], textColor=NAVY, fontSize=10.5, fontName="Helvetica-Bold", leading=14,
+    )
+
+    def g(field, default=0):
+        val = getattr(report, field, default)
+        return default if val is None else val
+
+    def bullet(title):
+        return Paragraph(f"<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;{title}", section_style)
+
+    def kpi_grid(pairs, per_row=4):
+        rows = []
+        for i in range(0, len(pairs), per_row):
+            chunk = pairs[i:i + per_row]
+            labels = [Paragraph(lbl.upper(), kpi_label_style) for lbl, _ in chunk]
+            values = [Paragraph(str(val), kpi_value_style) for _, val in chunk]
+            while len(labels) < per_row:
+                labels.append("")
+                values.append("")
+            rows.append(labels)
+            rows.append(values)
+
+        col_w = (178 / per_row) * mm
+        table = Table(rows, colWidths=[col_w] * per_row)
+        style = [
+            ("BACKGROUND", (0, 0), (-1, -1), BG_ALT),
+            ("BOX", (0, 0), (-1, -1), 0.75, BORDER),
+            ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+        ]
+        for r in range(0, len(rows), 2):
+            style.append(("TOPPADDING", (0, r), (-1, r), 10))
+            style.append(("BOTTOMPADDING", (0, r), (-1, r), 2))
+            style.append(("TOPPADDING", (0, r + 1), (-1, r + 1), 2))
+            style.append(("BOTTOMPADDING", (0, r + 1), (-1, r + 1), 12))
+            if r > 0:
+                style.append(("LINEABOVE", (0, r), (-1, r), 0.5, BORDER))
+        table.setStyle(TableStyle(style))
+        return table
+
+    elements = []
+
+    # =====================================================
+    # Header banner
+    # =====================================================
     if os.path.exists(LOGO_PATH):
-        logo = ImageReader(LOGO_PATH)
+        logo_cell = Image(LOGO_PATH, width=30 * mm, height=11.5 * mm)
+    else:
+        logo_cell = ""
 
-        c.drawImage(
-            logo,
-            40,
-            760,
-            width=70,
-            height=70,
-            preserveAspectRatio=True,
-            mask="auto",
-        )
+    header_text = Table(
+        [[Paragraph("Krish Naik Academy", title_style)],
+         [Paragraph(f"Webinar Analytics Report &nbsp;&bull;&nbsp; Generated {datetime.now().strftime('%d %b %Y, %I:%M %p')}", subtitle_style)]],
+        colWidths=[130 * mm],
+    )
+    header_text.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
 
-    # =====================================
-    # Company Header
-    # =====================================
+    header = Table([[logo_cell, header_text]], colWidths=[38 * mm, 140 * mm])
+    header.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, 0), 6 * mm),
+        ("RIGHTPADDING", (0, 0), (0, 0), 2 * mm),
+        ("LEFTPADDING", (1, 0), (1, 0), 4 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 16),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+    ]))
+    elements.append(header)
+    elements.append(HRFlowable(width="100%", thickness=3, color=GOLD_LIGHT, spaceBefore=0, spaceAfter=18))
 
-    c.setFont("Helvetica-Bold", 22)
-    c.drawString(130, 805, "Krish Naik Academy")
+    # =====================================================
+    # Webinar identity + health badge
+    # =====================================================
+    health_score = g("webinar_health_score", 0)
+    health_label, health_fg, health_bg = _webinar_health_status(health_score)
 
-    c.setFont("Helvetica", 13)
-    c.drawString(130, 783, "Operations Management Portal")
+    badge_style = ParagraphStyle(
+        "WbBadge", parent=styles["Normal"], textColor=health_fg, fontSize=9,
+        fontName="Helvetica-Bold", alignment=1, leading=11,
+    )
+    health_badge = Table(
+        [[Paragraph(f"● {health_label.upper()} — {health_score}/100", badge_style)]],
+        colWidths=[70 * mm],
+    )
+    health_badge.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), health_bg),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+    ]))
 
-    c.setFont("Helvetica-Bold", 18)
-    c.drawString(145, 745, "WEBINAR ANALYTICS REPORT")
+    identity_cell = [
+        Paragraph("WEBINAR", info_label_style),
+        Paragraph(g("webinar_title", "—"), ParagraphStyle("WbTitleNavy", parent=styles["Normal"], textColor=NAVY, fontSize=15, fontName="Helvetica-Bold", leading=18)),
+        Paragraph(
+            f"{g('mentor_name', '—')} &nbsp;·&nbsp; {g('session_date', '—')} {g('session_time', '')}",
+            body_style,
+        ),
+    ]
 
-    c.setStrokeColor(HexColor("#2563eb"))
-    c.setLineWidth(2)
-    c.line(40, 730, 550, 730)
+    identity_table = Table([[identity_cell, health_badge]], colWidths=[108 * mm, 70 * mm])
+    identity_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), BG_ALT),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOX", (0, 0), (-1, -1), 0.75, BORDER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+        ("TOPPADDING", (0, 0), (-1, -1), 14),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+        ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+    ]))
+    elements.append(identity_table)
+    elements.append(Spacer(1, 14))
 
-    y = 690
-
-    # ============================
+    # =====================================================
     # Webinar Information
-    # ============================
+    # =====================================================
+    elements.append(bullet("Webinar Information"))
+    info_rows = [
+        ("Mentor Email", g("mentor_email", "—")), ("Meeting ID", g("meeting_id", "—")),
+        ("Duration", f"{g('duration')} mins"), ("Platform", g("platform", "—")),
+        ("Status", g("webinar_status", "—")),
+    ]
+    info_pairs_table_rows = []
+    for i in range(0, len(info_rows), 2):
+        row = info_rows[i:i + 2]
+        cells = []
+        for label, value in row:
+            cells.append([Paragraph(label.upper(), info_label_style), Paragraph(str(value), info_value_style)])
+        while len(cells) < 2:
+            cells.append([Paragraph("", info_label_style), Paragraph("", info_value_style)])
+        info_pairs_table_rows.append(cells)
 
-    c.setFont("Helvetica", 12)
-
-    c.drawString(50, y, f"Title : {report.webinar_title}")
-    y -= 20
-
-    c.drawString(50, y, f"Mentor : {report.mentor_name}")
-    y -= 20
-
-    c.drawString(50, y, f"Course : {report.course_name}")
-    y -= 20
-
-    c.drawString(50, y, f"Batch : {report.batch_name}")
-    y -= 20
-
-    c.drawString(50, y, f"Project : {report.project_name}")
-
-    y -= 35
-    
-    # ============================
-    # Attendance
-    # ============================
-
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, y, "Attendance")
-
-    y -= 25
-
-    c.setFont("Helvetica", 12)
-
-    c.drawString(
-        60,
-        y,
-        f"Registered Learners : {report.registered_learners}",
+    info_table = Table(
+        [[cells[0], cells[1]] for cells in info_pairs_table_rows],
+        colWidths=[89 * mm, 89 * mm],
     )
-    y -= 20
+    info_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    elements.append(info_table)
+    elements.append(Spacer(1, 10))
 
-    c.drawString(
-        60,
-        y,
-        f"Attended Learners : {report.attended_learners}",
-    )
-    y -= 20
+    # =====================================================
+    # Registration & Attendance
+    # =====================================================
+    elements.append(bullet("Registration & Attendance"))
+    elements.append(kpi_grid([
+        ("Registered", g("registered_learners")),
+        ("Attended", g("attended_learners")),
+        ("Attendance Rate", f"{g('attendance_rate')}%"),
+        ("No Shows", g("no_show_learners")),
+        ("No Show Rate", f"{g('no_show_rate')}%"),
+        ("Peak Concurrent", g("peak_concurrent_users")),
+        ("Avg Watch Time", f"{g('average_watch_time')} min"),
+        ("Late Joiners", g("late_joiners")),
+    ]))
+    elements.append(Spacer(1, 10))
 
-    c.drawString(
-        60,
-        y,
-        f"Attendance Rate : {report.attendance_rate}%",
-    )
+    # =====================================================
+    # Poll Reports
+    # =====================================================
+    elements.append(bullet("Poll Reports"))
+    elements.append(kpi_grid([
+        ("Polls Conducted", g("polls_conducted")),
+        ("Responses", g("poll_responses")),
+        ("Response Rate", f"{g('poll_response_rate')}%"),
+        ("Average Rating", f"{g('poll_average_rating')}/5"),
+    ]))
 
-    y -= 35
+    remarks = g("remarks", "")
+    if remarks:
+        elements.append(Spacer(1, 10))
+        elements.append(bullet("Remarks"))
+        elements.append(Paragraph(str(remarks), body_style))
 
-    # ============================
-    # Engagement
-    # ============================
-
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, y, "Learner Engagement")
-
-    y -= 25
-
-    c.setFont("Helvetica", 12)
-
-    c.drawString(
-        60,
-        y,
-        f"Chat Messages : {report.total_chat_messages}",
-    )
-    y -= 20
-
-    c.drawString(
-        60,
-        y,
-        f"Questions Asked : {report.questions_asked}",
-    )
-    y -= 20
-
-    c.drawString(
-        60,
-        y,
-        f"Raised Hands : {report.raised_hands}",
-    )
-    y -= 20
-
-    c.drawString(
-        60,
-        y,
-        f"Engagement Score : {report.engagement_score}",
-    )
-
-    y -= 35
-
-    # ============================
-    # Poll Analytics
-    # ============================
-
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, y, "Poll Analytics")
-
-    y -= 25
-
-    c.setFont("Helvetica", 12)
-
-    c.drawString(
-        60,
-        y,
-        f"Polls Conducted : {report.polls_conducted}",
-    )
-    y -= 20
-
-    c.drawString(
-        60,
-        y,
-        f"Responses : {report.poll_responses}",
-    )
-    y -= 20
-
-    c.drawString(
-        60,
-        y,
-        f"Average Rating : {report.poll_average_rating}",
-    )
-
-    y -= 35
-
-    # ============================
-    # Feedback
-    # ============================
-
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, y, "Feedback")
-
-    y -= 25
-
-    c.setFont("Helvetica", 12)
-
-    c.drawString(
-        60,
-        y,
-        f"Session Rating : {report.session_rating}",
-    )
-    y -= 20
-
-    c.drawString(
-        60,
-        y,
-        f"Mentor Rating : {report.mentor_rating}",
-    )
-    y -= 20
-
-    c.drawString(
-        60,
-        y,
-        f"Learner Satisfaction : {report.learner_satisfaction}",
-    )
-
-    y -= 50
-
-    c.setFont("Helvetica-Oblique", 10)
-    c.drawString(
-        50,
-        y,
-        "Generated by Operations Management Portal",
-    )
-
-    c.save()
+    doc.build(elements, onFirstPage=_webinar_footer, onLaterPages=_webinar_footer)
 
     return filename
 
@@ -966,15 +1000,27 @@ def generate_analytics_report(data, filter_desc="All data"):
     elements.append(header)
     elements.append(HRFlowable(width="100%", thickness=3, color=GOLD_LIGHT, spaceBefore=0, spaceAfter=18))
 
+    def pct(v):
+        return "—" if v is None else f"{round(v)}%"
+
+    def num1(v):
+        return "—" if v is None else round(v, 1)
+
     es = data["executive_summary"]
     elements.append(bullet("Executive Operations Summary"))
     elements.append(kpi_grid([
-        ("Sessions", es["total_sessions"]),
-        ("Batches", es["total_batches"]),
-        ("Mentors", es["total_mentors"]),
-        ("Learners", es["total_learners"]),
-        ("Completion Rate", f"{es['completion_rate']}%"),
-        ("Health Score", f"{es['health_score']}%"),
+        ("Total Sessions", es["total_sessions"]),
+        ("Completed", es["completed_sessions"]),
+        ("Cancelled", es["cancelled_sessions"]),
+        ("Upcoming", es["upcoming_sessions"]),
+        ("Total Mentors", es["total_mentors"]),
+        ("Active Mentors", es["active_mentors"]),
+        ("Total Batches", es["total_batches"]),
+        ("Active Batches", es["active_batches"]),
+        ("Total Session Hours", f"{es['total_session_hours']}h"),
+        ("Avg Attendance", pct(es["avg_attendance"])),
+        ("Avg Session Rating", f"{num1(es['avg_session_rating'])} / 5" if es["avg_session_rating"] is not None else "—"),
+        ("Mentor SLA", pct(es["mentor_sla"])),
     ]))
     elements.append(Spacer(1, 10))
 
@@ -983,126 +1029,107 @@ def generate_analytics_report(data, filter_desc="All data"):
     elements.append(kpi_grid([
         ("Total Sessions", ss["total_sessions"]),
         ("Completed", ss["completed_sessions"]),
-        ("Scheduled", ss["scheduled_sessions"]),
         ("Cancelled", ss["cancelled_sessions"]),
+        ("Rescheduled", ss["rescheduled_sessions"]),
+        ("Upcoming", ss["upcoming_sessions"]),
+        ("Total Hours", f"{ss['total_hours']}h"),
+        ("Avg Duration", f"{num1(ss['avg_duration_hours'])}h" if ss["avg_duration_hours"] is not None else "—"),
+        ("Avg Attendance", pct(ss["avg_attendance"])),
     ]))
+    if data["session_issues"]:
+        elements.append(Spacer(1, 6))
+        elements.append(Paragraph("<b>Session Issues</b>", body_style))
+        for issue in data["session_issues"]:
+            elements.append(Paragraph(f"&#8226; {issue['value']} {issue['label']}", body_style))
     elements.append(Spacer(1, 10))
 
     ms = data["mentor_summary"]
     elements.append(bullet("Mentor Analytics"))
     elements.append(kpi_grid([
         ("Total Mentors", ms["total_mentors"]),
-        ("Active", ms["active_mentors"]),
-        ("Inactive", ms["inactive_mentors"]),
-        ("Avg Hourly Rate", f"Rs {ms['average_hourly_rate']}"),
+        ("Active Mentors", ms["active_mentors"]),
+        ("Sessions Conducted", ms["sessions_conducted"]),
+        ("Total Mentor Hours", f"{ms['total_mentor_hours']}h"),
+        ("Avg Rating", f"{num1(ms['avg_rating'])} / 5" if ms["avg_rating"] is not None else "—"),
+        ("Avg Attendance", pct(ms["avg_attendance"])),
+        ("Mentor SLA", pct(ms["avg_sla"])),
     ]))
+    elements.append(Spacer(1, 8))
+    mp_rows = [
+        [m["name"], str(m["sessions"]), f"{m['hours']}h", pct(m["attendance"]), num1(m["teaching"]), num1(m["doubt"]), num1(m["overall"]), pct(m["sla"])]
+        for m in data["mentor_stats"]
+    ]
+    elements.append(data_table(
+        ["Mentor", "Sessions", "Hours", "Attendance", "Teaching", "Doubt", "Overall", "SLA"],
+        mp_rows,
+        [32 * mm, 20 * mm, 18 * mm, 24 * mm, 20 * mm, 18 * mm, 20 * mm, 20 * mm],
+        "No mentor data matches this scope.",
+    ))
     elements.append(Spacer(1, 10))
 
     bs = data["batch_summary"]
     elements.append(bullet("Batch Analytics"))
     elements.append(kpi_grid([
         ("Total Batches", bs["total_batches"]),
+        ("Active Batches", bs["active_batches"]),
         ("Completed", bs["completed_batches"]),
-        ("Ongoing", bs["ongoing_batches"]),
-        ("Delayed", bs["delayed_batches"]),
-        ("Avg Attendance", f"{bs['average_attendance']}%"),
-        ("Avg Completion", f"{bs['average_completion']}%"),
-        ("Avg Health", bs["average_health"]),
+        ("Total Sessions", bs["total_sessions"]),
+        ("Avg Attendance", pct(bs["avg_attendance"])),
+        ("Avg Rating", f"{num1(bs['avg_rating'])} / 5" if bs["avg_rating"] is not None else "—"),
+        ("Completion Rate", pct(bs["avg_completion"])),
     ]))
-    elements.append(Spacer(1, 10))
-
-    elements.append(bullet("Batch Performance"))
+    elements.append(Spacer(1, 8))
     bp_rows = [
-        [b["batch_name"], b["mentor_name"], str(b.get("strength") or 0), f"{b.get('attendance_percentage') or 0}%", f"{b.get('completion_percentage') or 0}%", str(b.get("health_score") or 0), b.get("status") or "—"]
-        for b in data["batch_performance"]
+        [b["batch_name"], f"{b['completed_count']} / {b['sessions']}", pct(b["attendance"]), num1(b["rating"]), pct(b["completion"]), b["health"]]
+        for b in data["batch_stats"]
     ]
     elements.append(data_table(
-        ["Batch", "Mentor", "Strength", "Attendance", "Completion", "Health", "Status"],
+        ["Batch", "Sessions", "Attendance", "Rating", "Completion", "Health"],
         bp_rows,
-        [40 * mm, 32 * mm, 20 * mm, 24 * mm, 24 * mm, 18 * mm, 20 * mm],
+        [42 * mm, 26 * mm, 26 * mm, 20 * mm, 26 * mm, 32 * mm],
         "No batches match this scope.",
     ))
     elements.append(Spacer(1, 10))
 
-    ls = data["learner_summary"]
-    elements.append(bullet("Learner Analytics"))
+    fs = data["feedback_summary"]
+    elements.append(bullet("Session Feedback Analytics"))
     elements.append(kpi_grid([
-        ("Total Learners", ls["total_learners"]),
-        ("Active", ls["active_learners"]),
-        ("Inactive", ls["inactive_learners"]),
-        ("Dropouts", ls["dropout_count"]),
-        ("Avg Completion", f"{ls['average_completion']}%"),
+        ("Responses", fs["responses"]),
+        ("Avg Overall Rating", f"{num1(fs['avg_overall_rating'])} / 5" if fs["avg_overall_rating"] is not None else "—"),
+        ("Teaching Method", num1(fs["avg_teaching"])),
+        ("Doubt Handling", num1(fs["avg_doubt"])),
+        ("Overall Experience", num1(fs["avg_overall_experience"])),
+        ("Positive Feedback", f"{round(fs['positive_pct'])}%"),
+    ]))
+    if data["recent_negative_feedback"]:
+        elements.append(Spacer(1, 8))
+        elements.append(Paragraph("<b>Recent Negative Feedback</b>", body_style))
+        nf_rows = [
+            [n["date"], n["batch_name"], n["mentor_name"], str(n["rating"]), n["feedback"]]
+            for n in data["recent_negative_feedback"]
+        ]
+        elements.append(data_table(
+            ["Date", "Batch", "Mentor", "Rating", "Feedback"],
+            nf_rows,
+            [22 * mm, 26 * mm, 24 * mm, 16 * mm, 78 * mm],
+            "No recent negative feedback.",
+        ))
+    elements.append(Spacer(1, 10))
+
+    at = data["attendance_summary"]
+    elements.append(bullet("Attendance Analytics"))
+    elements.append(kpi_grid([
+        ("Total Registrations", at["total_registrations"]),
+        ("Total Attendees", at["total_attendees"]),
+        ("Avg Attendance", pct(at["avg_attendance"])),
+        ("Avg Session Duration", f"{num1(at['avg_duration_hours'])}h" if at["avg_duration_hours"] is not None else "—"),
+        ("No-Show Rate", pct(at["no_show_rate"])),
     ], per_row=5))
-    elements.append(Spacer(1, 10))
-
-    os_ = data["operations_summary"]
-    elements.append(bullet("Operations Analytics"))
-    elements.append(kpi_grid([
-        ("Projects", os_["total_projects"]),
-        ("Total Sessions", os_["total_sessions"]),
-        ("Completed", os_["completed_sessions"]),
-        ("Cancelled", os_["cancelled_sessions"]),
-        ("SLA", f"{os_['average_sla']}%"),
-        ("Completion", f"{os_['average_completion']}%"),
-        ("Mentor Utilization", f"{os_['average_mentor_utilization']}%"),
-        ("Resource Utilization", f"{os_['average_resource_utilization']}%"),
-        ("Productivity", f"{os_['average_productivity']}%"),
-    ], per_row=3))
-    elements.append(Spacer(1, 10))
-
-    elements.append(bullet("At-Risk Batches"))
-    ar_rows = [
-        [b["batch_name"], b["mentor_name"], f"{b.get('attendance') or 0}%", f"{b.get('completion') or 0}%", str(b.get("health") or 0), b.get("status") or "—"]
-        for b in data["at_risk_batches"]
-    ]
-    elements.append(data_table(
-        ["Batch", "Mentor", "Attendance", "Completion", "Health", "Status"],
-        ar_rows,
-        [38 * mm, 34 * mm, 26 * mm, 26 * mm, 22 * mm, 32 * mm],
-        "No at-risk batches in this scope.",
-    ))
-    elements.append(Spacer(1, 10))
-
-    elements.append(bullet("Top Mentors Leaderboard"))
-    tm_rows = [
-        [m["mentor_name"], str(m["sessions"]), f"Rs {m['hourly_rate']}", f"Rs {m['revenue']}"]
-        for m in data["top_mentors"][:15]
-    ]
-    elements.append(data_table(
-        ["Mentor", "Sessions", "Hourly Rate", "Revenue"],
-        tm_rows,
-        [60 * mm, 40 * mm, 39 * mm, 39 * mm],
-        "No mentors match this scope.",
-    ))
-    elements.append(Spacer(1, 10))
-
-    elements.append(bullet("Top Batches Leaderboard"))
-    tb_rows = [
-        [b["batch_name"], b.get("course_name") or "—", b.get("mentor_name") or "—", str(b.get("strength") or 0), str(b["sessions"])]
-        for b in data["top_batches"][:15]
-    ]
-    elements.append(data_table(
-        ["Batch", "Course", "Mentor", "Strength", "Sessions"],
-        tb_rows,
-        [38 * mm, 38 * mm, 38 * mm, 32 * mm, 32 * mm],
-        "No batches match this scope.",
-    ))
-    elements.append(Spacer(1, 10))
-
-    ps = data.get("placement_summary")
-    if ps:
-        elements.append(bullet("Placement Analytics"))
-        elements.append(Paragraph("Sample/illustrative data — not yet linked to real placement records or this report's filters.", section_note_style))
-        elements.append(kpi_grid([
-            ("Eligible Students", ps["eligible_students"]),
-            ("Placed Students", ps["placed_students"]),
-            ("Placement Rate", f"{ps['placement_rate']}%"),
-            ("Interviews Scheduled", ps["interview_scheduled"]),
-            ("Offers Received", ps["offers_received"]),
-            ("Companies Hiring", ps["companies_hiring"]),
-            ("Average CTC", f"{ps['average_ctc']} LPA"),
-            ("Highest CTC", f"{ps['highest_ctc']} LPA"),
-        ]))
+    if data["low_attendance_sessions"]:
+        elements.append(Spacer(1, 8))
+        elements.append(Paragraph("<b>Low Attendance Sessions</b>", body_style))
+        la_rows = [[s["topic"], f"{s['attendance']}%"] for s in data["low_attendance_sessions"]]
+        elements.append(data_table(["Session", "Attendance"], la_rows, [130 * mm, 48 * mm], "No low-attendance sessions."))
 
     doc.build(elements, onFirstPage=_analytics_footer, onLaterPages=_analytics_footer)
 

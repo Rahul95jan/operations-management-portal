@@ -12,6 +12,7 @@ import {
   ClipboardList,
   PieChart,
   Video,
+  FilePlus2,
   Package,
   ListChecks,
   Clock,
@@ -86,6 +87,7 @@ export default function Sidebar() {
           <NavGroupLabel>Learner Feedback</NavGroupLabel>
           <NavItem href="/nps" icon={ClipboardList} label="NPS Form" active={isActive("/nps")} />
           <NavItem href="/nps/analytics" icon={PieChart} label="NPS Analytics" active={isActive("/nps/analytics")} />
+<<<<<<< HEAD
 
           <NavGroupLabel>Webinars</NavGroupLabel>
           <li className={`nav-item ${webinarsGroupActive ? "nav-item-parent-active" : ""}`}>
@@ -113,6 +115,10 @@ export default function Sidebar() {
               </ul>
             </div>
           </li>
+=======
+          <NavItem href="/webinar-analytics" icon={Video} label="Webinar Analytics" active={isActive("/webinar-analytics")} />
+          <NavItem href="/webinar-reports" icon={FilePlus2} label="Log Webinar Report" active={isActive("/webinar-reports")} />
+>>>>>>> 967f926 (Initial commit)
 
           <NavGroupLabel>Resource Portal</NavGroupLabel>
           <li className={`nav-item ${resourcesGroupActive ? "nav-item-parent-active" : ""}`}>

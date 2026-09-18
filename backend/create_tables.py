@@ -9,6 +9,7 @@ from models.invoice import Invoice
 from models.session_analytics import SessionAnalytics
 from models.operations import OperationsAnalytics
 from models.zoom_analytics import ZoomAnalytics
+from models.webinar_registration import WebinarRegistration
 from models.nps import NPSFeedback
 from models.resource import Resource
 from models.resource_requirement import ResourceRequirement

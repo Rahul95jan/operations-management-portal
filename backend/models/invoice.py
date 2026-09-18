@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, DateTime
 from database import Base
+from datetime import datetime
 
 
 class Invoice(Base):
@@ -27,6 +28,7 @@ class Invoice(Base):
 
     invoice_number = Column(String, unique=True, nullable=True)
 
+<<<<<<< HEAD
     # Webinar payout integration — additive, invoices created from a webinar
     # payout still populate batch_name/month (with the webinar title / derived
     # month) so every existing invoice-generator.js query keeps working
@@ -36,3 +38,18 @@ class Invoice(Base):
     webinar_id = Column(Integer, nullable=True)
 
     
+=======
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    due_date = Column(String, nullable=True)
+
+    payment_date = Column(String, nullable=True)
+
+    payment_mode = Column(String, nullable=True)
+
+    transaction_id = Column(String, nullable=True)
+
+    payment_reference = Column(String, nullable=True)
+
+    notes = Column(String, nullable=True)
+>>>>>>> 967f926 (Initial commit)

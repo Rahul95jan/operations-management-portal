@@ -12,3 +12,4 @@ class Mentor(Base):
     linkedin = Column(String)
     hourly_rate = Column(String)
     status = Column(String)
+    photo_path = Column(String)

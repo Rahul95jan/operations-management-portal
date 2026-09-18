@@ -2,6 +2,8 @@ annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.14.0
 APScheduler==3.11.3
+bcrypt==5.0.0
+PyJWT==2.14.0
 charset-normalizer==3.4.7
 click==8.4.1
 fastapi==0.138.0

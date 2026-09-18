@@ -83,6 +83,41 @@ Krish Naik Academy Team
         return False
 
 
+def send_session_notification(receiver_email, subject, body):
+    """Generic plain-text notifier for session scheduled/rescheduled/cancelled events —
+    reuses the same SMTP config as invoice emails. Returns False (never raises) if SMTP
+    isn't configured yet or sending fails, so a session create/update/delete never gets
+    blocked by a notification problem."""
+    if not receiver_email:
+        print("⚠️  Skipping session notification — mentor has no email on file.")
+        return False
+
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_ADDRESS
+        msg["To"] = receiver_email
+        msg.set_content(body)
+
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.ehlo()
+            smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            smtp.send_message(msg)
+
+        print(f"✅ Session notification sent to {receiver_email}")
+        return True
+
+    except Exception as e:
+        print("\n" + "=" * 70)
+        print("❌ SESSION NOTIFICATION FAILED")
+        print("ERROR:", str(e))
+        traceback.print_exc()
+        print("=" * 70 + "\n")
+        return False
+
+
 def send_email(receiver_email, subject, body):
     """Generic plain-text sender, reusing the same SMTP config as send_invoice_email().
     Returns (success: bool, error_message: str | None) instead of raising, so callers

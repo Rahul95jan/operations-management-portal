@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/router";
@@ -30,10 +30,30 @@ import {
   Settings as SettingsIcon,
   LogOut,
   ChevronDown,
+  UserCog,
+  History,
 } from "lucide-react";
+import { hasPermission, isSuperAdmin, clearSession } from "../lib/auth";
+
+const API = "http://127.0.0.1:8000";
+
+function initials(name) {
+  if (!name) return "?";
+  return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("");
+}
+
+function userPhotoUrl(user) {
+  if (!user?.photo_path) return null;
+  return `${API}/users/${user.id}/photo?v=${encodeURIComponent(user.photo_path)}`;
+}
 
 export default function Sidebar() {
   const router = useRouter();
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    fetch(`${API}/users/me`).then((r) => r.json()).then(setUser).catch(() => setUser(null));
+  }, []);
 
   const [resourcesOpen, setResourcesOpen] = useState(
     router.pathname === "/resources" ||
@@ -46,7 +66,7 @@ export default function Sidebar() {
   );
 
   const logout = () => {
-    localStorage.removeItem("loggedIn");
+    clearSession();
     router.push("/login");
   };
 
@@ -64,12 +84,16 @@ export default function Sidebar() {
           <div className="brand-logo">
             <Image src="/logo.png" alt="Krish Naik Academy" width={180} height={70} loading="eager" style={{ borderRadius: "10px" }} />
           </div>
+          <div className="brand-tagline">Learn &middot; Build &middot; Grow</div>
           <h3 className="brand-title">Operations Portal</h3>
         </div>
 
         <ul className="nav-list">
-          <NavItem href="/" icon={Home} label="Home" active={isActive("/")} />
+          {!user ? null : (
+            <>
+              <NavItem href="/" icon={Home} label="Home" active={isActive("/")} />
 
+<<<<<<< Updated upstream
           <NavGroupLabel>Operations</NavGroupLabel>
           <NavItem href="/sessions" icon={Calendar} label="Sessions" active={isActive("/sessions")} />
           <NavItem href="/mentors" icon={Users} label="Mentors" active={isActive("/mentors")} />
@@ -119,36 +143,81 @@ export default function Sidebar() {
           <NavItem href="/webinar-analytics" icon={Video} label="Webinar Analytics" active={isActive("/webinar-analytics")} />
           <NavItem href="/webinar-reports" icon={FilePlus2} label="Log Webinar Report" active={isActive("/webinar-reports")} />
 >>>>>>> 967f926 (Initial commit)
+=======
+              {(hasPermission(user, "sessions") || hasPermission(user, "mentors") || hasPermission(user, "batches") || hasPermission(user, "analytics") || hasPermission(user, "invoices")) && (
+                <NavGroupLabel>Operations</NavGroupLabel>
+              )}
+              {hasPermission(user, "sessions") && <NavItem href="/sessions" icon={Calendar} label="Sessions" active={isActive("/sessions")} />}
+              {hasPermission(user, "mentors") && <NavItem href="/mentors" icon={Users} label="Mentors" active={isActive("/mentors")} />}
+              {hasPermission(user, "batches") && <NavItem href="/batches" icon={GraduationCap} label="Batches" active={isActive("/batches")} />}
+              {hasPermission(user, "analytics") && <NavItem href="/analytics" icon={BarChart3} label="Analytics" active={isActive("/analytics")} />}
+              {hasPermission(user, "invoices") && <NavItem href="/invoice-generator" icon={Receipt} label="Invoice Generator" active={isActive("/invoice-generator")} />}
 
-          <NavGroupLabel>Resource Portal</NavGroupLabel>
-          <li className={`nav-item ${resourcesGroupActive ? "nav-item-parent-active" : ""}`}>
-            <div className="nav-parent-row" onClick={() => setResourcesOpen((prev) => !prev)}>
-              <Link href="/resources" className="nav-link nav-link-parent">
-                <span className="nav-icon">
-                  <Package size={16} strokeWidth={2} />
-                </span>
-                <span className="nav-label">Resource Portal</span>
-              </Link>
-              <span className={`nav-chevron ${resourcesOpen ? "nav-chevron-open" : ""}`}>
-                <ChevronDown size={14} strokeWidth={2.5} />
-              </span>
-            </div>
+              {hasPermission(user, "feedback") && (
+                <>
+                  <NavGroupLabel>Learner Feedback</NavGroupLabel>
+                  <NavItem href="/nps" icon={ClipboardList} label="NPS Form" active={isActive("/nps")} />
+                  <NavItem href="/nps/analytics" icon={PieChart} label="NPS Analytics" active={isActive("/nps/analytics")} />
+                  <NavItem href="/webinar-analytics" icon={Video} label="Webinar Analytics" active={isActive("/webinar-analytics")} />
+                  <NavItem href="/webinar-reports" icon={FilePlus2} label="Log Webinar Report" active={isActive("/webinar-reports")} />
+                </>
+              )}
+>>>>>>> Stashed changes
 
-            <div className={`nav-submenu ${resourcesOpen ? "nav-submenu-open" : ""}`}>
-              <ul className="nav-sublist">
-                <SubNavItem href="/resources/tracking" icon={ListChecks} label="Resource Tracking" active={isActive("/resources/tracking")} />
-                <SubNavItem href="/resources/pending" icon={Clock} label="Pending Resources" active={isActive("/resources/pending")} />
-                <SubNavItem href="/resource-analytics" icon={TrendingUp} label="Resource Analytics" active={isActive("/resource-analytics")} />
-                <SubNavItem href="/resource-analytics/mentors" icon={Award} label="Mentor Performance" active={isActive("/resource-analytics/mentors")} />
-              </ul>
-            </div>
-          </li>
+              {hasPermission(user, "resources") && (
+                <>
+                  <NavGroupLabel>Resource Portal</NavGroupLabel>
+                  <li className={`nav-item ${resourcesGroupActive ? "nav-item-parent-active" : ""}`}>
+                    <div className="nav-parent-row" onClick={() => setResourcesOpen((prev) => !prev)}>
+                      <Link href="/resources" className="nav-link nav-link-parent">
+                        <span className="nav-icon">
+                          <Package size={16} strokeWidth={2} />
+                        </span>
+                        <span className="nav-label">Resource Portal</span>
+                      </Link>
+                      <span className={`nav-chevron ${resourcesOpen ? "nav-chevron-open" : ""}`}>
+                        <ChevronDown size={14} strokeWidth={2.5} />
+                      </span>
+                    </div>
 
-          <NavItem href="/settings" icon={SettingsIcon} label="Settings" active={isActive("/settings")} />
+                    <div className={`nav-submenu ${resourcesOpen ? "nav-submenu-open" : ""}`}>
+                      <ul className="nav-sublist">
+                        <SubNavItem href="/resources/tracking" icon={ListChecks} label="Resource Tracking" active={isActive("/resources/tracking")} />
+                        <SubNavItem href="/resources/pending" icon={Clock} label="Pending Resources" active={isActive("/resources/pending")} />
+                        <SubNavItem href="/resource-analytics" icon={TrendingUp} label="Resource Analytics" active={isActive("/resource-analytics")} />
+                        <SubNavItem href="/resource-analytics/mentors" icon={Award} label="Mentor Performance" active={isActive("/resource-analytics/mentors")} />
+                      </ul>
+                    </div>
+                  </li>
+                </>
+              )}
+
+              {isSuperAdmin(user) && (
+                <>
+                  <NavGroupLabel>Administration</NavGroupLabel>
+                  <NavItem href="/admin/users" icon={UserCog} label="User Management" active={isActive("/admin/users")} />
+                  <NavItem href="/admin/activity" icon={History} label="Activity Logs" active={isActive("/admin/activity")} />
+                  <NavItem href="/settings" icon={SettingsIcon} label="Settings" active={isActive("/settings")} />
+                </>
+              )}
+            </>
+          )}
         </ul>
       </div>
 
       <div className="sidebar-footer">
+        <Link href="/profile" className="profile-row">
+          {userPhotoUrl(user) ? (
+            <img src={userPhotoUrl(user)} alt={user?.name} className="profile-avatar profile-avatar-img" />
+          ) : (
+            <div className="profile-avatar">{initials(user?.name)}</div>
+          )}
+          <div className="profile-info">
+            <div className="profile-name">{user?.name || "—"}</div>
+            <div className="profile-role">{user?.role || "No role set"}</div>
+          </div>
+        </Link>
+
         <button onClick={logout} className="logout-btn">
           <LogOut size={16} strokeWidth={2.2} /> Logout
         </button>
@@ -158,7 +227,7 @@ export default function Sidebar() {
         .sidebar {
           width: 280px;
           height: 100vh;
-          background: linear-gradient(180deg, #0f172a 0%, #131c30 100%);
+          background: linear-gradient(180deg, #0B0F12 0%, var(--om-bg-header) 100%);
           color: white;
           position: fixed;
           left: 0;
@@ -167,7 +236,7 @@ export default function Sidebar() {
           flex-direction: column;
           justify-content: space-between;
           box-sizing: border-box;
-          border-right: 1px solid rgba(255, 255, 255, 0.06);
+          border-right: 1px solid var(--om-border-2);
           box-shadow: 4px 0 24px -12px rgba(0, 0, 0, 0.4);
         }
 
@@ -178,7 +247,7 @@ export default function Sidebar() {
           left: 0;
           right: 0;
           height: 3px;
-          background: linear-gradient(90deg, #f59e0b, #fbbf24, #f59e0b);
+          background: linear-gradient(90deg, #D4A72C, #F0C75E, #D4A72C);
           background-size: 200% 100%;
           animation: shimmer 6s linear infinite;
         }
@@ -187,7 +256,7 @@ export default function Sidebar() {
           overflow-y: auto;
           padding: 22px 16px 12px;
           scrollbar-width: thin;
-          scrollbar-color: rgba(251, 191, 36, 0.3) transparent;
+          scrollbar-color: rgba(240, 199, 94, 0.3) transparent;
         }
 
         .sidebar-scroll::-webkit-scrollbar {
@@ -195,7 +264,7 @@ export default function Sidebar() {
         }
 
         .sidebar-scroll::-webkit-scrollbar-thumb {
-          background: rgba(251, 191, 36, 0.25);
+          background: rgba(240, 199, 94, 0.25);
           border-radius: 10px;
         }
 
@@ -203,19 +272,28 @@ export default function Sidebar() {
           text-align: center;
           margin-bottom: 20px;
           padding-bottom: 18px;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          border-bottom: 1px solid var(--om-border-1);
         }
 
         .brand-logo {
           display: inline-flex;
           border-radius: 12px;
           padding: 3px;
-          background: linear-gradient(120deg, rgba(245, 158, 11, 0.4), rgba(245, 158, 11, 0));
+          background: linear-gradient(120deg, rgba(212, 167, 44, 0.4), rgba(212, 167, 44, 0));
+        }
+
+        .brand-tagline {
+          margin: 10px 0 0;
+          color: #F0C75E;
+          font-size: 10.5px;
+          font-weight: 700;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
         }
 
         .brand-title {
-          margin: 12px 0 0;
-          color: #f8fafc;
+          margin: 4px 0 0;
+          color: var(--om-text-primary);
           font-size: 15px;
           font-weight: 700;
           letter-spacing: 0.02em;
@@ -235,7 +313,7 @@ export default function Sidebar() {
           display: flex;
           align-items: center;
           gap: 12px;
-          color: #cbd5e1;
+          color: var(--om-text-body);
           text-decoration: none;
           font-size: 14px;
           font-weight: 600;
@@ -246,19 +324,19 @@ export default function Sidebar() {
         }
 
         :global(.nav-link:hover) {
-          background: rgba(255, 255, 255, 0.06);
-          color: #f8fafc;
+          background: var(--om-border-2);
+          color: var(--om-text-primary);
           transform: translateX(2px);
         }
 
         :global(.nav-link:hover .nav-icon) {
-          background: rgba(255, 255, 255, 0.1);
-          color: #f8fafc;
+          background: var(--om-border-strong);
+          color: var(--om-text-primary);
         }
 
         :global(.nav-link-active) {
-          background: linear-gradient(90deg, rgba(245, 158, 11, 0.16), rgba(245, 158, 11, 0.02));
-          color: #fbbf24;
+          background: linear-gradient(90deg, rgba(212, 167, 44, 0.18), rgba(212, 167, 44, 0.02));
+          color: #F0C75E;
         }
 
         :global(.nav-link-active::before) {
@@ -269,14 +347,14 @@ export default function Sidebar() {
           transform: translateY(-50%);
           width: 4px;
           height: 22px;
-          background: #fbbf24;
+          background: #F0C75E;
           border-radius: 0 4px 4px 0;
-          box-shadow: 0 0 8px 1px rgba(251, 191, 36, 0.6);
+          box-shadow: 0 0 8px 1px rgba(240, 199, 94, 0.6);
         }
 
         :global(.nav-link-active .nav-icon) {
-          background: rgba(251, 191, 36, 0.16);
-          color: #fbbf24;
+          background: rgba(240, 199, 94, 0.16);
+          color: #F0C75E;
         }
 
         :global(.nav-icon) {
@@ -286,8 +364,8 @@ export default function Sidebar() {
           width: 30px;
           height: 30px;
           border-radius: 9px;
-          background: rgba(255, 255, 255, 0.05);
-          color: #94a3b8;
+          background: var(--om-border-3);
+          color: var(--om-text-muted);
           flex-shrink: 0;
           transition: background 0.15s ease, color 0.15s ease;
         }
@@ -302,7 +380,7 @@ export default function Sidebar() {
           font-weight: 700;
           letter-spacing: 0.09em;
           text-transform: uppercase;
-          color: #64748b;
+          color: var(--om-text-faint);
           padding: 16px 12px 6px;
         }
 
@@ -316,7 +394,7 @@ export default function Sidebar() {
         }
 
         .nav-parent-row:hover {
-          background: rgba(255, 255, 255, 0.04);
+          background: var(--om-border-4);
         }
 
         :global(.nav-link-parent) {
@@ -330,18 +408,18 @@ export default function Sidebar() {
         }
 
         .nav-item-parent-active :global(.nav-link-parent) {
-          color: #fbbf24;
+          color: #F0C75E;
         }
 
         .nav-item-parent-active :global(.nav-icon) {
-          background: rgba(251, 191, 36, 0.16);
-          color: #fbbf24;
+          background: rgba(240, 199, 94, 0.16);
+          color: #F0C75E;
         }
 
         .nav-chevron {
           display: flex;
           align-items: center;
-          color: #64748b;
+          color: var(--om-text-faint);
           transition: transform 0.2s ease, color 0.2s ease;
           margin-right: 14px;
           flex-shrink: 0;
@@ -349,7 +427,7 @@ export default function Sidebar() {
 
         .nav-chevron-open {
           transform: rotate(180deg);
-          color: #fbbf24;
+          color: #F0C75E;
         }
 
         .nav-submenu {
@@ -366,14 +444,14 @@ export default function Sidebar() {
           list-style: none;
           padding: 4px 0 2px 14px;
           margin: 6px 0 0;
-          border-left: 2px solid rgba(255, 255, 255, 0.08);
+          border-left: 2px solid var(--om-border-1);
         }
 
         :global(.nav-sublink) {
           display: flex;
           align-items: center;
           gap: 10px;
-          color: #94a3b8;
+          color: var(--om-text-muted);
           text-decoration: none;
           font-size: 13px;
           font-weight: 600;
@@ -384,13 +462,13 @@ export default function Sidebar() {
         }
 
         :global(.nav-sublink:hover) {
-          background: rgba(255, 255, 255, 0.05);
+          background: var(--om-border-3);
           color: #f1f5f9;
         }
 
         :global(.nav-sublink-active) {
-          color: #fbbf24;
-          background: rgba(245, 158, 11, 0.1);
+          color: #F0C75E;
+          background: rgba(212, 167, 44, 0.12);
         }
 
         :global(.nav-sublink svg) {
@@ -399,8 +477,54 @@ export default function Sidebar() {
         }
 
         .sidebar-footer {
-          padding: 16px;
-          border-top: 1px solid rgba(255, 255, 255, 0.08);
+          padding: 14px 16px 16px;
+          border-top: 1px solid var(--om-border-1);
+        }
+
+        :global(.profile-row) {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 4px 2px 12px;
+          text-decoration: none;
+          cursor: pointer;
+          border-radius: 8px;
+          transition: background 0.15s ease;
+        }
+
+        :global(.profile-row:hover) {
+          background: var(--om-border-4);
+        }
+
+        .profile-avatar-img {
+          object-fit: cover;
+          object-position: center 22%;
+        }
+
+        .profile-avatar {
+          width: 34px;
+          height: 34px;
+          border-radius: 50%;
+          background: rgba(240, 199, 94, 0.16);
+          color: #F0C75E;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 14px;
+          font-weight: 800;
+          flex-shrink: 0;
+        }
+
+        .profile-name {
+          color: var(--om-text-primary);
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .profile-role {
+          color: var(--om-text-faint);
+          font-size: 11px;
+          font-weight: 600;
         }
 
         .logout-btn {

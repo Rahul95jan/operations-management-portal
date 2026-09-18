@@ -66,6 +66,12 @@ import os
 OPS_NOTIFICATION_EMAIL = os.getenv("OPS_NOTIFICATION_EMAIL")
 
 from database import SessionLocal
+from database import get_db as get_auth_db  # same session-factory auth.py's get_current_user uses,
+# so a user fetched via get_current_user and a db handed to the same endpoint are the same
+# SQLAlchemy session — required for FastAPI to dedupe the dependency and avoid mixing sessions
+# (main.py's own get_db below is a separate, functionally-identical function used everywhere
+# else in this file; treating it as interchangeable with database.get_db caused
+# "Instance is not persistent within this Session" errors on profile updates/photo uploads).
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -73,6 +79,7 @@ from models.user import User
 from models.session import Session as SessionModel
 from models.mentor import Mentor
 from models.batch import Batch
+from models.zoom_account import ZoomAccount
 from models.invoice import Invoice
 from models.nps import NPSFeedback
 from schemas import NPSCreate
@@ -94,12 +101,32 @@ from email_service import send_invoice_email
 
 from schemas import (
     UserCreate,
+    UserUpdate,
+    LoginRequest,
+    AdminUserCreate,
+    AdminUserPermissionsUpdate,
+    ZoomAccountCreate,
     SessionCreate,
     MentorCreate,
     BatchCreate,
     InvoiceCreate,
     SessionAnalyticsCreate,
     ZoomAnalyticsCreate,
+)
+from auth import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    get_current_user,
+    require_permission,
+    require_super_admin,
+    user_public,
+    has_permission,
+    count_active_super_admins,
+    SECTIONS,
+    ASSIGNABLE_SECTIONS,
+    SUPER_ADMIN,
+    ADMIN,
 )
 
 app = FastAPI()
@@ -124,24 +151,16 @@ def get_db():
     finally:
         db.close()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # ==========================
 # CORS
 # ==========================
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -168,12 +187,308 @@ def create_user(user: UserCreate):
         "data": user
     }
 
+
+@app.post("/auth/login")
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+
+    user = db.query(User).filter(User.username == payload.username).first()
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="This account has been deactivated.")
+
+    token = create_access_token(user)
+    return {"token": token, "user": user_public(user)}
+
+
+@app.get("/auth/me")
+def read_auth_me(user: User = Depends(get_current_user)):
+    return user_public(user)
+
+
+@app.get("/auth/permission-catalog")
+def permission_catalog(user: User = Depends(get_current_user)):
+    return {"sections": SECTIONS, "assignable_sections": ASSIGNABLE_SECTIONS}
+
+
+@app.get("/users/me")
+def get_my_profile(user: User = Depends(get_current_user)):
+    return user_public(user)
+
+
+@app.put("/users/me")
+def update_my_profile(payload: UserUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_auth_db)):
+    if payload.name is not None:
+        user.name = payload.name
+    if payload.email is not None:
+        user.email = payload.email
+    if payload.phone is not None:
+        user.phone = payload.phone
+    # Role is never self-editable — only a Super Admin changes roles, via User Management.
+    db.commit()
+    db.refresh(user)
+    return user_public(user)
+
+
+@app.post("/users/me/photo")
+async def upload_my_photo(file: UploadFile = File(...), user: User = Depends(get_current_user), db: Session = Depends(get_auth_db)):
+    from fastapi import HTTPException
+
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image files (JPG, PNG, WEBP) are allowed.")
+
+    contents = await file.read()
+    if len(contents) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image must be 2MB or smaller.")
+    file.file.seek(0)
+
+    file_meta = save_file(file)
+    user.photo_path = file_meta["file_path"]
+    db.commit()
+
+    return {"message": "Photo uploaded successfully", "has_photo": True}
+
+
+@app.get("/users/me/photo")
+def get_my_photo(user: User = Depends(get_current_user)):
+    from fastapi import HTTPException
+
+    if not user.photo_path or not os.path.exists(user.photo_path):
+        raise HTTPException(status_code=404, detail="No photo found for this account.")
+
+    return FileResponse(user.photo_path)
+
+
+@app.get("/users/{user_id}/photo")
+def get_user_photo(user_id: int, db: Session = Depends(get_auth_db)):
+    # Deliberately unauthenticated, same as /mentors/{id}/photo — a plain <img src> can never
+    # send a Bearer token (browsers don't support custom headers on image loads), so this is
+    # the URL every <img> tag in the app actually points at; POST /users/me/photo (uploading)
+    # still requires being logged in as that account.
+    from fastapi import HTTPException
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.photo_path or not os.path.exists(user.photo_path):
+        raise HTTPException(status_code=404, detail="No photo found for this user.")
+
+    return FileResponse(user.photo_path)
+
+
+# ==========================
+# ADMINISTRATION — user management & permissions (Super Admin only)
+# ==========================
+
+@app.get("/admin/users")
+def list_users(current: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    users = db.query(User).order_by(User.id).all()
+    return [user_public(u) for u in users]
+
+
+@app.post("/admin/users")
+def create_admin_user(payload: AdminUserCreate, current: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+
+    if payload.role not in (SUPER_ADMIN, ADMIN):
+        raise HTTPException(status_code=400, detail="Role must be ADMIN or SUPER_ADMIN.")
+    if db.query(User).filter(User.username == payload.username).first():
+        raise HTTPException(status_code=400, detail="That username is already taken.")
+    if db.query(User).filter(User.email == payload.email).first():
+        raise HTTPException(status_code=400, detail="That email is already registered.")
+
+    valid_perms = {f"{s}.{a}" for s, meta in ASSIGNABLE_SECTIONS.items() for a in meta["actions"]}
+    perms = [] if payload.role == SUPER_ADMIN else [p for p in payload.permissions if p in valid_perms]
+
+    new_user = User(
+        name=payload.name,
+        email=payload.email,
+        username=payload.username,
+        password_hash=hash_password(payload.password),
+        role=payload.role,
+        permissions=perms,
+        is_active=True,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    _log_audit(db, "User Created", details=f"Role: {payload.role}, Permissions: {len(perms)} section action(s)", user=current.name)
+
+    return user_public(new_user)
+
+
+@app.put("/admin/users/{user_id}/access")
+def update_user_access(user_id: int, payload: AdminUserPermissionsUpdate, current: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if target.id == current.id:
+        raise HTTPException(status_code=400, detail="You can't change your own role or permissions here.")
+
+    demoting = payload.role is not None and target.role == SUPER_ADMIN and payload.role != SUPER_ADMIN
+    deactivating = payload.is_active is False and target.is_active and target.role == SUPER_ADMIN
+    if (demoting or deactivating) and count_active_super_admins(db, exclude_id=target.id) == 0:
+        raise HTTPException(status_code=400, detail="At least one active Super Admin must remain.")
+
+    changes = []
+    if payload.role is not None and payload.role != target.role:
+        if payload.role not in (SUPER_ADMIN, ADMIN):
+            raise HTTPException(status_code=400, detail="Role must be ADMIN or SUPER_ADMIN.")
+        changes.append(f"Role: {target.role} → {payload.role}")
+        target.role = payload.role
+        if payload.role == SUPER_ADMIN:
+            target.permissions = []
+
+    if payload.permissions is not None and target.role != SUPER_ADMIN:
+        valid_perms = {f"{s}.{a}" for s, meta in ASSIGNABLE_SECTIONS.items() for a in meta["actions"]}
+        new_perms = sorted(set(p for p in payload.permissions if p in valid_perms))
+        old_perms = set(target.permissions or [])
+        granted = sorted(set(new_perms) - old_perms)
+        revoked = sorted(old_perms - set(new_perms))
+        if granted:
+            changes.append(f"Granted: {', '.join(granted)}")
+        if revoked:
+            changes.append(f"Revoked: {', '.join(revoked)}")
+        target.permissions = new_perms
+
+    if payload.is_active is not None and payload.is_active != target.is_active:
+        changes.append(f"Status: {'Active' if payload.is_active else 'Deactivated'}")
+        target.is_active = payload.is_active
+
+    db.commit()
+    db.refresh(target)
+
+    if changes:
+        _log_audit(db, "Permission Updated", details=f"Target: {target.name} — {'; '.join(changes)}", user=current.name)
+
+    return user_public(target)
+
+
+@app.get("/admin/activity-logs")
+def get_activity_logs(current: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    logs = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(200).all()
+    return [
+        {
+            "id": l.id,
+            "timestamp": l.created_at.isoformat() if l.created_at else None,
+            "performed_by": l.user,
+            "action": l.action,
+            "details": l.details,
+        }
+        for l in logs
+    ]
+
+
+# ==========================
+# ZOOM ACCOUNTS — the pool of Zoom logins/profiles sessions get run under
+# ==========================
+
+@app.get("/zoom-accounts")
+def get_zoom_accounts(db: Session = Depends(get_db), _user: User = Depends(require_permission("sessions", "view"))):
+    accounts = db.query(ZoomAccount).filter(ZoomAccount.is_active == True).order_by(ZoomAccount.id).all()  # noqa: E712
+    return accounts
+
+
+@app.post("/zoom-accounts")
+def create_zoom_account(payload: ZoomAccountCreate, db: Session = Depends(get_db), _user: User = Depends(require_permission("sessions", "create"))):
+    from fastapi import HTTPException
+
+    email = payload.email.strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Zoom ID can't be empty.")
+
+    existing = db.query(ZoomAccount).filter(func.lower(ZoomAccount.email) == email.lower()).first()
+    if existing:
+        if not existing.is_active:
+            existing.is_active = True
+            db.commit()
+            db.refresh(existing)
+        return existing
+
+    account = ZoomAccount(email=email)
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+@app.delete("/zoom-accounts/{account_id}")
+def delete_zoom_account(account_id: int, db: Session = Depends(get_db), _user: User = Depends(require_permission("sessions", "edit"))):
+    account = db.query(ZoomAccount).filter(ZoomAccount.id == account_id).first()
+    if account:
+        # Soft-delete — existing sessions may still reference this email by value, so we
+        # keep the row but drop it from the pick-list instead of hard-deleting.
+        account.is_active = False
+        db.commit()
+    return {"message": "Zoom ID removed"}
+
+
 # ==========================
 # SESSIONS
 # ==========================
 
+def _notify_mentor_session_change(db, session_obj, action, old_date=None, old_time=None):
+    """Emails the mentor (address pulled fresh from Mentor Management, never a stale
+    stored value) whenever a session they're assigned to is scheduled, rescheduled, or
+    cancelled/deleted. Reuses the same SMTP config as invoice emails — see email_service.py.
+    Never raises: a notification failure must never block the session CRUD it's attached to."""
+    from email_service import send_session_notification
+
+    if not session_obj.mentor_name:
+        return
+
+    mentor = db.query(Mentor).filter(Mentor.name == session_obj.mentor_name).first()
+    mentor_email = mentor.email if mentor else None
+    if not mentor_email:
+        print(f"⚠️  No email on file for mentor '{session_obj.mentor_name}' — skipping session notification.")
+        return
+
+    id_line = f"Zoom ID: {session_obj.zoom_id}" if session_obj.zoom_id else (f"Webinar ID: {session_obj.webinar_id}" if session_obj.webinar_id else None)
+
+    if action == "Scheduled":
+        subject = f"Session Scheduled: {session_obj.topic}"
+        body = (
+            f"Hi {session_obj.mentor_name},\n\n"
+            f"A session has been scheduled for you.\n\n"
+            f"Topic: {session_obj.topic}\n"
+            f"Batch: {session_obj.batch_name or 'N/A (Webinar)'}\n"
+            f"Date: {session_obj.session_date}\n"
+            f"Time: {session_obj.session_time}\n"
+            + (f"{id_line}\n" if id_line else "")
+            + f"\nThis session is now blocked on the Operations Portal calendar.\n\n"
+            f"Regards,\nKrish Naik Academy Team"
+        )
+    elif action == "Rescheduled":
+        subject = f"Session Rescheduled: {session_obj.topic}"
+        body = (
+            f"Hi {session_obj.mentor_name},\n\n"
+            f"Your session has been rescheduled.\n\n"
+            f"Topic: {session_obj.topic}\n"
+            f"Batch: {session_obj.batch_name or 'N/A (Webinar)'}\n"
+            f"Previous: {old_date} {old_time}\n"
+            f"New: {session_obj.session_date} {session_obj.session_time}\n"
+            + (f"{id_line}\n" if id_line else "")
+            + f"\nPlease update your calendar accordingly.\n\n"
+            f"Regards,\nKrish Naik Academy Team"
+        )
+    else:  # Cancelled
+        subject = f"Session Cancelled: {session_obj.topic}"
+        body = (
+            f"Hi {session_obj.mentor_name},\n\n"
+            f"The following session has been cancelled and removed from the schedule.\n\n"
+            f"Topic: {session_obj.topic}\n"
+            f"Batch: {session_obj.batch_name or 'N/A (Webinar)'}\n"
+            f"Was scheduled for: {session_obj.session_date} {session_obj.session_time}\n\n"
+            f"Regards,\nKrish Naik Academy Team"
+        )
+
+    send_session_notification(mentor_email, subject, body)
+
+
 @app.post("/sessions")
-def create_session(session: SessionCreate):
+def create_session(session: SessionCreate, _user: User = Depends(require_permission("sessions", "create"))):
 
     db = SessionLocal()
 
@@ -187,6 +502,7 @@ def create_session(session: SessionCreate):
         status=session.status,
         session_type=session.session_type,
         webinar_id=session.webinar_id,
+        zoom_id=session.zoom_id,
         remarks=session.remarks
     )
 
@@ -194,8 +510,13 @@ def create_session(session: SessionCreate):
     db.commit()
     db.refresh(new_session)
 
+<<<<<<< Updated upstream
     if new_session.status == "Completed":
         _ensure_default_requirements(db, new_session)
+=======
+    if new_session.status == "Scheduled":
+        _notify_mentor_session_change(db, new_session, "Scheduled")
+>>>>>>> Stashed changes
 
     db.close()
 
@@ -206,14 +527,14 @@ def create_session(session: SessionCreate):
 
 
 @app.get("/sessions")
-def get_sessions(db: Session = Depends(get_db)):
+def get_sessions(db: Session = Depends(get_db), _user: User = Depends(require_permission("sessions", "view"))):
 
     sessions = db.query(SessionModel).all()
 
     return sessions
 
 @app.put("/sessions/{session_id}")
-def update_session(session_id: int, session: SessionCreate):
+def update_session(session_id: int, session: SessionCreate, _user: User = Depends(require_permission("sessions", "edit"))):
 
     db = SessionLocal()
 
@@ -227,7 +548,13 @@ def update_session(session_id: int, session: SessionCreate):
         db.close()
         return {"message": "Session Not Found"}
 
+<<<<<<< Updated upstream
     previous_status = existing_session.status
+=======
+    old_date, old_time, old_status = existing_session.session_date, existing_session.session_time, existing_session.status
+    just_cancelled = session.status == "Cancelled" and old_status != "Cancelled"
+    rescheduled = (session.session_date != old_date or session.session_time != old_time) and old_status != "Cancelled" and session.status != "Cancelled"
+>>>>>>> Stashed changes
 
     existing_session.topic = session.topic
     existing_session.mentor_name = session.mentor_name
@@ -237,14 +564,22 @@ def update_session(session_id: int, session: SessionCreate):
     existing_session.status = session.status
     existing_session.session_type = session.session_type
     existing_session.webinar_id = session.webinar_id
+    existing_session.zoom_id = session.zoom_id
     if session.remarks is not None:
         existing_session.remarks = session.remarks
 
     db.commit()
     db.refresh(existing_session)
 
+<<<<<<< Updated upstream
     if existing_session.status == "Completed" and previous_status != "Completed":
         _ensure_default_requirements(db, existing_session)
+=======
+    if rescheduled:
+        _notify_mentor_session_change(db, existing_session, "Rescheduled", old_date=old_date, old_time=old_time)
+    elif just_cancelled:
+        _notify_mentor_session_change(db, existing_session, "Cancelled")
+>>>>>>> Stashed changes
 
     db.close()
 
@@ -254,7 +589,7 @@ def update_session(session_id: int, session: SessionCreate):
 
 
 @app.delete("/sessions/{session_id}")
-def delete_session(session_id: int):
+def delete_session(session_id: int, _user: User = Depends(require_permission("sessions", "delete"))):
 
     db = SessionLocal()
 
@@ -265,6 +600,7 @@ def delete_session(session_id: int):
     )
 
     if session:
+        _notify_mentor_session_change(db, session, "Cancelled")
         db.delete(session)
         db.commit()
 
@@ -279,7 +615,7 @@ def delete_session(session_id: int):
 # ==========================
 
 @app.post("/mentors")
-def create_mentor(mentor: MentorCreate):
+def create_mentor(mentor: MentorCreate, _user: User = Depends(require_permission("mentors", "create"))):
 
     db = SessionLocal()
 
@@ -306,7 +642,7 @@ def create_mentor(mentor: MentorCreate):
 
 
 @app.get("/mentors")
-def get_mentors(db: Session = Depends(get_db)):
+def get_mentors(db: Session = Depends(get_db), _user: User = Depends(require_permission("mentors", "view"))):
 
     mentors = db.query(Mentor).all()
 
@@ -314,7 +650,7 @@ def get_mentors(db: Session = Depends(get_db)):
 
 
 @app.put("/mentors/{mentor_id}")
-def update_mentor(mentor_id: int, mentor: MentorCreate):
+def update_mentor(mentor_id: int, mentor: MentorCreate, _user: User = Depends(require_permission("mentors", "edit"))):
 
     db = SessionLocal()
 
@@ -349,7 +685,7 @@ def update_mentor(mentor_id: int, mentor: MentorCreate):
 
 
 @app.delete("/mentors/{mentor_id}")
-def delete_mentor(mentor_id: int):
+def delete_mentor(mentor_id: int, _user: User = Depends(require_permission("mentors", "delete"))):
 
     db = SessionLocal()
 
@@ -408,7 +744,7 @@ def get_mentor_photo(mentor_id: int, db: Session = Depends(get_db)):
 # ==========================
 
 @app.post("/batches")
-def create_batch(batch: BatchCreate):
+def create_batch(batch: BatchCreate, _user: User = Depends(require_permission("batches", "create"))):
 
     db = SessionLocal()
 
@@ -431,7 +767,7 @@ def create_batch(batch: BatchCreate):
         "id": new_batch.id
     }
 @app.put("/batches/{batch_id}")
-def update_batch(batch_id: int, batch: BatchCreate):
+def update_batch(batch_id: int, batch: BatchCreate, _user: User = Depends(require_permission("batches", "edit"))):
 
     db = SessionLocal()
 
@@ -463,14 +799,14 @@ def update_batch(batch_id: int, batch: BatchCreate):
     }
 
 @app.get("/batches")
-def get_batches(db: Session = Depends(get_db)):
+def get_batches(db: Session = Depends(get_db), _user: User = Depends(require_permission("batches", "view"))):
 
     batches = db.query(Batch).all()
 
     return batches
 
 @app.delete("/batches/{batch_id}")
-def delete_batch(batch_id: int):
+def delete_batch(batch_id: int, _user: User = Depends(require_permission("batches", "delete"))):
 
     db = SessionLocal()
 

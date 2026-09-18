@@ -31,6 +31,7 @@ class Session(Base):
     meeting_link = Column(String)
     recording_link = Column(String)
     webinar_id = Column(String)         # Zoom Webinar ID, for Webinar Session type
+    zoom_id = Column(String)            # Zoom Meeting ID / account profile, for Live Session type
 
     # Status
     status = Column(String)             # Scheduled, Completed, Cancelled

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/router";
 import Sidebar from "../components/Sidebar";
+import ProtectedRoute from "../components/ProtectedRoute";
 
 const API = "http://127.0.0.1:8000";
 
@@ -193,15 +193,47 @@ function initials(name) {
     .join("");
 }
 
-function Avatar({ name, size = 32 }) {
+function mentorPhotoUrl(mentor) {
+  if (!mentor || !mentor.photo_path) return null;
+  return `${API}/mentors/${mentor.id}/photo?v=${encodeURIComponent(mentor.photo_path)}`;
+}
+
+// Shows the mentor's real photo from Mentor Management when one is on file
+// (looked up live by name every render, so it always reflects whatever is
+// currently set there), falling back to initials otherwise.
+function Avatar({ mentor, name, size = 32 }) {
+  const resolvedName = mentor?.name || name;
+  const url = mentorPhotoUrl(mentor);
+  const [broken, setBroken] = useState(false);
+
+  if (url && !broken) {
+    return (
+      <img
+        src={url}
+        alt={resolvedName}
+        onError={() => setBroken(true)}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "50%",
+          objectFit: "cover",
+          objectPosition: "center 22%",
+          flexShrink: 0,
+          border: "2px solid #ffffff",
+          boxShadow: "0 0 0 1px #e2e8f0, 0 1px 3px rgba(15, 23, 42, 0.08)",
+        }}
+      />
+    );
+  }
+
   return (
     <div
       style={{
         width: size,
         height: size,
         borderRadius: "50%",
-        background: name ? `${avatarColor(name)}22` : "#e2e8f0",
-        color: name ? avatarColor(name) : "#94a3b8",
+        background: resolvedName ? `${avatarColor(resolvedName)}22` : "#e2e8f0",
+        color: resolvedName ? avatarColor(resolvedName) : "#94a3b8",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -210,7 +242,7 @@ function Avatar({ name, size = 32 }) {
         flexShrink: 0,
       }}
     >
-      {initials(name)}
+      {initials(resolvedName)}
     </div>
   );
 }
@@ -308,13 +340,6 @@ function Field({ label, required, children, error }) {
 const EMPTY_FORM = { batch_name: "", course_name: "", strength: "", mentor_name: "" };
 const ROWS_PER_PAGE = 5;
 
-function formatClockGreeting(d) {
-  const h = d.getHours();
-  if (h < 12) return "Good Morning";
-  if (h < 17) return "Good Afternoon";
-  return "Good Evening";
-}
-
 function sessionDateTimeMs(session) {
   if (!session.session_date) return null;
   const time = session.session_time || "00:00";
@@ -362,9 +387,9 @@ function Toast({ toast, onClose }) {
 }
 
 export default function Batches() {
-  const router = useRouter();
   const [batches, setBatches] = useState([]);
   const [sessions, setSessions] = useState([]);
+  const [mentors, setMentors] = useState([]);
   const [loadingBatches, setLoadingBatches] = useState(true);
   const [toast, setToast] = useState(null);
 
@@ -386,8 +411,6 @@ export default function Batches() {
 
   const [openMenuId, setOpenMenuId] = useState(null);
   const [viewBatch, setViewBatch] = useState(null);
-  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [now, setNow] = useState(new Date());
 
   const dateRangeRef = useRef(null);
 
@@ -429,14 +452,20 @@ export default function Batches() {
     }
   };
 
+  const loadMentors = async () => {
+    try {
+      const res = await fetch(`${API}/mentors`);
+      const data = await res.json();
+      setMentors(Array.isArray(data) ? data : []);
+    } catch (err) {
+      // Non-fatal — the mentor dropdown just stays empty.
+    }
+  };
+
   useEffect(() => {
     loadBatches();
     loadSessions();
-  }, []);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 60000);
-    return () => clearInterval(timer);
+    loadMentors();
   }, []);
 
   useEffect(() => {
@@ -496,6 +525,26 @@ export default function Batches() {
 
   const courseOptions = useMemo(() => [...new Set(batches.map((b) => b.course_name).filter(Boolean))].sort(), [batches]);
   const mentorOptions = useMemo(() => [...new Set(batches.map((b) => b.mentor_name).filter(Boolean))].sort(), [batches]);
+
+  // Create/Edit form's Mentor dropdown draws from the real Mentor Management
+  // list (not free text) so batches always reference an actual mentor
+  // record. Only Active mentors are offered for new assignments, but a
+  // batch already assigned to a since-deactivated mentor keeps showing them
+  // so the existing assignment isn't silently dropped — same pattern as the
+  // Sessions page's mentor dropdown.
+  const assignableMentors = useMemo(() => {
+    const active = mentors.filter((m) => m.status !== "Inactive");
+    if (form.mentor_name && !active.some((m) => m.name === form.mentor_name)) {
+      const current = mentors.find((m) => m.name === form.mentor_name);
+      if (current) return [...active, current];
+    }
+    return active;
+  }, [mentors, form.mentor_name]);
+
+  // Looks up the current Mentor Management record for a batch's assigned
+  // mentor name, so the Batch List always shows whatever photo/details are
+  // currently set there — never a stale snapshot.
+  const mentorByName = (name) => mentors.find((m) => m.name === name);
 
   const resetForm = () => {
     setForm(EMPTY_FORM);
@@ -690,71 +739,17 @@ export default function Batches() {
     return withEllipses;
   }, [totalPages, currentPage]);
 
-  const logout = () => {
-    localStorage.removeItem("loggedIn");
-    router.push("/login");
-  };
-
   return (
-    <>
+    <ProtectedRoute permission={["batches", "view"]}>
       <Sidebar />
 
       <div
         style={{ marginLeft: "280px", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}
         onClick={() => {
           if (openMenuId) setOpenMenuId(null);
-          if (profileMenuOpen) setProfileMenuOpen(false);
           if (dateRangeOpen) setDateRangeOpen(false);
         }}
       >
-        {/* Top bar — scoped to this page only, not the shared Layout/Sidebar */}
-        <div className="top-bar">
-          <div>
-            <div className="top-bar-greeting">{formatClockGreeting(now)}, Rahul 👋</div>
-            <div className="top-bar-subgreeting">Here's an overview of your batches</div>
-          </div>
-
-          <div className="top-bar-right">
-            <div className="top-bar-search">
-              <span className="search-icon"><Icon name="search" size={14} color="#94a3b8" /></span>
-              <input
-                type="text"
-                placeholder="Search anything..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="styled-input"
-                style={{ ...inputStyle, width: "260px", paddingLeft: "34px" }}
-              />
-            </div>
-
-            <button
-              className="top-bar-bell"
-              title={`${atRiskBatches} batch${atRiskBatches === 1 ? "" : "es"} at risk`}
-              onClick={(e) => {
-                e.stopPropagation();
-                setHealthFilter("At Risk");
-              }}
-            >
-              <Icon name="bell" size={18} color="#1e293b" />
-              {atRiskBatches > 0 && <span className="top-bar-badge">{atRiskBatches}</span>}
-            </button>
-
-            <div className="top-bar-profile" onClick={(e) => { e.stopPropagation(); setProfileMenuOpen((v) => !v); }}>
-              <Avatar name="Rahul" />
-              <span className="top-bar-profile-name">Rahul</span>
-              <Icon name="chevronDown" size={14} color="#64748b" />
-
-              {profileMenuOpen && (
-                <div className="dropdown-menu top-bar-dropdown" onClick={(e) => e.stopPropagation()}>
-                  <button onClick={logout}>
-                    <Icon name="logout" size={13} /> Logout
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
         {/* Header */}
         <div className="page-hero">
           <div className="page-hero-blob" />
@@ -855,13 +850,19 @@ export default function Batches() {
             </Field>
 
             <Field label="Mentor Name">
-              <input
+              <select
                 className="styled-input"
                 style={inputStyle}
-                placeholder="e.g. Krish Naik"
                 value={form.mentor_name}
                 onChange={(e) => setForm({ ...form, mentor_name: e.target.value })}
-              />
+              >
+                <option value="">Select Mentor</option>
+                {assignableMentors.map((m) => (
+                  <option key={m.id} value={m.name}>
+                    {m.name}{m.status === "Inactive" ? " (Inactive)" : ""}
+                  </option>
+                ))}
+              </select>
             </Field>
           </div>
 
@@ -1016,7 +1017,7 @@ export default function Batches() {
                           <td>{batch.course_name ? <span className="tag">{batch.course_name}</span> : <span className="muted">N/A</span>}</td>
                           <td>
                             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <Avatar name={batch.mentor_name} />
+                              <Avatar mentor={mentorByName(batch.mentor_name)} name={batch.mentor_name} />
                               <span>{batch.mentor_name || "Not Assigned"}</span>
                             </div>
                           </td>
@@ -1051,6 +1052,9 @@ export default function Batches() {
                           <td style={{ whiteSpace: "nowrap", position: "relative" }}>
                             <button className="btn btn-icon" onClick={() => { setViewBatch(batch); setOpenMenuId(null); }}>
                               <Icon name="eye" size={13} /> View
+                            </button>
+                            <button className="btn btn-icon btn-danger" onClick={() => deleteBatch(batch)}>
+                              <Icon name="trash" size={13} /> Delete
                             </button>
                             <button
                               className="btn btn-icon btn-dots"
@@ -1110,7 +1114,7 @@ export default function Batches() {
                       {batch.course_name ? <span className="tag">{batch.course_name}</span> : <span className="muted">N/A</span>}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-                      <Avatar name={batch.mentor_name} />
+                      <Avatar mentor={mentorByName(batch.mentor_name)} name={batch.mentor_name} />
                       <span style={{ fontSize: "13px" }}>{batch.mentor_name || "Not Assigned"}</span>
                     </div>
                     <div className="batch-card-metric">
@@ -1220,96 +1224,6 @@ export default function Batches() {
       <Toast toast={toast} onClose={() => setToast(null)} />
 
       <style jsx>{`
-        .top-bar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 16px;
-          padding: 4px 2px;
-          margin-bottom: 20px;
-          flex-wrap: wrap;
-        }
-
-        .top-bar-greeting {
-          font-size: 16px;
-          font-weight: 700;
-          color: #1e293b;
-        }
-
-        .top-bar-subgreeting {
-          font-size: 12.5px;
-          color: #94a3b8;
-          margin-top: 2px;
-        }
-
-        .top-bar-right {
-          display: flex;
-          align-items: center;
-          gap: 16px;
-          flex-wrap: wrap;
-        }
-
-        .top-bar-search {
-          position: relative;
-        }
-
-        .top-bar-bell {
-          position: relative;
-          background: transparent;
-          border: none;
-          border-radius: 999px;
-          width: 34px;
-          height: 34px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-        }
-
-        .top-bar-bell:hover {
-          background: #f1f5f9;
-        }
-
-        .top-bar-badge {
-          position: absolute;
-          top: -4px;
-          right: -4px;
-          background: #ef4444;
-          color: white;
-          font-size: 10px;
-          font-weight: 800;
-          border-radius: 999px;
-          padding: 1px 5px;
-          min-width: 16px;
-        }
-
-        .top-bar-profile {
-          position: relative;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          cursor: pointer;
-          padding: 4px 8px;
-          border-radius: 10px;
-        }
-
-        .top-bar-profile:hover {
-          background: #f1f5f9;
-        }
-
-        .top-bar-profile-name {
-          font-size: 13.5px;
-          font-weight: 700;
-          color: #1e293b;
-        }
-
-        .top-bar-dropdown {
-          right: 0;
-          left: auto;
-          top: calc(100% + 6px);
-          min-width: 140px;
-        }
-
         .page-hero {
           position: relative;
           overflow: hidden;
@@ -1724,6 +1638,14 @@ export default function Batches() {
           background: #f1f5f9;
         }
 
+        .btn-icon.btn-danger {
+          color: #b91c1c;
+        }
+
+        .btn-icon.btn-danger:hover {
+          background: #fee2e2;
+        }
+
         .btn-dots {
           padding: 6px 8px;
         }
@@ -2002,6 +1924,6 @@ export default function Batches() {
           to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
-    </>
+    </ProtectedRoute>
   );
 }

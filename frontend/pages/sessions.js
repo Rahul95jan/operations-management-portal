@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../components/Sidebar";
+import ProtectedRoute from "../components/ProtectedRoute";
 
 // Small hand-drawn icon set (no external icon library) — used for the chrome
 // elements (top bar, stat cards, filters, view toggle) so they render as
@@ -152,6 +153,78 @@ function SessionTypeBadge({ type }) {
   );
 }
 
+const AVATAR_COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#22c55e", "#ec4899", "#06b6d4"];
+
+function avatarColor(name) {
+  if (!name) return AVATAR_COLORS[0];
+  const code = name.charCodeAt(0) + (name.charCodeAt(1) || 0);
+  return AVATAR_COLORS[code % AVATAR_COLORS.length];
+}
+
+function initials(name) {
+  if (!name) return "?";
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase())
+    .join("");
+}
+
+function mentorPhotoUrl(mentor) {
+  if (!mentor || !mentor.photo_path) return null;
+  return `http://127.0.0.1:8000/mentors/${mentor.id}/photo?v=${encodeURIComponent(mentor.photo_path)}`;
+}
+
+// Shows the mentor's real photo from Mentor Management when one is on file
+// (looked up live by name every render, so it always reflects whatever is
+// currently set there), falling back to initials otherwise.
+function Avatar({ mentor, name, size = 28 }) {
+  const resolvedName = mentor?.name || name;
+  const url = mentorPhotoUrl(mentor);
+  const [broken, setBroken] = useState(false);
+
+  if (url && !broken) {
+    return (
+      <img
+        src={url}
+        alt={resolvedName}
+        onError={() => setBroken(true)}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "50%",
+          objectFit: "cover",
+          objectPosition: "center 22%",
+          flexShrink: 0,
+          border: "2px solid #ffffff",
+          boxShadow: "0 0 0 1px #e2e8f0, 0 1px 3px rgba(15, 23, 42, 0.08)",
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        background: resolvedName ? `${avatarColor(resolvedName)}22` : "#e2e8f0",
+        color: resolvedName ? avatarColor(resolvedName) : "#94a3b8",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: size <= 28 ? "11px" : "18px",
+        fontWeight: 700,
+        flexShrink: 0,
+      }}
+    >
+      {initials(resolvedName)}
+    </div>
+  );
+}
+
 const inputStyle = {
   width: "100%",
   padding: "11px 14px",
@@ -190,6 +263,7 @@ const EMPTY_FORM = {
   status: "Scheduled",
   session_type: "Live Session",
   webinar_id: "",
+  zoom_id: "",
 };
 
 const TABS = ["All", "Today", "Upcoming", "Completed", "Cancelled"];
@@ -218,20 +292,6 @@ function matchesTab(session, tab) {
   if (tab === "Completed") return session.status === "Completed";
   if (tab === "Cancelled") return session.status === "Cancelled";
   return true;
-}
-
-function formatClockTime(d) {
-  let h = d.getHours();
-  const ampm = h >= 12 ? "PM" : "AM";
-  h = h % 12;
-  if (h === 0) h = 12;
-  const hh = String(h).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm} ${ampm}`;
-}
-
-function formatClockDate(d) {
-  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
 }
 
 function Toast({ toast, onClose }) {
@@ -276,6 +336,9 @@ export default function Sessions() {
 
   const [mentors, setMentors] = useState([]);
   const [batches, setBatches] = useState([]);
+  const [zoomAccounts, setZoomAccounts] = useState([]);
+  const [addingZoomId, setAddingZoomId] = useState(false);
+  const [newZoomEmail, setNewZoomEmail] = useState("");
 
   const [form, setForm] = useState(EMPTY_FORM);
 
@@ -296,7 +359,6 @@ export default function Sessions() {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
 
-  const [now, setNow] = useState(new Date());
   const [rowsPerPage, setRowsPerPage] = useState(5);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -311,11 +373,6 @@ export default function Sessions() {
   const scrollToSection = (ref) => {
     if (ref.current) ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const loadSessions = async () => {
     setLoadingSessions(true);
@@ -351,10 +408,41 @@ export default function Sessions() {
     }
   };
 
+  const loadZoomAccounts = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/zoom-accounts");
+      const data = await res.json();
+      setZoomAccounts(data);
+    } catch (err) {
+      // Non-fatal — the Zoom ID dropdown just stays empty.
+    }
+  };
+
+  const addZoomAccount = async () => {
+    const email = newZoomEmail.trim();
+    if (!email) return;
+    try {
+      const res = await fetch("http://127.0.0.1:8000/zoom-accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) throw new Error("bad status");
+      const account = await res.json();
+      setZoomAccounts((prev) => (prev.some((a) => a.id === account.id) ? prev : [...prev, account]));
+      setForm((prev) => ({ ...prev, zoom_id: account.email }));
+      setNewZoomEmail("");
+      setAddingZoomId(false);
+    } catch (err) {
+      showToast("Couldn't add that Zoom ID. Please try again.");
+    }
+  };
+
   useEffect(() => {
     loadSessions();
     loadMentors();
     loadBatches();
+    loadZoomAccounts();
   }, []);
 
   const resetForm = () => {
@@ -418,6 +506,7 @@ export default function Sessions() {
       status: session.status,
       session_type: session.session_type || "Live Session",
       webinar_id: session.webinar_id || "",
+      zoom_id: session.zoom_id || "",
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -437,6 +526,7 @@ export default function Sessions() {
       status: session.status,
       session_type: session.session_type || "Live Session",
       webinar_id: "",
+      zoom_id: session.zoom_id || "",
     });
     showToast("Session details copied — pick a new date & time, then Create Session.", "success");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -463,6 +553,7 @@ export default function Sessions() {
         status: rescheduleSession.status,
         session_type: rescheduleSession.session_type || "Live Session",
         webinar_id: rescheduleSession.webinar_id || "",
+        zoom_id: rescheduleSession.zoom_id || "",
         session_date: rescheduleForm.session_date,
         session_time: rescheduleForm.session_time,
         remarks: rescheduleForm.reason
@@ -499,6 +590,11 @@ export default function Sessions() {
     }
     return active;
   }, [mentors, form.mentor_name]);
+
+  // Looks up the current Mentor Management record for a session's assigned
+  // mentor name, so the Session List always shows whatever photo/details are
+  // currently set there — never a stale snapshot.
+  const mentorByName = (name) => mentors.find((m) => m.name === name);
 
   // ---- Schedule conflict warnings (feature 4 & 5) — client-side only,
   // warns but never blocks Create/Update. ----
@@ -607,7 +703,7 @@ export default function Sessions() {
   };
 
   return (
-    <>
+    <ProtectedRoute permission={["sessions", "view"]}>
       <Sidebar />
 
       <div
@@ -618,40 +714,6 @@ export default function Sessions() {
           minHeight: "100vh",
         }}
       >
-        {/* Top bar — scoped to this page only, not the shared Layout/Sidebar */}
-        <div className="top-bar">
-          <div className="top-bar-search">
-            <span className="search-icon"><Icon name="search" size={14} color="#94a3b8" /></span>
-            <input
-              type="text"
-              placeholder="Search anything..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="styled-input top-bar-search-input"
-              style={inputStyle}
-            />
-            <span className="top-bar-kbd">Ctrl K</span>
-          </div>
-
-          <div className="top-bar-right">
-            <button
-              className="top-bar-bell"
-              title={`${tabCounts.Today} session${tabCounts.Today === 1 ? "" : "s"} scheduled today`}
-              onClick={() => {
-                setActiveTab("Today");
-                scrollToSection(listSectionRef);
-              }}
-            >
-              <Icon name="bell" size={19} color="#1e293b" />
-              {tabCounts.Today > 0 && <span className="top-bar-badge">{tabCounts.Today}</span>}
-            </button>
-            <div className="top-bar-clock">
-              <div className="top-bar-clock-time">{formatClockTime(now)}</div>
-              <div className="top-bar-clock-date">{formatClockDate(now)}</div>
-            </div>
-          </div>
-        </div>
-
         {/* Header */}
         <div className="page-hero">
           <div className="page-hero-blob" />
@@ -744,24 +806,77 @@ export default function Sessions() {
                 className="styled-input"
                 style={inputStyle}
                 value={form.session_type}
-                onChange={(e) => setForm({ ...form, session_type: e.target.value })}
+                onChange={(e) => {
+                  const nextType = e.target.value;
+                  setForm({
+                    ...form,
+                    session_type: nextType,
+                    batch_name: nextType === "Webinar Session" ? "" : form.batch_name,
+                  });
+                }}
               >
                 <option value="Live Session">🎙️ Live Session</option>
                 <option value="Webinar Session">📹 Webinar Session</option>
               </select>
             </Field>
 
-            {form.session_type === "Webinar Session" && (
-              <Field label="Webinar ID">
-                <input
+            <Field label="Zoom ID">
+              {addingZoomId ? (
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <input
+                    className="styled-input"
+                    style={inputStyle}
+                    placeholder="e.g. newzoom@krishnaik.in"
+                    value={newZoomEmail}
+                    autoFocus
+                    onChange={(e) => setNewZoomEmail(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addZoomAccount(); } }}
+                  />
+                  <button type="button" className="btn btn-primary btn-sm" onClick={addZoomAccount}>Add</button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => { setAddingZoomId(false); setNewZoomEmail(""); }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <select
                   className="styled-input"
                   style={inputStyle}
-                  placeholder="e.g. 890 0442 4382"
-                  value={form.webinar_id}
-                  onChange={(e) => setForm({ ...form, webinar_id: e.target.value })}
-                />
-              </Field>
-            )}
+                  value={form.zoom_id}
+                  onChange={(e) => {
+                    if (e.target.value === "__add_new__") {
+                      setAddingZoomId(true);
+                      return;
+                    }
+                    setForm({ ...form, zoom_id: e.target.value });
+                  }}
+                >
+                  <option value="">Select Zoom ID</option>
+                  {zoomAccounts.map((account) => (
+                    <option key={account.id} value={account.email}>
+                      {account.email}
+                    </option>
+                  ))}
+                  {form.zoom_id && !zoomAccounts.some((a) => a.email === form.zoom_id) && (
+                    <option value={form.zoom_id}>{form.zoom_id}</option>
+                  )}
+                  <option value="__add_new__">+ Add New Zoom ID…</option>
+                </select>
+              )}
+            </Field>
+
+            <Field label="Webinar ID">
+              <input
+                className="styled-input"
+                style={inputStyle}
+                placeholder="e.g. 890 0442 4382"
+                value={form.webinar_id}
+                onChange={(e) => setForm({ ...form, webinar_id: e.target.value })}
+              />
+            </Field>
 
             <Field label="Mentor">
               <select
@@ -780,21 +895,23 @@ export default function Sessions() {
               </select>
             </Field>
 
-            <Field label="Batch">
-              <select
-                className="styled-input"
-                style={inputStyle}
-                value={form.batch_name}
-                onChange={(e) => setForm({ ...form, batch_name: e.target.value })}
-              >
-                <option value="">Select Batch</option>
-                {batches.map((batch) => (
-                  <option key={batch.id} value={batch.batch_name}>
-                    {batch.batch_name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {form.session_type !== "Webinar Session" && (
+              <Field label="Batch">
+                <select
+                  className="styled-input"
+                  style={inputStyle}
+                  value={form.batch_name}
+                  onChange={(e) => setForm({ ...form, batch_name: e.target.value })}
+                >
+                  <option value="">Select Batch</option>
+                  {batches.map((batch) => (
+                    <option key={batch.id} value={batch.batch_name}>
+                      {batch.batch_name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
 
             <Field label="Date">
               <input
@@ -1020,6 +1137,7 @@ export default function Sessions() {
                       <th>Topic</th>
                       <th>Type</th>
                       <th>Webinar ID</th>
+                      <th>Zoom ID</th>
                       <th>Mentor</th>
                       <th>Batch</th>
                       <th>Date</th>
@@ -1038,7 +1156,13 @@ export default function Sessions() {
                           <SessionTypeBadge type={session.session_type} />
                         </td>
                         <td className="muted">{session.webinar_id || "—"}</td>
-                        <td>{session.mentor_name || "Not Assigned"}</td>
+                        <td className="muted">{session.zoom_id || "—"}</td>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <Avatar mentor={mentorByName(session.mentor_name)} name={session.mentor_name} />
+                            <span>{session.mentor_name || "Not Assigned"}</span>
+                          </div>
+                        </td>
                         <td>{session.batch_name || "Not Assigned"}</td>
                         <td className="muted">{session.session_date || "—"}</td>
                         <td className="muted">{session.session_time || "—"}</td>
@@ -1239,6 +1363,7 @@ export default function Sessions() {
               <div className="info-chip"><div className="info-chip-label">Time</div><div className="info-chip-value">{viewSession.session_time || "—"}</div></div>
               <div className="info-chip"><div className="info-chip-label">Status</div><div className="info-chip-value"><StatusBadge status={viewSession.status} /></div></div>
               <div className="info-chip"><div className="info-chip-label">Webinar ID</div><div className="info-chip-value">{viewSession.webinar_id || "—"}</div></div>
+              <div className="info-chip"><div className="info-chip-label">Zoom ID</div><div className="info-chip-value">{viewSession.zoom_id || "—"}</div></div>
             </div>
 
             <div style={{ marginTop: "20px", display: "flex", gap: "12px" }}>
@@ -1310,95 +1435,6 @@ export default function Sessions() {
       <Toast toast={toast} onClose={() => setToast(null)} />
 
       <style jsx>{`
-        .top-bar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 16px;
-          padding: 4px 2px;
-          margin-bottom: 20px;
-          flex-wrap: wrap;
-        }
-
-        .top-bar-search {
-          position: relative;
-          flex: 1;
-          min-width: 220px;
-          max-width: 420px;
-        }
-
-        .top-bar-search-input {
-          padding-left: 34px !important;
-          padding-right: 64px !important;
-          background: #ffffff !important;
-          border-color: #e2e8f0 !important;
-        }
-
-        .top-bar-kbd {
-          position: absolute;
-          right: 10px;
-          top: 50%;
-          transform: translateY(-50%);
-          font-size: 11px;
-          font-weight: 700;
-          color: #94a3b8;
-          background: #eef2f7;
-          border-radius: 6px;
-          padding: 2px 7px;
-        }
-
-        .top-bar-right {
-          display: flex;
-          align-items: center;
-          gap: 18px;
-          flex-shrink: 0;
-        }
-
-        .top-bar-bell {
-          position: relative;
-          background: transparent;
-          border: none;
-          border-radius: 999px;
-          width: 34px;
-          height: 34px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-        }
-
-        .top-bar-bell:hover {
-          background: #f1f5f9;
-        }
-
-        .top-bar-badge {
-          position: absolute;
-          top: -4px;
-          right: -4px;
-          background: #ef4444;
-          color: white;
-          font-size: 10px;
-          font-weight: 800;
-          border-radius: 999px;
-          padding: 1px 5px;
-          min-width: 16px;
-        }
-
-        .top-bar-clock {
-          text-align: right;
-        }
-
-        .top-bar-clock-time {
-          font-size: 15px;
-          font-weight: 800;
-          color: #1e293b;
-        }
-
-        .top-bar-clock-date {
-          font-size: 11px;
-          color: #94a3b8;
-        }
-
         .page-hero {
           position: relative;
           overflow: hidden;
@@ -1600,6 +1636,13 @@ export default function Sessions() {
         .btn:disabled {
           opacity: 0.6;
           cursor: not-allowed;
+        }
+
+        .btn-sm {
+          padding: 8px 14px;
+          font-size: 12.5px;
+          border-radius: 8px;
+          white-space: nowrap;
         }
 
         .btn-primary {
@@ -2119,6 +2162,6 @@ export default function Sessions() {
           }
         }
       `}</style>
-    </>
+    </ProtectedRoute>
   );
 }

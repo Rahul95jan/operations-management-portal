@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
+import { apiLogin, setSession } from "../lib/auth";
 
 function RecoveryModal({ mode, onClose }) {
   const [email, setEmail] = useState("");
@@ -214,25 +215,24 @@ export default function Login() {
     }
   }, []);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
     setLoggingIn(true);
 
-    setTimeout(() => {
-      if (username === "admin" && password === "admin123") {
-        if (remember) {
-          localStorage.setItem("rememberedUsername", username);
-        } else {
-          localStorage.removeItem("rememberedUsername");
-        }
-        localStorage.setItem("loggedIn", "true");
-        router.push("/");
+    try {
+      const { token, user } = await apiLogin(username, password);
+      if (remember) {
+        localStorage.setItem("rememberedUsername", username);
       } else {
-        setError("Invalid username or password. Please try again.");
-        setLoggingIn(false);
+        localStorage.removeItem("rememberedUsername");
       }
-    }, 400);
+      setSession(token, user);
+      router.push("/");
+    } catch (err) {
+      setError(err.message || "Invalid username or password. Please try again.");
+      setLoggingIn(false);
+    }
   };
 
   return (

@@ -397,6 +397,22 @@ export default function InvoiceGenerator() {
     return sessions.filter((s) => s.mentor_name === form.mentor_name && s.batch_name === form.batch_name && (s.session_date || "").startsWith(form.month));
   }, [sessions, form.mentor_name, form.batch_name, form.month]);
 
+  // Auto-fill Total Sessions / Total Hours from the real matching sessions —
+  // still editable afterwards, since tracked session durations are often
+  // estimates rather than the mentor's actual billable hours.
+  useEffect(() => {
+    if (matchingSessions.length === 0) return;
+    const sessionCount = matchingSessions.length;
+    const hoursSum = matchingSessions.reduce((sum, s) => sum + (Number(s.duration) || 0), 0) / 60;
+    setForm((f) => ({
+      ...f,
+      sessions: sessionCount,
+      hours: hoursSum || f.hours,
+      amount: (hoursSum || Number(f.hours) || 0) * Number(f.rate || 0),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchingSessions]);
+
   const validationChecks = useMemo(() => {
     const hasMentor = !!form.mentor_name;
     const hasBatch = !!form.batch_name;
@@ -408,13 +424,13 @@ export default function InvoiceGenerator() {
       { label: "Mentor selected", pass: hasMentor },
       { label: "Batch selected", pass: hasBatch },
       { label: "Billing month selected", pass: hasMonth },
-      { label: "Sessions found", pass: sessionsFound },
-      { label: "All sessions have duration", pass: allHaveDuration },
+      { label: "Sessions found", pass: sessionsFound, advisory: true },
+      { label: "All sessions have duration", pass: allHaveDuration, advisory: true },
       { label: "No duplicate invoice", pass: !duplicate },
     ];
-  }, [form, matchingSessions, invoices, editId]);
+  }, [form.mentor_name, form.batch_name, form.month, matchingSessions, invoices, editId]);
 
-  const allChecksPass = validationChecks.every((c) => c.pass);
+  const allChecksPass = validationChecks.filter((c) => !c.advisory).every((c) => c.pass);
 
   const resetForm = () => {
     setForm(EMPTY_FORM);
@@ -761,12 +777,15 @@ export default function InvoiceGenerator() {
 
               <div className="validation-panel">
                 <div className="validation-title">Invoice Validation</div>
-                {validationChecks.map((c) => (
-                  <div key={c.label} className={`validation-row ${c.pass ? "validation-pass" : "validation-fail"}`}>
-                    <Icon name={c.pass ? "checkCircle" : "xCircle"} size={14} />
-                    <span>{c.label}</span>
-                  </div>
-                ))}
+                {validationChecks.map((c) => {
+                  const state = c.pass ? "pass" : c.advisory ? "advisory" : "fail";
+                  return (
+                    <div key={c.label} className={`validation-row validation-${state}`}>
+                      <Icon name={c.pass ? "checkCircle" : c.advisory ? "alertTriangle" : "xCircle"} size={14} />
+                      <span>{c.label}{c.advisory && !c.pass ? " (not required)" : ""}</span>
+                    </div>
+                  );
+                })}
                 <button
                   className="btn btn-primary"
                   style={{ width: "100%", justifyContent: "center", marginTop: "14px" }}
@@ -1086,6 +1105,7 @@ export default function InvoiceGenerator() {
           .validation-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-bottom: 8px; }
           .validation-pass { color: #15803d; }
           .validation-fail { color: #94a3b8; }
+          .validation-advisory { color: #b45309; }
 
           .btn { border: none; border-radius: 10px; padding: 11px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; transition: all 0.15s ease; display: inline-flex; align-items: center; gap: 6px; }
           .btn:disabled { opacity: 0.5; cursor: not-allowed; }

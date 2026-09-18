@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../components/Sidebar";
+import ProtectedRoute from "../components/ProtectedRoute";
 
 const API = "http://127.0.0.1:8000";
 
@@ -178,8 +179,10 @@ function Avatar({ mentor, size = 36 }) {
           height: size,
           borderRadius: "50%",
           objectFit: "cover",
+          objectPosition: "center 22%",
           flexShrink: 0,
-          border: "1px solid #eef2f7",
+          border: "2px solid #ffffff",
+          boxShadow: "0 0 0 1px #e2e8f0, 0 1px 3px rgba(15, 23, 42, 0.08)",
         }}
       />
     );
@@ -709,7 +712,7 @@ export default function Mentors() {
   };
 
   return (
-    <>
+    <ProtectedRoute permission={["mentors", "view"]}>
       <Sidebar />
 
       <div
@@ -804,6 +807,9 @@ export default function Mentors() {
                 Upload Photo
               </button>
               <div className="hint-text" style={{ textAlign: "center" }}>JPG, PNG (Max 2MB)</div>
+              <div className="hint-text" style={{ textAlign: "center", maxWidth: "140px" }}>
+                Recommended: square, 400×400px, face centered &amp; filling the frame
+              </div>
             </div>
 
             <div className="form-grid">
@@ -1384,12 +1390,14 @@ export default function Mentors() {
           justify-content: center;
           cursor: pointer;
           overflow: hidden;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
         }
 
         .photo-preview-img {
           width: 100%;
           height: 100%;
           object-fit: cover;
+          object-position: center 22%;
         }
 
         .btn-sm {
@@ -1961,6 +1969,6 @@ export default function Mentors() {
           }
         }
       `}</style>
-    </>
+    </ProtectedRoute>
   );
 }

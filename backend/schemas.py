@@ -2,21 +2,53 @@ from pydantic import BaseModel
 from typing import Optional
 
 
+class ZoomAccountCreate(BaseModel):
+    email: str
+
+
 class UserCreate(BaseModel):
     name: str
     email: str
     role: str
 
 
+class UserUpdate(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    role: str | None = None
+    phone: str | None = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AdminUserCreate(BaseModel):
+    name: str
+    email: str
+    username: str
+    password: str
+    role: str  # ADMIN | SUPER_ADMIN
+    permissions: list[str] = []
+
+
+class AdminUserPermissionsUpdate(BaseModel):
+    role: str | None = None
+    permissions: list[str] | None = None
+    is_active: bool | None = None
+
+
 class SessionCreate(BaseModel):
     topic: str
     mentor_name: str
-    batch_name: str
+    batch_name: str | None = None
     session_date: str
     session_time: str
     status: str
     session_type: str = "Live Session"
     webinar_id: str | None = None
+    zoom_id: str | None = None
     remarks: str | None = None
 
 

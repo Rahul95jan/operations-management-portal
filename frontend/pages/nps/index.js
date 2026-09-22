@@ -8,6 +8,8 @@ import NPSScoreSelector from "../../components/nps/NPSScoreSelector";
 import BrandPanel from "../../components/nps/wizard/BrandPanel";
 import WhyItMatters from "../../components/nps/wizard/WhyItMatters";
 
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
 const emptyForm = {
   learner_name: "",
   learner_email: "",
@@ -41,8 +43,8 @@ export default function NPSPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch("http://127.0.0.1:8000/batches").then((r) => r.json()).catch(() => []),
-      fetch("http://127.0.0.1:8000/mentors").then((r) => r.json()).catch(() => []),
+      fetch(`${API}/batches`).then((r) => r.json()).catch(() => []),
+      fetch(`${API}/mentors`).then((r) => r.json()).catch(() => []),
     ])
       .then(([batchData, mentorData]) => {
         setBatches(Array.isArray(batchData) ? batchData : []);
@@ -115,7 +117,7 @@ export default function NPSPage() {
     setLoading(true);
 
     try {
-      const response = await axios.post("http://127.0.0.1:8000/nps", formData);
+      const response = await axios.post(`${API}/nps`, formData);
 
       if (response.data.success === false) {
         setStatus({ type: "error", message: response.data.message });

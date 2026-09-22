@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
 
-const API = "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 // Small hand-drawn icon set (no external icon library, no new dependency) —
 // consistent flat line icons instead of emoji, which render inconsistently

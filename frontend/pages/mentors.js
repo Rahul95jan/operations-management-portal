@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
 
-const API = "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 // Small hand-drawn icon set (no external icon library, no new dependency) —
 // used instead of emoji so these render as consistent flat line icons
@@ -728,7 +728,6 @@ export default function Mentors() {
         <div className="page-hero">
           <div className="page-hero-blob" />
           <div className="page-hero-content">
-            <div className="page-hero-eyebrow">Operations</div>
             <h1 className="page-hero-title">Mentor Management</h1>
             <p className="page-hero-subtitle">
               Add and manage mentors who can be assigned to live sessions and webinars.

@@ -4,7 +4,10 @@ __pycache__/
 .env
 .env.save
 node_modules/
-.next/
+.env
+.env.local
+.env.production
+.env.*.local
 *.pyc
 backend/uploads/
 backend/pdfs/

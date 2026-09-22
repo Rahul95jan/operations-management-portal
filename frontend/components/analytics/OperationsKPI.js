@@ -1,39 +1,30 @@
-export default function OperationsKPI({ title, value, color }) {
+export default function OperationsKPI({ title, value, color, icon: Icon }) {
   return (
     <div
       className="kpi-tile"
       style={{
         background: "#fff",
         borderLeft: `4px solid ${color}`,
-        padding: "18px 20px",
+        padding: "14px 16px",
         borderRadius: "12px",
         boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)",
+        border: "1px solid #eef2f7",
+        borderLeftWidth: "4px",
+        display: "flex",
+        gap: "12px",
+        alignItems: "flex-start",
         transition: "transform 0.15s ease, box-shadow 0.15s ease",
       }}
     >
-      <h4
-        style={{
-          marginBottom: "8px",
-          fontSize: "12px",
-          fontWeight: 700,
-          letterSpacing: "0.03em",
-          textTransform: "uppercase",
-          color: "#94a3b8",
-        }}
-      >
-        {title}
-      </h4>
-
-      <h1
-        style={{
-          margin: 0,
-          fontSize: "28px",
-          color,
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {value}
-      </h1>
+      {Icon && (
+        <div style={{ width: 34, height: 34, borderRadius: 9, background: `${color}1a`, color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Icon size={17} strokeWidth={2.2} />
+        </div>
+      )}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: "21px", fontWeight: 800, color, lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+        <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.03em", textTransform: "uppercase", color: "#64748b", marginTop: "3px" }}>{title}</div>
+      </div>
 
       <style jsx>{`
         .kpi-tile:hover {

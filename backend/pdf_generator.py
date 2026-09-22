@@ -13,8 +13,11 @@ from reportlab.platypus import (
     Spacer,
     Image,
     HRFlowable,
+    KeepTogether,
 )
 from reportlab.pdfbase import pdfmetrics
+from reportlab.graphics.shapes import Drawing, Rect, String, Circle, Line
+from reportlab.graphics.charts.piecharts import Pie
 from reportlab.pdfbase.ttfonts import TTFont
 
 # Helvetica (the default base-14 PDF font) has no glyph for the Rupee sign
@@ -1296,38 +1299,233 @@ def generate_mentor_performance_report(data, filter_desc="All data"):
 
     scorecard = data["scorecard"]
     es = data["executive_summary"]
+    analytics = data.get("analytics") or {"classification": [], "risk": [], "dimension_averages": [], "matrix": []}
 
+    def dim_val(m, key, field="score", suffix=""):
+        d = m.get(key)
+        v = d.get(field) if d else None
+        return "N/A" if v is None else f"{v}{suffix}"
+
+    small = ParagraphStyle("MpSmall", parent=styles["Normal"], textColor=SLATE, fontSize=7.5, leading=9.5)
+
+    def small_table(headers, rows, col_widths, empty_message="No data for the selected filters."):
+        # Denser variant of data_table for the wide, many-column sections.
+        if not rows:
+            return Paragraph(empty_message, body_style)
+        head = [Paragraph(h, ParagraphStyle("MpTHs", parent=styles["Normal"], textColor=colors.white, fontSize=7, fontName="Helvetica-Bold", leading=8.5)) for h in headers]
+        body = [[Paragraph(str(c), small) for c in r] for r in rows]
+        table = Table([head] + body, colWidths=col_widths, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_ALT]),
+            ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        return table
+
+    # ---- Charts (drawn with reportlab graphics so they appear in the PDF as on the portal) ----
+    def donut_chart(items, donut=True, size=150):
+        drawing = Drawing(size + 110, size)
+        live = [i for i in items if i["count"] > 0]
+        if not live:
+            return None
+        pie = Pie()
+        pie.x, pie.y, pie.width, pie.height = 5, 5, size - 10, size - 10
+        pie.data = [i["count"] for i in live]
+        pie.labels = None
+        pie.slices.strokeColor = colors.white
+        pie.slices.strokeWidth = 1.5
+        for idx, item in enumerate(live):
+            pie.slices[idx].fillColor = HexColor(item["color"])
+        drawing.add(pie)
+        if donut:
+            drawing.add(Circle(5 + (size - 10) / 2, 5 + (size - 10) / 2, (size - 10) * 0.26, fillColor=colors.white, strokeColor=colors.white))
+        total = sum(i["count"] for i in live)
+        y = size - 22
+        for item in live:
+            drawing.add(Rect(size + 6, y, 8, 8, fillColor=HexColor(item["color"]), strokeColor=None))
+            drawing.add(String(size + 20, y, f"{item['label']}: {item['count']} ({round(item['count'] / total * 100)}%)", fontName="Helvetica", fontSize=8, fillColor=SLATE))
+            y -= 15
+        return drawing
+
+    def dimension_bar_chart(items, width=170 * mm, row_h=17):
+        height = row_h * len(items) + 20
+        drawing = Drawing(width, height)
+        label_w = 62
+        bar_max = width - label_w - 40
+        for idx, item in enumerate(items):
+            y = height - 12 - (idx + 1) * row_h + 4
+            drawing.add(String(0, y + 3, item["name"], fontName="Helvetica", fontSize=8.5, fillColor=SLATE))
+            drawing.add(Rect(label_w, y, bar_max, 10, fillColor=BG_ALT, strokeColor=None))
+            drawing.add(Rect(label_w, y, bar_max * min(item["value"], 100) / 100, 10, fillColor=NAVY, strokeColor=None))
+            drawing.add(String(label_w + bar_max + 6, y + 2, f"{item['value']}", fontName="Helvetica-Bold", fontSize=8.5, fillColor=NAVY))
+        return drawing
+
+    def matrix_chart(points, width=170 * mm, height=210):
+        drawing = Drawing(width, height)
+        left, bottom, pw, ph = 34, 22, width - 50, height - 34
+
+        def px(v):
+            return left + pw * max(0, min(v, 100)) / 100
+
+        def py(v):
+            return bottom + ph * max(0, min(v, 100)) / 100
+
+        drawing.add(Rect(left, bottom, pw, ph, fillColor=colors.white, strokeColor=BORDER, strokeWidth=0.6))
+        # Quadrant shading + labels (thresholds at 75, same as the portal)
+        drawing.add(Rect(px(75), py(75), pw - (px(75) - left), ph - (py(75) - bottom), fillColor=HexColor("#f0fdf4"), strokeColor=None))
+        drawing.add(Line(px(75), bottom, px(75), bottom + ph, strokeColor=HexColor("#cbd5e1"), strokeDashArray=[3, 3], strokeWidth=0.8))
+        drawing.add(Line(left, py(75), left + pw, py(75), strokeColor=HexColor("#cbd5e1"), strokeDashArray=[3, 3], strokeWidth=0.8))
+        for text, qx, qy, anchor in [
+            ("Top Performer", left + pw - 4, bottom + ph - 10, "end"),
+            ("Quality Concern", left + pw - 4, bottom + 5, "end"),
+            ("Operational Concern", left + 4, bottom + ph - 10, "start"),
+            ("Critical", left + 4, bottom + 5, "start"),
+        ]:
+            drawing.add(String(qx, qy, text, fontName="Helvetica-Oblique", fontSize=7, fillColor=colors.HexColor("#94a3b8"), textAnchor=anchor))
+        for tick in (0, 25, 50, 75, 100):
+            drawing.add(String(px(tick), bottom - 11, str(tick), fontName="Helvetica", fontSize=7, fillColor=SLATE, textAnchor="middle"))
+            drawing.add(String(left - 5, py(tick) - 2, str(tick), fontName="Helvetica", fontSize=7, fillColor=SLATE, textAnchor="end"))
+        drawing.add(String(left + pw / 2, 2, "Delivery Performance (%)", fontName="Helvetica-Bold", fontSize=7.5, fillColor=SLATE, textAnchor="middle"))
+        drawing.add(String(4, height - 8, "Learner Experience (%)", fontName="Helvetica-Bold", fontSize=7.5, fillColor=SLATE))
+
+        max_served = max([p["learners_served"] for p in points] or [1])
+        quadrant_colors = {"Top Performer": "#16a34a", "Quality Concern": "#f59e0b", "Operational Concern": "#2563eb", "Critical": "#dc2626"}
+        for pt in points:
+            radius = 4 + 7 * (pt["learners_served"] / max_served)
+            drawing.add(Circle(px(pt["x"]), py(pt["y"]), radius, fillColor=HexColor(quadrant_colors.get(pt["quadrant"], "#0f172a")), fillOpacity=0.55, strokeColor=NAVY, strokeWidth=0.5))
+            drawing.add(String(px(pt["x"]) + radius + 2, py(pt["y"]) - 2, pt["mentor_name"].split(" ")[0], fontName="Helvetica", fontSize=6.5, fillColor=NAVY))
+        return drawing
+
+    # ---- Executive Summary (same tiles/order as the KPI row on the page) ----
     elements.append(bullet("Executive Summary"))
     elements.append(kpi_grid([
         ("Total Mentors", es["total_mentors"]),
-        ("Average Score", es["average_score"]),
+        ("Avg Business Score", es["average_score"]),
         ("Excellent", es["excellent"]),
-        ("Strong Performer", es["strong_performer"]),
+        ("Strong Performers", es["strong_performer"]),
         ("Needs Attention", es["needs_attention"]),
         ("At Risk", es["at_risk"]),
         ("Critical", es["critical"]),
     ], per_row=4))
     elements.append(Spacer(1, 10))
 
+    # ---- Performance Classification + Risk Distribution (side by side, like the two donuts) ----
+    elements.append(bullet("Performance Classification &amp; Risk Distribution"))
+    cls_chart = donut_chart(analytics["classification"], donut=True)
+    risk_chart = donut_chart(analytics["risk"], donut=False)
+    if cls_chart or risk_chart:
+        titled = lambda title, chart: [Paragraph(f"<b>{title}</b>", body_style), chart or Paragraph("No data yet.", body_style)]
+        pair = Table([[titled("Performance Classification", cls_chart), titled("Risk Distribution", risk_chart)]], colWidths=[89 * mm, 89 * mm])
+        pair.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+        elements.append(pair)
+    else:
+        elements.append(Paragraph("No data for the selected filters.", body_style))
+    elements.append(Spacer(1, 6))
+
+    # ---- Average Score by Dimension ----
+    elements.append(bullet("Average Score by Dimension (all filtered mentors)"))
+    if analytics["dimension_averages"]:
+        elements.append(dimension_bar_chart(analytics["dimension_averages"]))
+    else:
+        elements.append(Paragraph("No data yet.", body_style))
+    elements.append(Spacer(1, 6))
+
+    # ---- Mentor Performance Matrix ----
+    matrix_heading = [
+        bullet("Mentor Performance Matrix"),
+        Paragraph("X: Delivery Performance &nbsp;&middot;&nbsp; Y: Learner Experience &nbsp;&middot;&nbsp; Bubble size: Learners Served", small),
+        Spacer(1, 4),
+    ]
+    if analytics["matrix"]:
+        # Keep the heading with its chart so it never strands at the foot of a page.
+        elements.append(KeepTogether(matrix_heading + [matrix_chart(analytics["matrix"])]))
+        elements.append(Spacer(1, 6))
+        elements.append(small_table(
+            ["Mentor", "Delivery %", "Learner Experience %", "Learners Served", "Quadrant"],
+            [[m["mentor_name"], m["x"], m["y"], m["learners_served"], m["quadrant"]] for m in analytics["matrix"]],
+            [50 * mm, 24 * mm, 36 * mm, 28 * mm, 40 * mm],
+        ))
+    else:
+        elements.extend(matrix_heading)
+        elements.append(Paragraph("No data yet.", body_style))
+    elements.append(Spacer(1, 10))
+
+    # ---- Full Scorecard (all columns shown in the portal table) ----
     elements.append(bullet("Mentor Performance Scorecard"))
     sc_rows = [
         [
-            m["mentor_name"],
-            str(m["overall_score"]),
-            str(m["delivery_performance"]["score"]) if m["delivery_performance"] else "N/A",
-            str(m["learner_experience"]["score"]) if m["learner_experience"] else "N/A",
-            str(m["session_quality"]["score"]) if m["session_quality"] else "N/A",
+            f"<b>{m['mentor_name']}</b>",
+            f"<b>{m['overall_score']}</b><br/>{m['classification']}",
+            dim_val(m, "delivery_performance", suffix="%"),
+            dim_val(m, "learner_experience", suffix="%"),
+            dim_val(m, "session_quality", suffix="%"),
+            dim_val(m, "reliability", suffix="%"),
+            dim_val(m, "resource_compliance", suffix="%"),
+            dim_val(m, "attendance_engagement", suffix="%"),
+            dim_val(m, "productivity", suffix="%"),
+            dim_val(m, "cost_efficiency", suffix="%"),
             m["risk"],
         ]
         for m in scorecard
     ]
-    elements.append(data_table(
-        ["Mentor", "Score", "Delivery", "Learner", "Quality", "Risk"],
+    elements.append(small_table(
+        ["Mentor", "Overall Score", "Delivery", "Learner", "Quality", "Reliab.", "Resource", "Attend.", "Product.", "Cost", "Risk"],
         sc_rows,
-        [46 * mm, 24 * mm, 27 * mm, 27 * mm, 27 * mm, 27 * mm],
+        [22 * mm, 19 * mm, 15 * mm, 14 * mm, 14 * mm, 15 * mm, 16 * mm, 15 * mm, 16 * mm, 14 * mm, 14 * mm],
         "No mentors match this scope.",
     ))
     elements.append(Spacer(1, 10))
+
+    # ---- Per-dimension detail (the metrics behind each score) ----
+    elements.append(bullet("Delivery Performance"))
+    elements.append(small_table(
+        ["Mentor", "Scheduled", "Completed", "Cancelled", "Completion %", "Cancellation %"],
+        [[m["mentor_name"], dim_val(m, "delivery_performance", "scheduled"), dim_val(m, "delivery_performance", "completed"),
+          dim_val(m, "delivery_performance", "cancelled"), dim_val(m, "delivery_performance", "completion_percent", "%"),
+          dim_val(m, "delivery_performance", "cancellation_percent", "%")] for m in scorecard if m.get("delivery_performance")],
+        [48 * mm, 24 * mm, 24 * mm, 24 * mm, 29 * mm, 29 * mm],
+    ))
+
+    elements.append(bullet("Attendance &amp; Session Quality"))
+    elements.append(small_table(
+        ["Mentor", "Avg Attendance", "Registered", "Attended", "Low-Attendance Sessions", "Avg Session Feedback"],
+        [[m["mentor_name"], dim_val(m, "attendance_engagement", "avg_attendance_percent", "%"), dim_val(m, "attendance_engagement", "registered_learners"),
+          dim_val(m, "attendance_engagement", "attended_learners"), dim_val(m, "attendance_engagement", "low_attendance_sessions"),
+          dim_val(m, "session_quality", "avg_session_feedback_score")] for m in scorecard if m.get("attendance_engagement") or m.get("session_quality")],
+        [40 * mm, 26 * mm, 24 * mm, 24 * mm, 34 * mm, 30 * mm],
+    ))
+
+    elements.append(bullet("Learner Experience"))
+    elements.append(small_table(
+        ["Mentor", "Avg Instructor Rating", "Avg Doubt Rating", "NPS", "Feedback Count"],
+        [[m["mentor_name"], dim_val(m, "learner_experience", "avg_instructor_rating"), dim_val(m, "learner_experience", "avg_doubt_rating"),
+          dim_val(m, "learner_experience", "nps_score"), dim_val(m, "learner_experience", "feedback_count")] for m in scorecard if m.get("learner_experience")],
+        [50 * mm, 32 * mm, 32 * mm, 30 * mm, 34 * mm],
+    ))
+
+    elements.append(bullet("Resource Compliance"))
+    elements.append(small_table(
+        ["Mentor", "Required", "Received", "Pending", "Delayed", "On-Time %", "Avg Delay (hrs)"],
+        [[m["mentor_name"], dim_val(m, "resource_compliance", "required"), dim_val(m, "resource_compliance", "received"),
+          dim_val(m, "resource_compliance", "pending"), dim_val(m, "resource_compliance", "delayed"),
+          dim_val(m, "resource_compliance", "on_time_percent", "%"), dim_val(m, "resource_compliance", "avg_delay_hours")] for m in scorecard if m.get("resource_compliance")],
+        [42 * mm, 21 * mm, 21 * mm, 21 * mm, 21 * mm, 26 * mm, 26 * mm],
+    ))
+
+    elements.append(bullet("Productivity &amp; Cost Efficiency (INR)"))
+    elements.append(small_table(
+        ["Mentor", "Sessions Delivered", "Learners Served", "Batches Served", "Cost / Session", "Cost / Hour", "Total Cost"],
+        [[m["mentor_name"], dim_val(m, "productivity", "sessions_delivered"), dim_val(m, "productivity", "learners_served"),
+          dim_val(m, "productivity", "batches_served"), dim_val(m, "cost_efficiency", "cost_per_session"),
+          dim_val(m, "cost_efficiency", "cost_per_hour"), dim_val(m, "cost_efficiency", "total_cost")] for m in scorecard if m.get("productivity") or m.get("cost_efficiency")],
+        [38 * mm, 26 * mm, 24 * mm, 24 * mm, 22 * mm, 22 * mm, 22 * mm],
+    ))
+    elements.append(Spacer(1, 6))
 
     at_risk = [m for m in scorecard if m["risk"] in ("High", "Critical")]
     elements.append(bullet("At-Risk Mentors"))
@@ -1347,6 +1545,20 @@ def generate_mentor_performance_report(data, filter_desc="All data"):
         [32 * mm, 18 * mm, 18 * mm, 78 * mm, 32 * mm],
         "No at-risk mentors in this scope.",
     ))
+
+    # Never strand a section heading at the foot of a page: bind each heading
+    # to the flowable that follows it.
+    bound = []
+    idx = 0
+    while idx < len(elements):
+        el = elements[idx]
+        if isinstance(el, Paragraph) and el.style is section_style and idx + 1 < len(elements) and not isinstance(elements[idx + 1], KeepTogether):
+            bound.append(KeepTogether([el, elements[idx + 1]]))
+            idx += 2
+        else:
+            bound.append(el)
+            idx += 1
+    elements = bound
 
     doc.build(elements, onFirstPage=_mentor_360_footer, onLaterPages=_mentor_360_footer)
 

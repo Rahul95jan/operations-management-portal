@@ -754,7 +754,6 @@ export default function Batches() {
         <div className="page-hero">
           <div className="page-hero-blob" />
           <div className="page-hero-content">
-            <div className="page-hero-eyebrow">Operations</div>
             <h1 className="page-hero-title">Batch Management</h1>
             <p className="page-hero-subtitle">
               Create batches, assign mentors, track progress and ensure learner success.

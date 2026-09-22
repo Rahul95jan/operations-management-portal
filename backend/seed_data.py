@@ -1,10 +1,30 @@
+import os
+
 from database import SessionLocal
+from auth import SUPER_ADMIN, hash_password
 from models.user import User
 from models.mentor import Mentor
 from models.batch import Batch
 from models.session import Session
 
 db = SessionLocal()
+
+# Development bootstrap account. It is created only once, never overwrites an
+# existing password, and can be overridden through environment variables.
+admin_username = os.getenv("INITIAL_ADMIN_USERNAME", "admin")
+admin_password = os.getenv("INITIAL_ADMIN_PASSWORD", "admin123")
+admin_email = os.getenv("INITIAL_ADMIN_EMAIL", "admin@operations.local")
+admin = db.query(User).filter(User.username == admin_username).first()
+if not admin:
+    db.add(User(
+        name="Portal Administrator",
+        email=admin_email,
+        username=admin_username,
+        password_hash=hash_password(admin_password),
+        role=SUPER_ADMIN,
+        is_active=True,
+        permissions=[],
+    ))
 
 # ----------------------------
 # USER

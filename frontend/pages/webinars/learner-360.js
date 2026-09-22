@@ -2,7 +2,7 @@ import { useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import ProtectedRoute from "../../components/ProtectedRoute";
 
-const API = "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const inputStyle = { padding: "11px 14px", borderRadius: "10px", border: "1px solid #e2e8f0", fontSize: "14px", background: "#f8fafc", boxSizing: "border-box", outline: "none", flex: 1, minWidth: "260px" };
 

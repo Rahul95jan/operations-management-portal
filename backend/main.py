@@ -23,7 +23,7 @@ from resource_schemas import (
     AppSettingsUpdate,
 )
 from app_settings import get_settings, settings_to_dict
-from services.storage import save_file
+from services.storage import save_file, resolve_path
 from resource_tracking import (
     build_tracking_table,
     refresh_requirement_status,
@@ -149,12 +149,18 @@ def get_db():
 # CORS
 # ==========================
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+if allowed_origins_env:
+    allowed_origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
+else:
+    allowed_origins = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-    ],
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -248,10 +254,11 @@ async def upload_my_photo(file: UploadFile = File(...), user: User = Depends(get
 def get_my_photo(user: User = Depends(get_current_user)):
     from fastapi import HTTPException
 
-    if not user.photo_path or not os.path.exists(user.photo_path):
+    resolved = resolve_path(user.photo_path) if user.photo_path else None
+    if not resolved or not os.path.exists(resolved):
         raise HTTPException(status_code=404, detail="No photo found for this account.")
 
-    return FileResponse(user.photo_path)
+    return FileResponse(resolved)
 
 
 @app.get("/users/{user_id}/photo")
@@ -263,10 +270,11 @@ def get_user_photo(user_id: int, db: Session = Depends(get_auth_db)):
     from fastapi import HTTPException
 
     user = db.query(User).filter(User.id == user_id).first()
-    if not user or not user.photo_path or not os.path.exists(user.photo_path):
+    resolved = resolve_path(user.photo_path) if user and user.photo_path else None
+    if not user or not resolved or not os.path.exists(resolved):
         raise HTTPException(status_code=404, detail="No photo found for this user.")
 
-    return FileResponse(user.photo_path)
+    return FileResponse(resolved)
 
 
 # ==========================
@@ -738,10 +746,11 @@ def get_mentor_photo(mentor_id: int, db: Session = Depends(get_db)):
     from fastapi import HTTPException
 
     mentor = db.query(Mentor).filter(Mentor.id == mentor_id).first()
-    if not mentor or not mentor.photo_path or not os.path.exists(mentor.photo_path):
+    resolved = resolve_path(mentor.photo_path) if mentor and mentor.photo_path else None
+    if not mentor or not resolved or not os.path.exists(resolved):
         raise HTTPException(status_code=404, detail="No photo found for this mentor.")
 
-    return FileResponse(mentor.photo_path)
+    return FileResponse(resolved)
 
 # ==========================
 # BATCHES
@@ -3248,10 +3257,23 @@ def webinars(db: Session = Depends(get_db), stats: bool = False):
 # Zoom Summary
 # ==========================================================
 
-@app.get("/zoom-summary")
-def zoom_summary(db: Session = Depends(get_db)):
+def _zoom_filtered(query, date=None, mentor=None, title=None):
+    """Optional dashboard filters shared by the zoom summary / trend / poll
+    endpoints. With no arguments the query is returned untouched, so existing
+    callers keep getting all-time data."""
+    if date:
+        query = query.filter(ZoomAnalytics.session_date == date)
+    if mentor:
+        query = query.filter(ZoomAnalytics.mentor_name == mentor)
+    if title is not None and title != "":
+        query = query.filter(ZoomAnalytics.webinar_title == title)
+    return query
 
-    row = db.query(
+
+@app.get("/zoom-summary")
+def zoom_summary(date: Optional[str] = None, mentor: Optional[str] = None, title: Optional[str] = None, db: Session = Depends(get_db)):
+
+    row = _zoom_filtered(db.query(
         func.count(ZoomAnalytics.id),
         func.sum(ZoomAnalytics.registered_learners),
         func.sum(ZoomAnalytics.attended_learners),
@@ -3262,7 +3284,7 @@ def zoom_summary(db: Session = Depends(get_db)):
         func.sum(ZoomAnalytics.recording_views),
         func.avg(ZoomAnalytics.poll_response_rate),
         func.avg(ZoomAnalytics.webinar_health_score),
-    ).one()
+    ), date, mentor, title).one()
 
     (
         total_webinars,
@@ -3297,17 +3319,25 @@ def zoom_summary(db: Session = Depends(get_db)):
 # ==========================================================
 
 @app.get("/zoom-attendance-trend")
-def zoom_attendance_trend(db: Session = Depends(get_db)):
+def zoom_attendance_trend(date: Optional[str] = None, mentor: Optional[str] = None, title: Optional[str] = None, db: Session = Depends(get_db)):
 
-    data = db.query(
+    data = _zoom_filtered(db.query(
         ZoomAnalytics.webinar_title,
-        ZoomAnalytics.attendance_rate
-    ).all()
+        ZoomAnalytics.attendance_rate,
+        ZoomAnalytics.registered_learners,
+        ZoomAnalytics.attended_learners,
+        ZoomAnalytics.session_date,
+        ZoomAnalytics.mentor_name,
+    ), date, mentor, title).all()
 
     return [
         {
             "meeting": row.webinar_title,
             "attendance": row.attendance_rate,
+            "registered": row.registered_learners or 0,
+            "attended": row.attended_learners or 0,
+            "date": row.session_date,
+            "mentor": row.mentor_name,
         }
         for row in data
     ]
@@ -3343,15 +3373,15 @@ def zoom_chat_analytics(db: Session = Depends(get_db)):
 # ==========================================================
 
 @app.get("/zoom-poll-analytics")
-def zoom_poll_analytics(db: Session = Depends(get_db)):
+def zoom_poll_analytics(date: Optional[str] = None, mentor: Optional[str] = None, title: Optional[str] = None, db: Session = Depends(get_db)):
 
-    data = db.query(
+    data = _zoom_filtered(db.query(
         ZoomAnalytics.webinar_title,
         ZoomAnalytics.polls_conducted,
         ZoomAnalytics.poll_responses,
         ZoomAnalytics.poll_response_rate,
         ZoomAnalytics.poll_average_rating,
-    ).all()
+    ), date, mentor, title).all()
 
     return [
         {
@@ -3363,6 +3393,73 @@ def zoom_poll_analytics(db: Session = Depends(get_db)):
         }
         for row in data
     ]
+
+
+@app.get("/webinar-analytics/export-excel")
+def webinar_analytics_export_excel(date: Optional[str] = None, mentor: Optional[str] = None, title: Optional[str] = None, db: Session = Depends(get_db)):
+    """Excel version of the Webinar Analytics dashboard, honouring the same
+    Date / Mentor / Webinar filters as the on-screen KPIs and charts."""
+    rows = _zoom_filtered(db.query(ZoomAnalytics), date, mentor, title).order_by(ZoomAnalytics.session_date).all()
+
+    def avg(values):
+        vals = [v for v in values if v is not None]
+        return round(sum(vals) / len(vals), 1) if vals else 0
+
+    health = avg([r.webinar_health_score for r in rows])
+    summary_rows = [
+        {"Metric": "Total Webinars", "Value": len(rows)},
+        {"Metric": "Registered Learners", "Value": sum(r.registered_learners or 0 for r in rows)},
+        {"Metric": "Attended Learners", "Value": sum(r.attended_learners or 0 for r in rows)},
+        {"Metric": "Attendance Rate %", "Value": avg([r.attendance_rate for r in rows])},
+        {"Metric": "Poll Response Rate %", "Value": avg([r.poll_response_rate for r in rows])},
+        {"Metric": "Session Rating", "Value": avg([r.session_rating for r in rows])},
+        {"Metric": "Health Score", "Value": health},
+        {"Metric": "Health Status", "Value": compute_webinar_health_status(health)},
+    ]
+    filter_rows = [
+        {"Filter": "Date", "Value": date or "All Dates"},
+        {"Filter": "Mentor", "Value": mentor or "All Mentors"},
+        {"Filter": "Webinar", "Value": title if title else "All Webinars"},
+        {"Filter": "Generated", "Value": datetime.now().strftime("%d %b %Y %H:%M")},
+    ]
+    attendance_rows = [{
+        "Webinar": r.webinar_title, "Mentor": r.mentor_name, "Date": r.session_date,
+        "Registered": r.registered_learners or 0, "Attended": r.attended_learners or 0,
+        "Attendance %": r.attendance_rate, "No Shows": r.no_show_learners,
+    } for r in rows]
+    poll_rows = [{
+        "Webinar": r.webinar_title, "Polls Conducted": r.polls_conducted, "Poll Responses": r.poll_responses,
+        "Response Rate %": r.poll_response_rate, "Average Rating": r.poll_average_rating,
+        "Highest Rated Poll": r.highest_rated_poll,
+    } for r in rows]
+    health_rows = [{
+        "Webinar": r.webinar_title, "Engagement Score": r.engagement_score, "Session Rating": r.session_rating,
+        "Health Score": r.webinar_health_score, "Health Status": compute_webinar_health_status(r.webinar_health_score or 0),
+    } for r in rows]
+
+    file_name = f"Webinar_Analytics_{datetime.utcnow().strftime('%Y-%m-%d')}.xlsx"
+
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
+        for sheet_name, sheet_rows in [
+            ("Filters Applied", filter_rows), ("Summary", summary_rows), ("Attendance", attendance_rows),
+            ("Polls", poll_rows), ("Health", health_rows),
+        ]:
+            df = pd.DataFrame(sheet_rows) if sheet_rows else pd.DataFrame({"Info": ["No data for the selected filters."]})
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            ws = writer.sheets[sheet_name]
+            for cell in ws[1]:
+                cell.fill = PatternFill("solid", fgColor="0B1220")
+                cell.font = Font(bold=True, color="F5A623")
+            ws.freeze_panes = "A2"
+            for idx, col in enumerate(df.columns, start=1):
+                longest = max([len(str(col))] + [len(str(v)) for v in df[col].tolist()])
+                ws.column_dimensions[get_column_letter(idx)].width = min(max(longest + 3, 12), 60)
+
+    return FileResponse(file_name, filename=file_name, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 
 @app.get("/webinar-report/{session_id}")
 def webinar_report(session_id: int, db: Session = Depends(get_db)):
@@ -5220,7 +5317,7 @@ def resource_analytics_mentor_heatmap(weeks: int = 4):
 # Mentor 360 — Mentor Business Performance
 # ----------------------------------------------------------
 
-def _mentor_360_filter_description(course_name, batch_name, mentor_name, date_from, date_to):
+def _mentor_360_filter_description(course_name, batch_name, mentor_name, date_from, date_to, classification=None, risk=None):
     parts = []
     if course_name:
         parts.append(f"Course = {course_name}")
@@ -5228,11 +5325,74 @@ def _mentor_360_filter_description(course_name, batch_name, mentor_name, date_fr
         parts.append(f"Batch = {batch_name}")
     if mentor_name:
         parts.append(f"Mentor = {mentor_name}")
+    if classification:
+        parts.append(f"Performance = {classification}")
+    if risk:
+        parts.append(f"Risk = {risk}")
     if date_from:
         parts.append(f"From {date_from}")
     if date_to:
         parts.append(f"To {date_to}")
     return "; ".join(parts) if parts else "All data (no filters applied)"
+
+
+# Same dimension list and labels the Mentor 360 page uses for its
+# "Average Score by Dimension" chart, so exports match the portal.
+_MENTOR_360_DIMENSIONS = [
+    ("Delivery", "delivery_performance"),
+    ("Attendance", "attendance_engagement"),
+    ("Learner Exp.", "learner_experience"),
+    ("Quality", "session_quality"),
+    ("Resources", "resource_compliance"),
+    ("Reliability", "reliability"),
+    ("Productivity", "productivity"),
+    ("Cost Eff.", "cost_efficiency"),
+]
+
+
+def _mentor_360_quadrant(x, y):
+    # Thresholds mirror PerformanceMatrix.jsx on the frontend.
+    if x >= 75 and y >= 75:
+        return "Top Performer"
+    if x >= 75:
+        return "Quality Concern"
+    if y >= 75:
+        return "Operational Concern"
+    return "Critical"
+
+
+def _mentor_360_report_analytics(rows):
+    """Everything the Mentor 360 page charts, computed from the same filtered
+    rows so the PDF/Excel exports show exactly what is on screen."""
+    classification_colors = {"Excellent": "#16a34a", "Strong Performer": "#2563eb", "Needs Attention": "#f59e0b", "At Risk": "#ea580c", "Critical": "#dc2626"}
+    risk_colors = {"Low": "#16a34a", "Medium": "#f59e0b", "High": "#ea580c", "Critical": "#dc2626"}
+
+    classification = [
+        {"label": label, "count": sum(1 for r in rows if r["classification"] == label), "color": color}
+        for label, color in classification_colors.items()
+    ]
+    risk = [
+        {"label": label, "count": sum(1 for r in rows if r["risk"] == label), "color": color}
+        for label, color in risk_colors.items()
+    ]
+
+    dimension_averages = []
+    for label, key in _MENTOR_360_DIMENSIONS:
+        scores = [r[key]["score"] for r in rows if r.get(key) and isinstance(r[key].get("score"), (int, float))]
+        if scores:
+            dimension_averages.append({"name": label, "value": round(sum(scores) / len(scores), 1)})
+
+    matrix = []
+    for r in rows:
+        d, le = r.get("delivery_performance"), r.get("learner_experience")
+        x = d["score"] if d and isinstance(d.get("score"), (int, float)) else None
+        y = le["score"] if le and isinstance(le.get("score"), (int, float)) else None
+        if x is None or y is None:
+            continue
+        served = (r.get("productivity") or {}).get("learners_served") or 1
+        matrix.append({"mentor_name": r["mentor_name"], "x": x, "y": y, "learners_served": served, "quadrant": _mentor_360_quadrant(x, y)})
+
+    return {"classification": classification, "risk": risk, "dimension_averages": dimension_averages, "matrix": matrix}
 
 
 def _mentor_360_scorecard_filtered(db, course_name, batch_name, mentor_name, date_from, date_to, classification=None, risk=None):
@@ -5405,15 +5565,85 @@ def mentor_360_export_excel(
             "Total Cost": g(r, "cost_efficiency", "total_cost"),
         } for r in rows if r.get("productivity") or r.get("cost_efficiency")]
 
+        analytics = _mentor_360_report_analytics(rows)
+        filter_desc = _mentor_360_filter_description(course_name, batch_name, mentor_name, date_from, date_to, classification, risk)
+
+        applied = [
+            ("Course", course_name), ("Batch", batch_name), ("Mentor", mentor_name),
+            ("Performance", classification), ("Risk", risk), ("Date From", date_from), ("Date To", date_to),
+        ]
+        filters_rows = [{"Filter": k, "Value": v or "All"} for k, v in applied]
+        filters_rows.append({"Filter": "Scope", "Value": filter_desc})
+        filters_rows.append({"Filter": "Generated", "Value": datetime.now().strftime("%d %b %Y %H:%M")})
+
+        # Same tiles, in the same order, as the KPI row on the Mentor 360 page.
+        summary_rows = [
+            {"Metric": "Total Mentors", "Value": summary["total_mentors"]},
+            {"Metric": "Avg Business Score", "Value": summary["average_score"]},
+            {"Metric": "Excellent", "Value": summary["excellent"]},
+            {"Metric": "Strong Performers", "Value": summary["strong_performer"]},
+            {"Metric": "Needs Attention", "Value": summary["needs_attention"]},
+            {"Metric": "At Risk", "Value": summary["at_risk"]},
+            {"Metric": "Critical", "Value": summary["critical"]},
+        ]
+
+        classification_rows = [{"Performance Classification": c["label"], "Mentors": c["count"]} for c in analytics["classification"]]
+        risk_rows = [{"Risk Level": c["label"], "Mentors": c["count"]} for c in analytics["risk"]]
+        dimension_avg_rows = [{"Dimension": d["name"], "Average Score": d["value"]} for d in analytics["dimension_averages"]]
+        matrix_rows = [{
+            "Mentor": m["mentor_name"],
+            "Delivery Performance (X)": m["x"],
+            "Learner Experience (Y)": m["y"],
+            "Learners Served (size)": m["learners_served"],
+            "Quadrant": m["quadrant"],
+        } for m in analytics["matrix"]]
+
+        attendance_rows = [{
+            "Mentor": r["mentor_name"],
+            "Avg Attendance %": g(r, "attendance_engagement", "avg_attendance_percent"),
+            "Registered Learners": g(r, "attendance_engagement", "registered_learners"),
+            "Attended Learners": g(r, "attendance_engagement", "attended_learners"),
+            "Low Attendance Sessions": g(r, "attendance_engagement", "low_attendance_sessions"),
+            "Avg Session Feedback": g(r, "session_quality", "avg_session_feedback_score"),
+            "Quality Score": g(r, "session_quality", "score"),
+        } for r in rows if r.get("attendance_engagement") or r.get("session_quality")]
+
         file_name = f"Mentor_Performance_Report_{datetime.utcnow().strftime('%Y-%m-%d')}.xlsx"
 
+        sheets = [
+            ("Filters Applied", filters_rows),
+            ("Executive Summary", summary_rows),
+            ("Performance Classification", classification_rows),
+            ("Risk Distribution", risk_rows),
+            ("Dimension Averages", dimension_avg_rows),
+            ("Performance Matrix", matrix_rows),
+            ("Mentor Scorecard", scorecard_rows),
+            ("Delivery Performance", delivery_rows),
+            ("Attendance & Quality", attendance_rows),
+            ("Learner Experience", learner_rows),
+            ("Resource Compliance", resource_rows),
+            ("Productivity & Cost", productivity_cost_rows),
+        ]
+
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+
+        header_fill = PatternFill("solid", fgColor="0B1220")
+        header_font = Font(bold=True, color="F5A623")
+
         with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
-            pd.DataFrame([summary]).to_excel(writer, sheet_name="Executive Summary", index=False)
-            pd.DataFrame(scorecard_rows).to_excel(writer, sheet_name="Mentor Scorecard", index=False)
-            pd.DataFrame(delivery_rows).to_excel(writer, sheet_name="Delivery Performance", index=False)
-            pd.DataFrame(learner_rows).to_excel(writer, sheet_name="Learner Experience", index=False)
-            pd.DataFrame(resource_rows).to_excel(writer, sheet_name="Resource Compliance", index=False)
-            pd.DataFrame(productivity_cost_rows).to_excel(writer, sheet_name="Productivity & Cost", index=False)
+            for sheet_name, sheet_rows in sheets:
+                df = pd.DataFrame(sheet_rows) if sheet_rows else pd.DataFrame({"Info": ["No data for the selected filters."]})
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+                ws = writer.sheets[sheet_name]
+                for cell in ws[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = Alignment(vertical="center")
+                ws.freeze_panes = "A2"
+                for idx, col in enumerate(df.columns, start=1):
+                    longest = max([len(str(col))] + [len(str(v)) for v in df[col].tolist()])
+                    ws.column_dimensions[get_column_letter(idx)].width = min(max(longest + 3, 12), 60)
 
         return FileResponse(
             file_name,
@@ -5441,8 +5671,9 @@ def mentor_360_export_pdf(
         data = {
             "executive_summary": _mentor_360_executive_summary(rows),
             "scorecard": rows,
+            "analytics": _mentor_360_report_analytics(rows),
         }
-        filter_desc = _mentor_360_filter_description(course_name, batch_name, mentor_name, date_from, date_to)
+        filter_desc = _mentor_360_filter_description(course_name, batch_name, mentor_name, date_from, date_to, classification, risk)
 
         pdf_path = generate_mentor_performance_report(data, filter_desc)
 

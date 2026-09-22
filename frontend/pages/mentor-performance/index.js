@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import Sidebar from "../../components/Sidebar";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import OperationsKPI from "../../components/analytics/OperationsKPI";
@@ -7,6 +6,19 @@ import BarChartCard from "../../components/resources/analytics/BarChartCard";
 import BusinessScoreBadge, { RiskBadge } from "../../components/mentorPerformance/BusinessScoreBadge";
 import PerformanceMatrix from "../../components/mentorPerformance/PerformanceMatrix";
 import BreakdownDonutChart from "../../components/mentorPerformance/BreakdownDonutChart";
+import MentorDetailView from "../../components/mentorPerformance/MentorDetailView";
+import {
+  Users,
+  Gauge,
+  CheckCircle2,
+  TrendingUp,
+  AlertTriangle,
+  XCircle,
+  SlidersHorizontal,
+  PieChart as PieChartIcon,
+  Trophy,
+  X as XIcon,
+} from "lucide-react";
 
 const API = "http://127.0.0.1:8000";
 
@@ -23,6 +35,27 @@ const EMPTY_FILTERS = {
 const CLASSIFICATIONS = ["Excellent", "Strong Performer", "Needs Attention", "At Risk", "Critical"];
 const RISK_LEVELS = ["Low", "Medium", "High", "Critical"];
 
+const FILTER_KEYS = ["course_name", "batch_name", "mentor_name", "date_from", "date_to", "classification", "risk"];
+
+const SCORECARD_COLUMNS = [
+  "Mentor",
+  "Overall Score",
+  "Delivery",
+  "Learner Experience",
+  "Quality",
+  "Reliability",
+  "Resources",
+  "Attendance",
+  "Productivity",
+  "Cost",
+  "Risk",
+];
+
+// Shared Tailwind recipes for the controls in the filter bar — keeps the
+// select and the date inputs visually identical.
+const FIELD_CLASS =
+  "rounded-[10px] border border-slate-200 bg-slate-50 px-2.5 py-[9px] text-[12.5px] text-slate-900 shadow-[inset_0_1px_1px_rgba(15,23,42,0.02)] outline-none focus:border-[#f5a623]";
+
 function unique(list) {
   return [...new Set(list.filter(Boolean))].sort();
 }
@@ -36,13 +69,18 @@ function buildQuery(filters, keys) {
   return qs ? `?${qs}` : "";
 }
 
-const FILTER_KEYS = ["course_name", "batch_name", "mentor_name", "date_from", "date_to", "classification", "risk"];
+function dim(row, key, field = "score") {
+  const d = row[key];
+  if (!d) return "N/A";
+  const v = d[field];
+  return v === null || v === undefined ? "N/A" : v;
+}
 
 function FilterSelect({ label, value, options, onChange }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-      <label style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>{label}</label>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className="filter-select">
+    <div className="flex flex-col gap-1.5">
+      <label className="text-[12px] font-bold text-slate-500">{label}</label>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={`${FIELD_CLASS} min-w-[150px]`}>
         <option value="">All {label}s</option>
         {options.map((opt) => (
           <option key={opt} value={opt}>
@@ -54,11 +92,28 @@ function FilterSelect({ label, value, options, onChange }) {
   );
 }
 
-function dim(row, key, field = "score") {
-  const d = row[key];
-  if (!d) return "N/A";
-  const v = d[field];
-  return v === null || v === undefined ? "N/A" : v;
+function DateField({ label, value, onChange }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-[11px] font-bold uppercase tracking-[0.03em] text-slate-500">{label}</label>
+      <input type="date" value={value} onChange={(e) => onChange(e.target.value)} className={FIELD_CLASS} />
+    </div>
+  );
+}
+
+// Icon badge + title used as the header of every card on this page.
+function CardHeader({ icon: Icon, title, tint = "rgba(245,166,35,0.12)", color = "#b7791f", className = "" }) {
+  return (
+    <div className={`flex items-center gap-2.5 ${className}`}>
+      <span
+        className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[10px] border border-[rgba(245,166,35,0.14)]"
+        style={{ background: tint, color }}
+      >
+        <Icon size={15} strokeWidth={2.2} />
+      </span>
+      <h2 className="m-0 text-[14.5px] font-bold text-slate-800">{title}</h2>
+    </div>
+  );
 }
 
 export default function MentorPerformancePage() {
@@ -167,86 +222,129 @@ export default function MentorPerformancePage() {
       <>
         <Sidebar />
 
-        <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
-          <div className="page-hero">
-            <div className="page-hero-blob" />
-            <div className="page-hero-content">
-              <div className="page-hero-eyebrow">Operations</div>
-              <h1 className="page-hero-title">Mentor Business Performance</h1>
-              <p className="page-hero-subtitle">
+        <div className="ml-[var(--om-sidebar-width,280px)] min-h-screen bg-[#eff4f9] px-[30px] pb-[60px] pt-7 transition-[margin-left] duration-[250ms] ease-out">
+          {/* Hero */}
+          <div data-keep-colors className="relative mb-4 flex items-center justify-between gap-6 overflow-hidden rounded-[18px] border border-[rgba(245,166,35,0.12)] bg-[linear-gradient(120deg,#0b1220_0%,#111c33_58%,#0b1220_100%)] bg-[length:200%_200%] px-[30px] py-[26px] shadow-[0_18px_36px_-20px_rgba(11,18,32,0.7)] animate-hero-shift">
+            <div className="pointer-events-none absolute -top-24 right-[186px] h-[270px] w-[270px] rounded-full bg-[rgba(245,166,35,0.32)] blur-[70px] animate-hero-float" />
+            <div className="pointer-events-none absolute bottom-[-110px] right-[-80px] top-[10px] h-[260px] w-[260px] rotate-[24deg] rounded-full border border-[rgba(245,166,35,0.18)] border-b-transparent border-l-transparent" />
+
+            <div className="relative z-[1] flex-1">
+              <h1 className="m-0 mb-1.5 text-[25px] font-extrabold leading-[1.15] text-slate-50">
+                Mentor Business Performance
+              </h1>
+              <p className="m-0 max-w-[560px] text-[13px] leading-[1.5] text-slate-300">
                 Monitor mentor delivery, learner experience, operational reliability and business performance.
               </p>
             </div>
-            <div className="page-hero-stat">
-              <div className="page-hero-stat-value">{kpis ? kpis.average_score : "—"}</div>
-              <div className="page-hero-stat-label">Avg Business Score</div>
+
+            <div className="relative z-[1] min-w-[176px] shrink-0 rounded-[14px] border border-white/[0.14] bg-white/5 px-[18px] py-4 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+              <div className="text-[30px] font-extrabold leading-none text-[#f5a623]">{kpis ? kpis.average_score : "—"}</div>
+              <div className="mt-1.5 text-[11px] uppercase tracking-[0.12em] text-slate-300">Avg Business Score</div>
             </div>
           </div>
 
           {/* Filter bar */}
-          <div className="card filter-card">
-            <FilterSelect label="Course" value={filters.course_name} options={filterOptions.course_name} onChange={(v) => handleFilterChange("course_name", v)} />
-            <FilterSelect label="Batch" value={filters.batch_name} options={filterOptions.batch_name} onChange={(v) => handleFilterChange("batch_name", v)} />
-            <FilterSelect label="Mentor" value={filters.mentor_name} options={filterOptions.mentor_name} onChange={(v) => handleFilterChange("mentor_name", v)} />
-            <FilterSelect label="Performance" value={filters.classification} options={CLASSIFICATIONS} onChange={(v) => handleFilterChange("classification", v)} />
-            <FilterSelect label="Risk" value={filters.risk} options={RISK_LEVELS} onChange={(v) => handleFilterChange("risk", v)} />
+          <div className="mb-3.5 rounded-2xl border border-[#e8edf5] bg-white px-[18px] py-4 shadow-[0_2px_10px_rgba(15,23,42,0.05)]">
+            <CardHeader icon={SlidersHorizontal} title="Filters" className="mb-3.5" />
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>Date From</label>
-              <input type="date" value={filters.date_from} onChange={(e) => handleFilterChange("date_from", e.target.value)} className="date-input" />
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>Date To</label>
-              <input type="date" value={filters.date_to} onChange={(e) => handleFilterChange("date_to", e.target.value)} className="date-input" />
-            </div>
+            <div className="flex flex-wrap items-end gap-3.5">
+              <FilterSelect label="Course" value={filters.course_name} options={filterOptions.course_name} onChange={(v) => handleFilterChange("course_name", v)} />
+              <FilterSelect label="Batch" value={filters.batch_name} options={filterOptions.batch_name} onChange={(v) => handleFilterChange("batch_name", v)} />
+              <FilterSelect label="Mentor" value={filters.mentor_name} options={filterOptions.mentor_name} onChange={(v) => handleFilterChange("mentor_name", v)} />
+              <FilterSelect label="Performance" value={filters.classification} options={CLASSIFICATIONS} onChange={(v) => handleFilterChange("classification", v)} />
+              <FilterSelect label="Risk" value={filters.risk} options={RISK_LEVELS} onChange={(v) => handleFilterChange("risk", v)} />
 
-            {hasActiveFilter && (
-              <button onClick={clearFilters} className="btn-clear">
-                ✕ Clear Filters
-              </button>
-            )}
+              <DateField label="Date From" value={filters.date_from} onChange={(v) => handleFilterChange("date_from", v)} />
+              <DateField label="Date To" value={filters.date_to} onChange={(v) => handleFilterChange("date_to", v)} />
 
-            <div className="export-actions">
-              {hasData ? (
-                <>
-                  <a href={`${API}/mentor-360/export-excel${exportQs}`} target="_blank" rel="noreferrer" className="btn-export btn-export-excel">
-                    ⬇ Export Excel
-                  </a>
-                  <a href={`${API}/mentor-360/export-pdf${exportQs}`} target="_blank" rel="noreferrer" className="btn-export btn-export-pdf">
-                    ⬇ Export PDF
-                  </a>
-                </>
-              ) : (
-                <span className="export-disabled">No data available for the selected filters.</span>
+              {hasActiveFilter && (
+                <button
+                  onClick={clearFilters}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] border-[1.5px] border-[#dfe7f0] bg-slate-50 px-3.5 py-[9px] text-[12.5px] font-bold text-slate-700 transition-colors hover:border-[#d5deea] hover:bg-[#eef2f7]"
+                >
+                  <XIcon size={13} strokeWidth={2.5} /> Clear Filters
+                </button>
               )}
+
+              <div className="ml-auto flex items-center gap-2.5">
+                {hasData ? (
+                  <>
+                    <a
+                      href={`${API}/mentor-360/export-excel${exportQs}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center justify-center rounded-[10px] border border-transparent bg-[#14b86a] px-3.5 py-[9px] text-[12.5px] font-bold text-white no-underline shadow-[0_10px_18px_-12px_rgba(20,184,106,0.7)] transition-transform hover:-translate-y-px"
+                    >
+                      ⬇ Export Excel
+                    </a>
+                    <a
+                      href={`${API}/mentor-360/export-pdf${exportQs}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center justify-center rounded-[10px] border border-[rgba(250,204,21,0.2)] bg-[linear-gradient(120deg,#0f172a,#1e293b)] px-3.5 py-[9px] text-[12.5px] font-bold text-[#facc15] no-underline shadow-[0_12px_18px_-12px_rgba(15,23,42,0.8)] transition-transform hover:-translate-y-px"
+                    >
+                      ⬇ Export PDF
+                    </a>
+                  </>
+                ) : (
+                  <span className="text-[12.5px] text-slate-400">No data available for the selected filters.</span>
+                )}
+              </div>
             </div>
           </div>
 
           {/* Active filter chips */}
           {hasActiveFilter && (
-            <div className="chips">
+            <div className="mb-3.5 mt-2.5 flex flex-wrap gap-2">
               {FILTER_KEYS.filter((k) => filters[k]).map((k) => (
-                <span key={k} className="chip">
+                <span
+                  key={k}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(41,77,154,0.06)] bg-[#eef4ff] px-2.5 py-1.5 text-[12px] font-semibold text-[#294d9a]"
+                >
                   {filters[k]}
-                  <button onClick={() => handleFilterChange(k, "")}>×</button>
+                  <button onClick={() => handleFilterChange(k, "")} className="cursor-pointer border-none bg-transparent p-0 text-[14px] leading-none text-[#294d9a]">
+                    ×
+                  </button>
                 </span>
               ))}
             </div>
           )}
 
+          {filters.mentor_name ? (
+            <>
+              <button
+                onClick={() => handleFilterChange("mentor_name", "")}
+                className="mb-3.5 mt-3.5 inline-flex cursor-pointer items-center gap-1.5 border-none bg-transparent p-0 text-[13px] font-semibold text-slate-600 hover:underline"
+              >
+                ← All mentors
+              </button>
+              <MentorDetailView
+                mentorName={filters.mentor_name}
+                embedded
+                filters={{
+                  course_name: filters.course_name,
+                  batch_name: filters.batch_name,
+                  date_from: filters.date_from,
+                  date_to: filters.date_to,
+                }}
+              />
+            </>
+          ) : (
+            <>
           {/* KPI row */}
-          <div className="kpi-grid">
-            <OperationsKPI title="Total Mentors" value={kpis ? kpis.total_mentors : "—"} color="#0f172a" />
-            <OperationsKPI title="Avg Business Score" value={kpis ? kpis.average_score : "—"} color="#f59e0b" />
-            <OperationsKPI title="Excellent" value={kpis ? kpis.excellent : "—"} color="#16a34a" />
-            <OperationsKPI title="Strong Performers" value={kpis ? kpis.strong_performer : "—"} color="#2563eb" />
-            <OperationsKPI title="At Risk" value={kpis ? kpis.at_risk : "—"} color="#ea580c" />
-            <OperationsKPI title="Critical" value={kpis ? kpis.critical : "—"} color="#dc2626" />
+          <div className="mb-3.5 grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
+            <OperationsKPI icon={Users} title="Total Mentors" value={kpis ? kpis.total_mentors : "—"} color="#0f172a" />
+            <OperationsKPI icon={Gauge} title="Avg Business Score" value={kpis ? kpis.average_score : "—"} color="#f59e0b" />
+            <OperationsKPI icon={CheckCircle2} title="Excellent" value={kpis ? kpis.excellent : "—"} color="#16a34a" />
+            <OperationsKPI icon={TrendingUp} title="Strong Performers" value={kpis ? kpis.strong_performer : "—"} color="#2563eb" />
+            <OperationsKPI icon={AlertTriangle} title="At Risk" value={kpis ? kpis.at_risk : "—"} color="#ea580c" />
+            <OperationsKPI icon={XCircle} title="Critical" value={kpis ? kpis.critical : "—"} color="#dc2626" />
           </div>
 
-          <div className="chart-row">
-            <BreakdownDonutChart title="Performance Classification" data={classificationData} />
-            <BreakdownDonutChart title="Risk Distribution" data={riskData} donut={false} />
+          {/* Distribution donuts */}
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-3.5">
+            <BreakdownDonutChart title="Performance Classification" data={classificationData} compact icon={PieChartIcon} iconColor="#f59e0b" />
+            <BreakdownDonutChart title="Risk Distribution" data={riskData} donut={false} compact icon={AlertTriangle} iconColor="#dc2626" />
           </div>
 
           {dimensionAverages.length > 0 && (
@@ -262,40 +360,63 @@ export default function MentorPerformancePage() {
 
           <PerformanceMatrix data={matrixData} />
 
-          <div className="card table-card">
-            <h2 className="card-title">Mentor Performance Scorecard</h2>
+          {/* Scorecard table */}
+          <div className="mb-3.5 rounded-2xl border border-[#e8edf5] bg-white px-[18px] py-4 shadow-[0_2px_10px_rgba(15,23,42,0.05)]">
+            <CardHeader icon={Trophy} title="Mentor Performance Scorecard" className="mb-3.5" />
+
             {mentors === null ? (
-              <div className="empty-state">Loading…</div>
+              <div className="px-5 py-10 text-center text-sm text-slate-400">Loading…</div>
             ) : mentors.length === 0 ? (
-              <div className="empty-state">No data available for the selected filters.</div>
+              <div className="px-5 py-10 text-center text-sm text-slate-400">No data available for the selected filters.</div>
             ) : (
-              <div className="table-wrap">
-                <table className="styled-table" style={{ minWidth: "1100px" }}>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1100px] border-collapse text-[12.5px]">
                   <thead>
                     <tr>
-                      {["Mentor", "Overall Score", "Delivery", "Learner Experience", "Quality", "Reliability", "Resources", "Attendance", "Productivity", "Cost", "Risk"].map((h) => (
-                        <th key={h}>{h}</th>
+                      {SCORECARD_COLUMNS.map((h) => (
+                        <th
+                          key={h}
+                          className="whitespace-nowrap border-b-2 border-[#eaf0f7] px-3 py-2.5 text-left text-[10.5px] font-extrabold uppercase tracking-[0.06em] text-slate-500"
+                        >
+                          {h}
+                        </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {mentors.map((m) => (
-                      <tr key={m.mentor_name}>
-                        <td className="strong">
-                          <Link href={`/mentor-performance/${encodeURIComponent(m.mentor_name)}`}>{m.mentor_name}</Link>
+                      <tr key={m.mentor_name} className="transition-colors hover:bg-slate-50/70">
+                        <td className="whitespace-nowrap border-b border-[#edf2f7] px-3 py-2.5 font-bold text-slate-800">
+                          <button
+                            onClick={() => {
+                              handleFilterChange("mentor_name", m.mentor_name);
+                              window.scrollTo({ top: 0, behavior: "smooth" });
+                            }}
+                            className="cursor-pointer border-none bg-transparent p-0 text-[12.5px] font-bold text-slate-900 hover:underline"
+                          >
+                            {m.mentor_name}
+                          </button>
                         </td>
-                        <td className="strong">
-                          {m.overall_score} <BusinessScoreBadge classification={m.classification} />
+                        <td className="whitespace-nowrap border-b border-[#edf2f7] px-3 py-2.5 font-bold text-slate-800">
+                          <span className="mr-2 align-middle">{m.overall_score}</span>
+                          <BusinessScoreBadge classification={m.classification} />
                         </td>
-                        <td>{dim(m, "delivery_performance")}{typeof m.delivery_performance?.score === "number" ? "%" : ""}</td>
-                        <td>{dim(m, "learner_experience")}{typeof m.learner_experience?.score === "number" ? "%" : ""}</td>
-                        <td>{dim(m, "session_quality")}{typeof m.session_quality?.score === "number" ? "%" : ""}</td>
-                        <td>{dim(m, "reliability")}{typeof m.reliability?.score === "number" ? "%" : ""}</td>
-                        <td>{dim(m, "resource_compliance")}{typeof m.resource_compliance?.score === "number" ? "%" : ""}</td>
-                        <td>{dim(m, "attendance_engagement")}{typeof m.attendance_engagement?.score === "number" ? "%" : ""}</td>
-                        <td>{dim(m, "productivity")}{typeof m.productivity?.score === "number" ? "%" : ""}</td>
-                        <td>{dim(m, "cost_efficiency")}{typeof m.cost_efficiency?.score === "number" ? "%" : ""}</td>
-                        <td>
+                        {[
+                          "delivery_performance",
+                          "learner_experience",
+                          "session_quality",
+                          "reliability",
+                          "resource_compliance",
+                          "attendance_engagement",
+                          "productivity",
+                          "cost_efficiency",
+                        ].map((key) => (
+                          <td key={key} className="whitespace-nowrap border-b border-[#edf2f7] px-3 py-2.5 text-slate-800">
+                            {dim(m, key)}
+                            {typeof m[key]?.score === "number" ? "%" : ""}
+                          </td>
+                        ))}
+                        <td className="whitespace-nowrap border-b border-[#edf2f7] px-3 py-2.5 text-slate-800">
                           <RiskBadge risk={m.risk} />
                         </td>
                       </tr>
@@ -305,188 +426,9 @@ export default function MentorPerformancePage() {
               </div>
             )}
           </div>
+            </>
+          )}
         </div>
-
-        <style jsx>{`
-          .page-hero {
-            position: relative;
-            overflow: hidden;
-            border-radius: 18px;
-            padding: 30px 32px;
-            margin-bottom: 24px;
-            background: linear-gradient(120deg, #0f172a 0%, #1e293b 60%, #0f172a 100%);
-            background-size: 200% 200%;
-            animation: heroShift 12s ease infinite;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 20px;
-            box-shadow: 0 16px 32px -18px rgba(15, 23, 42, 0.55);
-          }
-          .page-hero-blob {
-            position: absolute;
-            width: 220px;
-            height: 220px;
-            border-radius: 50%;
-            background: #f59e0b;
-            filter: blur(60px);
-            opacity: 0.3;
-            top: -80px;
-            right: 160px;
-            animation: float 9s ease-in-out infinite;
-          }
-          .page-hero-content { position: relative; z-index: 1; }
-          .page-hero-eyebrow {
-            display: inline-block;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: #fbbf24;
-            background: rgba(251, 191, 36, 0.12);
-            border: 1px solid rgba(251, 191, 36, 0.3);
-            padding: 5px 10px;
-            border-radius: 999px;
-            margin-bottom: 10px;
-          }
-          .page-hero-title { font-size: 26px; font-weight: 800; color: #f8fafc; margin: 0 0 6px; }
-          .page-hero-subtitle { color: #94a3b8; font-size: 14px; margin: 0; }
-          .page-hero-stat {
-            position: relative;
-            z-index: 1;
-            text-align: center;
-            padding: 14px 26px;
-            border-radius: 14px;
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            flex-shrink: 0;
-          }
-          .page-hero-stat-value { font-size: 26px; font-weight: 800; color: #fbbf24; }
-          .page-hero-stat-label { font-size: 11px; color: #94a3b8; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
-
-          .card {
-            background: #ffffff;
-            border-radius: 16px;
-            padding: 22px 24px;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
-            border: 1px solid #eef2f7;
-            margin-bottom: 24px;
-          }
-
-          .filter-card { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
-
-          .filter-select {
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            padding: 10px 12px;
-            font-size: 14px;
-            min-width: 160px;
-            background: #f8fafc;
-            outline: none;
-          }
-
-          .date-input {
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            padding: 10px 12px;
-            font-size: 14px;
-            background: #f8fafc;
-            outline: none;
-          }
-
-          .btn-clear {
-            background: #f1f5f9;
-            color: #334155;
-            border: 1.5px solid #e2e8f0;
-            border-radius: 10px;
-            padding: 10px 16px;
-            font-weight: 700;
-            font-size: 13px;
-            cursor: pointer;
-          }
-          .btn-clear:hover { background: #e2e8f0; }
-
-          .export-actions { display: flex; gap: 10px; margin-left: auto; align-items: center; }
-
-          .export-disabled { color: #94a3b8; font-size: 13px; }
-
-          .btn-export {
-            display: inline-block;
-            text-decoration: none;
-            border-radius: 10px;
-            padding: 10px 16px;
-            font-weight: 700;
-            font-size: 13px;
-            cursor: pointer;
-            transition: transform 0.15s ease, box-shadow 0.15s ease;
-          }
-          .btn-export:hover { transform: translateY(-1px); }
-          .btn-export-excel { background: #16a34a; color: #fff; }
-          .btn-export-excel:hover { box-shadow: 0 8px 18px -8px rgba(22, 163, 74, 0.6); }
-          .btn-export-pdf { background: linear-gradient(120deg, #0f172a, #1e293b); color: #facc15; }
-          .btn-export-pdf:hover { box-shadow: 0 8px 18px -8px rgba(15, 23, 42, 0.6); }
-
-          .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 0; }
-          .chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: #eef2ff;
-            color: #3730a3;
-            padding: 5px 10px;
-            border-radius: 999px;
-            font-size: 12px;
-            font-weight: 600;
-          }
-          .chip button {
-            background: none;
-            border: none;
-            color: #3730a3;
-            cursor: pointer;
-            font-size: 14px;
-            line-height: 1;
-            padding: 0;
-          }
-
-          .kpi-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 16px;
-            margin: 20px 0 24px;
-          }
-
-          .chart-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 20px;
-          }
-
-          .table-card { padding: 20px; }
-          .card-title { margin: 0 0 14px; font-size: 17px; color: #1e293b; }
-
-          .table-wrap { overflow-x: auto; }
-          .styled-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-          .styled-table thead th {
-            text-align: left;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            color: #94a3b8;
-            font-weight: 700;
-            padding: 10px 12px;
-            border-bottom: 2px solid #f1f5f9;
-            white-space: nowrap;
-          }
-          .styled-table td { padding: 12px; border-bottom: 1px solid #f1f5f9; color: #1e293b; white-space: nowrap; }
-          .styled-table td.strong { font-weight: 700; }
-          .styled-table td a { color: #0f172a; text-decoration: none; }
-          .styled-table td a:hover { text-decoration: underline; }
-
-          .empty-state { text-align: center; padding: 40px 20px; color: #94a3b8; font-size: 14px; }
-
-          @keyframes heroShift { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-          @keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(16px); } }
-        `}</style>
       </>
     </ProtectedRoute>
   );

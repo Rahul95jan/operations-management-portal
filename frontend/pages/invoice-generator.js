@@ -15,7 +15,7 @@ import { Bar, Doughnut } from "react-chartjs-2";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend);
 
-const API = "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const ICON_PATHS = {
   search: (
@@ -631,13 +631,7 @@ export default function InvoiceGenerator() {
         >
           {/* Top bar — scoped to this page only */}
           <div className="top-bar">
-            <div className="top-bar-left">
-              <button className="top-bar-menu-btn"><Icon name="menu" size={18} color="#475569" /></button>
-              <div className="top-bar-search">
-                <span className="search-icon"><Icon name="search" size={14} color="#94a3b8" /></span>
-                <input type="text" placeholder="Search anything (mentors, batches, invoices...)" className="styled-input" style={{ ...inputStyle, width: "320px", paddingLeft: "34px" }} />
-              </div>
-            </div>
+            <div className="top-bar-left" />
             <div className="top-bar-right">
               <button className="top-bar-bell">
                 <Icon name="bell" size={18} color="#1e293b" />
@@ -1076,8 +1070,6 @@ export default function InvoiceGenerator() {
         <style jsx>{`
           .top-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 4px 2px; margin-bottom: 20px; flex-wrap: wrap; }
           .top-bar-left { display: flex; align-items: center; gap: 14px; flex: 1; }
-          .top-bar-menu-btn { background: transparent; border: none; cursor: pointer; padding: 6px; }
-          .top-bar-search { position: relative; }
           .top-bar-right { display: flex; align-items: center; gap: 16px; }
           .top-bar-bell { position: relative; background: transparent; border: none; border-radius: 999px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
           .top-bar-bell:hover { background: #f1f5f9; }

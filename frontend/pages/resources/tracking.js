@@ -2,241 +2,530 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Sidebar from "../../components/Sidebar";
 import ProtectedRoute from "../../components/ProtectedRoute";
-import StatusBadge from "../../components/resources/StatusBadge";
+import PortalHeader from "../../components/resources/portal/PortalHeader";
+import MentorAvatar from "../../components/resources/portal/MentorAvatar";
+import { API, SESSION_TYPES, displayStatus, formatDate, formatDuration, formatFileSize, formatTime, parseServerDate, sessionTypeLabel, tabForStatus } from "../../components/resources/portal/portalUtils";
+import {
+  CalendarDays,
+  Layers,
+  Users,
+  PlayCircle,
+  Video,
+  Circle,
+  Search,
+  Download,
+  Upload,
+  ExternalLink,
+  FileText,
+  FileSpreadsheet,
+  FileArchive,
+  Presentation,
+  Image as ImageIcon,
+  Link2,
+  ListChecks,
+  Clock,
+  CheckCircle2,
+  AlertTriangle,
+  AlertCircle,
+  Timer,
+  ChevronDown,
+  ChevronsUpDown,
+  ChevronUp,
+  MoreVertical,
+  Eye,
+  X,
+} from "lucide-react";
 
-const EMPTY_FILTERS = { mentor_name: "", batch_name: "", course_name: "", status: "" };
+const TABS = [
+  { key: "All", label: "All", icon: ListChecks },
+  { key: "Pending", label: "Pending", icon: Clock },
+  { key: "Submitted", label: "Submitted", icon: CheckCircle2 },
+  { key: "Overdue", label: "Overdue", icon: AlertTriangle },
+  { key: "Late", label: "Late", icon: Timer },
+];
+
+const DATE_RANGES = [
+  { value: "", label: "All Dates" },
+  { value: "today", label: "Today" },
+  { value: "next7", label: "Next 7 Days" },
+  { value: "last7", label: "Last 7 Days" },
+  { value: "last30", label: "Last 30 Days" },
+  { value: "month", label: "This Month" },
+];
+
+const EMPTY_FILTERS = { range: "", batch_name: "", mentor_name: "", session_type: "", session_id: "" };
+
+// Session-type chip colours (same palette as the Sessions page).
+const TYPE_STYLES = {
+  "Live Session": { bg: "#e0edff", color: "#1d4ed8" },
+  "Webinar Session": { bg: "#ede9fe", color: "#6d28d9" },
+};
+
+// Icon + colours for the status pill, keyed by the *displayed* status.
+const STATUS_PILL = {
+  Submitted: { icon: CheckCircle2, bg: "#dcfce7", color: "#166534" },
+  Pending: { icon: Clock, bg: "#fef3c7", color: "#b45309" },
+  "Partially Submitted": { icon: Clock, bg: "#dbeafe", color: "#1d4ed8" },
+  Overdue: { icon: AlertCircle, bg: "#fee2e2", color: "#b91c1c" },
+  Late: { icon: AlertCircle, bg: "#ffe4e6", color: "#be123c" },
+  "Not Required": { icon: Circle, bg: "#f1f5f9", color: "#64748b" },
+};
+
+const STATUS_ORDER = { Overdue: 0, "Partially Submitted": 1, Pending: 2, Late: 3, Submitted: 4, "Not Required": 5 };
 
 function unique(list) {
   return [...new Set(list.filter(Boolean))].sort();
 }
 
-function buildQuery(filters) {
-  const params = new URLSearchParams();
-  Object.entries(filters).forEach(([key, value]) => {
-    if (value) params.set(key, value);
-  });
-  return params.toString();
+function StatusPill({ status }) {
+  const style = STATUS_PILL[status] || STATUS_PILL["Not Required"];
+  const Icon = style.icon;
+  return (
+    <span className="pill" style={{ background: style.bg, color: style.color }}>
+      <Icon size={13} strokeWidth={2.4} /> {status}
+      <style jsx>{`
+        .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; padding: 5px 10px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+      `}</style>
+    </span>
+  );
 }
 
-function formatDate(value) {
-  if (!value) return "—";
-  return new Date(value).toLocaleString(undefined, {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+// Coloured icon square by file extension, like a file manager.
+function fileVisual(resource) {
+  if (!resource.file_path) return { icon: Link2, color: "#2563eb", bg: "#e7f0ff" };
+  const ext = (resource.file_name || "").split(".").pop().toLowerCase();
+  if (ext === "pdf") return { icon: FileText, color: "#dc2626", bg: "#fee2e2" };
+  if (["ppt", "pptx"].includes(ext)) return { icon: Presentation, color: "#ea580c", bg: "#ffedd5" };
+  if (["xls", "xlsx", "csv"].includes(ext)) return { icon: FileSpreadsheet, color: "#16a34a", bg: "#dcfce7" };
+  if (["doc", "docx"].includes(ext)) return { icon: FileText, color: "#2563eb", bg: "#e0edff" };
+  if (["zip", "rar"].includes(ext)) return { icon: FileArchive, color: "#d97706", bg: "#fef3c7" };
+  if (["png", "jpg", "jpeg", "gif", "webp"].includes(ext)) return { icon: ImageIcon, color: "#7c3aed", bg: "#ede9fe" };
+  return { icon: FileText, color: "#475569", bg: "#f1f5f9" };
 }
 
-export default function ResourceTrackingPage() {
+function FileChip({ resource }) {
+  const { icon: Icon, color, bg } = fileVisual(resource);
+  const hasFile = !!resource.file_path;
+  const href = hasFile ? `${API}/resources/${resource.id}/download` : resource.resource_url;
+  const name = hasFile ? resource.file_name : resource.resource_title;
+
+  return (
+    <div className="file">
+      <span className="file-icon" style={{ background: bg, color }}><Icon size={15} strokeWidth={2.2} /></span>
+      <div className="file-text">
+        <div className="file-name" title={name}>{name}</div>
+        <div className="file-sub">{hasFile ? formatFileSize(resource.file_size) || "File" : "Link"}</div>
+      </div>
+      {href && (
+        <a className="file-action" href={href} {...(hasFile ? {} : { target: "_blank", rel: "noreferrer" })} title={hasFile ? "Download" : "Open link"} aria-label={hasFile ? `Download ${name}` : `Open ${name}`}>
+          {hasFile ? <Download size={14} /> : <ExternalLink size={14} />}
+        </a>
+      )}
+      <style jsx>{`
+        .file { display: flex; align-items: center; gap: 9px; border: 1px solid #e3eaf4; border-radius: 8px; background: #fff; padding: 6px 9px; max-width: 220px; }
+        .file-icon { width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .file-text { min-width: 0; flex: 1; }
+        .file-name { font-size: 12px; font-weight: 700; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .file-sub { font-size: 10.5px; color: #94a3b8; }
+        .file :global(.file-action) { display: flex; color: #2563eb; padding: 4px; border-radius: 6px; }
+        .file :global(.file-action:hover) { background: #dbe8ff; }
+      `}</style>
+    </div>
+  );
+}
+
+function FilterField({ icon: Icon, label, children }) {
+  return (
+    <div className="ff">
+      <span className="ff-icon"><Icon size={22} strokeWidth={1.9} /></span>
+      <div className="ff-body">
+        <label>{label}</label>
+        {children}
+      </div>
+      <style jsx>{`
+        .ff { display: flex; align-items: center; gap: 8px; flex: 1 1 120px; min-width: 110px; }
+        .ff-icon { color: #2563eb; display: flex; flex-shrink: 0; }
+        .ff-icon :global(svg) { width: 18px; height: 18px; }
+        .ff-body { flex: 1; min-width: 0; }
+        label { display: block; font-size: 11.5px; font-weight: 700; color: #334155; margin-bottom: 4px; }
+      `}</style>
+    </div>
+  );
+}
+
+function SortHeader({ label, field, sort, onSort }) {
+  const active = sort.field === field;
+  const Icon = !active ? ChevronsUpDown : sort.dir === "asc" ? ChevronUp : ChevronDown;
+  return (
+    <th className="sortable" onClick={() => onSort(field)} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+      {label} <Icon size={12} strokeWidth={2.4} className={active ? "sort-on" : "sort-off"} />
+    </th>
+  );
+}
+
+export default function ResourceTrackerPage() {
   const [rows, setRows] = useState(null);
+  const [resources, setResources] = useState([]);
+  const [mentors, setMentors] = useState([]);
+  const [error, setError] = useState("");
   const [filters, setFilters] = useState(EMPTY_FILTERS);
-  const [filterOptions, setFilterOptions] = useState({ mentor_name: [], batch_name: [], course_name: [] });
   const [search, setSearch] = useState("");
+  const [tab, setTab] = useState("All"); // also drives the Status select
+  const [sort, setSort] = useState({ field: null, dir: "asc" });
+  const [expanded, setExpanded] = useState({});
+  const [exportOpen, setExportOpen] = useState(false);
+  const [rowMenu, setRowMenu] = useState(null); // session_id whose ⋮ menu is open
+  const [now, setNow] = useState(() => Date.now());
 
-  useEffect(() => {
-    fetch("http://127.0.0.1:8000/resource-tracking")
-      .then((res) => res.json())
-      .then((data) => {
-        const all = Array.isArray(data) ? data : [];
-        setFilterOptions({
-          mentor_name: unique(all.map((r) => r.mentor_name)),
-          batch_name: unique(all.map((r) => r.batch_name)),
-          course_name: unique(all.map((r) => r.course_name)),
-        });
+  const load = () => {
+    setError("");
+    Promise.all([
+      fetch(`${API}/resource-tracking`).then((r) => r.json()),
+      fetch(`${API}/resources`).then((r) => r.json()),
+    ])
+      .then(([tracking, all]) => {
+        setRows(Array.isArray(tracking) ? tracking : []);
+        setResources(Array.isArray(all) ? all : []);
       })
-      .catch(() => {});
+      .catch(() => {
+        setRows([]);
+        setError("Couldn't load the resource tracker. Please check your connection and try again.");
+      });
+  };
+
+  useEffect(load, []);
+
+  // Mentor photos come from the Mentors section; if this user can't read the
+  // mentor list the tracker still works and shows initials instead.
+  useEffect(() => {
+    fetch(`${API}/mentors`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setMentors(Array.isArray(d) ? d : []))
+      .catch(() => setMentors([]));
   }, []);
 
+  // Keep "overdue by …" fresh without a reload.
   useEffect(() => {
-    const query = buildQuery(filters);
-    const suffix = query ? `?${query}` : "";
+    const id = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(id);
+  }, []);
 
-    fetch(`http://127.0.0.1:8000/resource-tracking${suffix}`)
-      .then((res) => res.json())
-      .then((data) => setRows(Array.isArray(data) ? data : []))
-      .catch(() => setRows([]));
-  }, [filters]);
+  const mentorsByName = useMemo(() => Object.fromEntries(mentors.map((m) => [m.name, m])), [mentors]);
 
-  const handleFilterChange = (key, value) => setFilters((prev) => ({ ...prev, [key]: value }));
-  const clearFilters = () => setFilters(EMPTY_FILTERS);
-  const hasActiveFilter = Object.values(filters).some(Boolean);
+  const resourcesBySession = useMemo(() => {
+    const map = {};
+    resources.forEach((r) => {
+      if (r.session_id == null) return;
+      (map[r.session_id] = map[r.session_id] || []).push(r);
+    });
+    return map;
+  }, [resources]);
 
-  const summary = useMemo(() => {
-    if (!rows) return null;
+  const options = useMemo(
+    () => ({
+      batch_name: unique((rows || []).map((r) => r.batch_name)),
+      mentor_name: unique((rows || []).map((r) => r.mentor_name)),
+      sessions: (rows || []).map((r) => ({ id: r.session_id, label: `${r.session_topic || "Untitled"} — ${r.session_date || "no date"}` })),
+    }),
+    [rows]
+  );
 
-    return {
-      total: rows.length,
-      overdue: rows.filter((r) => r.status === "Overdue").length,
-      pending: rows.filter((r) => r.status === "Pending").length,
-      complete: rows.filter((r) => r.status === "Complete").length,
-    };
-  }, [rows]);
+  // The date a row is measured by: its deadline, or the session date when no deadline is set.
+  const refTime = (r) => {
+    const due = parseServerDate(r.due_at);
+    if (due) return due.getTime();
+    return r.session_date ? new Date(`${r.session_date}T12:00:00`).getTime() : null;
+  };
 
-  const visibleRows = useMemo(() => {
+  const inRange = (r, range) => {
+    if (!range) return true;
+    const t = refTime(r);
+    if (t === null) return false;
+    const day = 86400000;
+    const startOfToday = new Date(now).setHours(0, 0, 0, 0);
+    switch (range) {
+      case "today": return t >= startOfToday && t < startOfToday + day;
+      case "next7": return t >= startOfToday && t < startOfToday + 7 * day;
+      case "last7": return t >= startOfToday - 7 * day && t < startOfToday + day;
+      case "last30": return t >= startOfToday - 30 * day && t < startOfToday + day;
+      case "month": {
+        const d = new Date(now);
+        return t >= new Date(d.getFullYear(), d.getMonth(), 1).getTime() && t < new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
+      }
+      default: return true;
+    }
+  };
+
+  // Filters + search narrow the list; the tabs (== Status select) then split it by status.
+  const filtered = useMemo(() => {
     if (!rows) return [];
     const term = search.trim().toLowerCase();
-    if (!term) return rows;
-
     return rows.filter((r) => {
-      const haystack = [
-        r.session_topic,
-        r.course_name,
-        r.batch_name,
-        r.mentor_name,
-        ...(r.required_resources || []),
-        ...(r.received_resources || []),
-        ...(r.missing_resources || []),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      return haystack.includes(term);
+      if (filters.batch_name && r.batch_name !== filters.batch_name) return false;
+      if (filters.mentor_name && r.mentor_name !== filters.mentor_name) return false;
+      if (filters.session_type && (r.session_type || "Live Session") !== filters.session_type) return false;
+      if (filters.session_id && String(r.session_id) !== filters.session_id) return false;
+      if (!inRange(r, filters.range)) return false;
+      if (term) {
+        const haystack = [r.session_topic, r.course_name, r.batch_name, r.mentor_name, ...(r.required_resources || []), ...(r.missing_resources || [])]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(term)) return false;
+      }
+      return true;
     });
-  }, [rows, search]);
+  }, [rows, filters, search, now]);
+
+  const counts = useMemo(() => {
+    const c = { All: filtered.length, Pending: 0, Submitted: 0, Overdue: 0, Late: 0 };
+    filtered.forEach((r) => {
+      const t = tabForStatus(r.status);
+      if (t) c[t] += 1;
+    });
+    return c;
+  }, [filtered]);
+
+  const visible = useMemo(() => {
+    const list = tab === "All" ? filtered : filtered.filter((r) => tabForStatus(r.status) === tab);
+    if (!sort.field) return list;
+    const dir = sort.dir === "asc" ? 1 : -1;
+    const key = {
+      batch: (r) => (r.batch_name || "").toLowerCase(),
+      due: (r) => parseServerDate(r.due_at)?.getTime() ?? null,
+      status: (r) => STATUS_ORDER[displayStatus(r.status)] ?? 9,
+      submitted: (r) => (r.missing_count > 0 ? null : parseServerDate(r.received_at)?.getTime() ?? null),
+    }[sort.field];
+    // Empty values always sink to the bottom, whichever way we sort.
+    return [...list].sort((a, b) => {
+      const x = key(a);
+      const y = key(b);
+      if (x === null && y === null) return 0;
+      if (x === null) return 1;
+      if (y === null) return -1;
+      return x < y ? -dir : x > y ? dir : 0;
+    });
+  }, [filtered, tab, sort]);
+
+  const hasFilters = Object.values(filters).some(Boolean) || !!search;
+  const setFilter = (key, value) => setFilters((prev) => ({ ...prev, [key]: value }));
+  const clearAll = () => { setFilters(EMPTY_FILTERS); setSearch(""); setTab("All"); };
+  const toggleSort = (field) => setSort((prev) => (prev.field === field ? { field, dir: prev.dir === "asc" ? "desc" : "asc" } : { field, dir: "asc" }));
+
+  // What the status cell says beyond the pill itself.
+  const statusNote = (r) => {
+    const due = parseServerDate(r.due_at);
+    if (r.status === "Overdue" && due) return { text: `Overdue by ${formatDuration(now - due.getTime())}`, tone: "red" };
+    if (r.status === "Delayed") return { text: r.delay_hours > 0 ? `Submitted ${formatDuration(r.delay_hours * 3600000)} late` : "Submitted late", tone: "orange" };
+    if (r.status === "Partially Submitted" || (r.status === "Pending" && r.received_count > 0)) return { text: `${r.received_count} of ${r.required_count} received`, tone: "blue" };
+    if (r.status === "Pending" && due) {
+      const left = due.getTime() - now;
+      return left > 0 ? { text: `Due in ${formatDuration(left)}`, tone: "slate" } : null;
+    }
+    if (r.status === "Pending") return { text: `${r.required_count} resource${r.required_count === 1 ? "" : "s"} required`, tone: "slate" };
+    return null;
+  };
 
   return (
     <ProtectedRoute>
       <>
         <Sidebar />
 
-        <div
-          style={{
-            marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease",
-            padding: "32px 36px 60px",
-            background: "#f1f5f9",
-            minHeight: "100vh",
-          }}
-        >
-          {/* Header */}
-          <div className="page-hero">
-            <div className="page-hero-blob" />
-            <div className="page-hero-content">
-              <div className="page-hero-eyebrow">Resource Portal</div>
-              <h1 className="page-hero-title">📋 Resource Tracking</h1>
-              <p className="page-hero-subtitle">
-                One row per session — what's required, what came in, what's still missing.
-              </p>
-            </div>
-            <div className="page-hero-actions">
-              <a href="http://127.0.0.1:8000/resources/export?format=csv" className="btn btn-export-outline">
-                ⬇ CSV
-              </a>
-              <a href="http://127.0.0.1:8000/resources/export?format=excel" className="btn btn-export">
-                ⬇ Excel
-              </a>
-            </div>
-          </div>
-
-          {/* Search */}
-          <div className="search-wrap">
-            <span className="search-icon">🔍</span>
-            <input
-              type="text"
-              placeholder="Search by mentor, session, topic, course, batch, or resource title..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="styled-input search-input"
-            />
-          </div>
-
-          {/* Summary */}
-          {summary && (
-            <div className="kpi-grid">
-              <SummaryCard title="Sessions Tracked" value={summary.total} color="#334155" />
-              <SummaryCard title="Overdue" value={summary.overdue} color="#dc2626" />
-              <SummaryCard title="Pending" value={summary.pending} color="#f59e0b" />
-              <SummaryCard title="Complete" value={summary.complete} color="#16a34a" />
-            </div>
-          )}
+        <div className="page" onClick={() => rowMenu && setRowMenu(null)}>
+          <PortalHeader subtitle="Track your resource submissions and due dates" tagline="Timely resources, better learning outcomes" />
 
           {/* Filters */}
-          <div className="card filter-card">
-            <FilterSelect
-              label="Mentor"
-              value={filters.mentor_name}
-              options={filterOptions.mentor_name}
-              onChange={(v) => handleFilterChange("mentor_name", v)}
-            />
-            <FilterSelect
-              label="Batch"
-              value={filters.batch_name}
-              options={filterOptions.batch_name}
-              onChange={(v) => handleFilterChange("batch_name", v)}
-            />
-            <FilterSelect
-              label="Course"
-              value={filters.course_name}
-              options={filterOptions.course_name}
-              onChange={(v) => handleFilterChange("course_name", v)}
-            />
-            <FilterSelect
-              label="Status"
-              value={filters.status}
-              options={["Pending", "Overdue", "Delayed", "Complete", "Partially Submitted", "Not Required"]}
-              onChange={(v) => handleFilterChange("status", v)}
-            />
-
-            {hasActiveFilter && (
-              <button onClick={clearFilters} className="btn btn-ghost">
-                ✕ Clear Filters
-              </button>
-            )}
+          <div className="filters">
+            <FilterField icon={CalendarDays} label="Date Range">
+              <select value={filters.range} onChange={(e) => setFilter("range", e.target.value)}>
+                {DATE_RANGES.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
+            </FilterField>
+            <FilterField icon={Layers} label="Batch">
+              <select value={filters.batch_name} onChange={(e) => setFilter("batch_name", e.target.value)}>
+                <option value="">All Batches</option>
+                {options.batch_name.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </FilterField>
+            <FilterField icon={Users} label="Mentor">
+              <select value={filters.mentor_name} onChange={(e) => setFilter("mentor_name", e.target.value)}>
+                <option value="">All Mentors</option>
+                {options.mentor_name.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </FilterField>
+            <FilterField icon={Video} label="Session Type">
+              <select value={filters.session_type} onChange={(e) => setFilter("session_type", e.target.value)}>
+                <option value="">All Types</option>
+                {SESSION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </FilterField>
+            <FilterField icon={PlayCircle} label="Session">
+              <select value={filters.session_id} onChange={(e) => setFilter("session_id", e.target.value)}>
+                <option value="">All Sessions</option>
+                {options.sessions.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+            </FilterField>
+            <FilterField icon={Circle} label="Status">
+              <select value={tab} onChange={(e) => setTab(e.target.value)}>
+                <option value="All">All Status</option>
+                {TABS.filter((t) => t.key !== "All").map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </select>
+            </FilterField>
+            <div className="search">
+              <label>Search</label>
+              <div className="search-box">
+                <input placeholder="Search by session, batch or resource…" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <span className="search-btn"><Search size={15} /></span>
+              </div>
+            </div>
           </div>
 
+          {/* Tabs + export */}
+          <div className="tabs-row">
+            <div className="tabs" role="tablist">
+              {TABS.map(({ key, label, icon: Icon }) => (
+                <button key={key} role="tab" aria-selected={tab === key} className={`tab ${tab === key ? "tab-active" : ""} tab-${key.toLowerCase()}`} onClick={() => setTab(key)}>
+                  <Icon size={14} strokeWidth={2.2} /> {label} ({counts[key]})
+                </button>
+              ))}
+            </div>
+            <div className="export">
+              <button className="btn-export" onClick={() => setExportOpen((v) => !v)}>
+                <Download size={14} /> Export
+              </button>
+              {exportOpen && (
+                <>
+                  <div className="backdrop" onClick={() => setExportOpen(false)} />
+                  <div className="export-menu">
+                    <a href={`${API}/resources/export?format=excel`} onClick={() => setExportOpen(false)}>Excel (.xlsx)</a>
+                    <a href={`${API}/resources/export?format=csv`} onClick={() => setExportOpen(false)}>CSV</a>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {error && <div className="error-banner">{error} <button onClick={load}>Retry</button></div>}
+
           {/* Table */}
-          <div className="card table-card">
+          <div className="table-card">
             {rows === null ? (
-              <div className="empty-state">Loading…</div>
+              <div className="empty">Loading…</div>
             ) : rows.length === 0 ? (
-              <div className="empty-state">
-                No sessions with resource requirements yet — configure requirements from the Resource Portal.
+              <div className="empty">No sessions have resource requirements yet.</div>
+            ) : visible.length === 0 ? (
+              <div className="empty">
+                No sessions match the current filters.
+                {(hasFilters || tab !== "All") && <div><button className="btn-clear" onClick={clearAll}><X size={13} /> Clear filters</button></div>}
               </div>
-            ) : visibleRows.length === 0 ? (
-              <div className="empty-state">No sessions match "{search}".</div>
             ) : (
               <div className="table-wrap">
-                <table className="styled-table" style={{ minWidth: "1100px" }}>
+                <table>
                   <thead>
                     <tr>
-                      {["Session", "Date", "Course", "Batch", "Mentor", "Required", "Received", "Missing", "Status", "Due At", "Received At", "Delay", "Reminders"].map((h) => (
-                        <th key={h}>{h}</th>
-                      ))}
+                      <th className="c-num">#</th>
+                      <th>Session Details</th>
+                      <SortHeader label="Batch" field="batch" sort={sort} onSort={toggleSort} />
+                      <SortHeader label="Due Date" field="due" sort={sort} onSort={toggleSort} />
+                      <SortHeader label="Submission Status" field="status" sort={sort} onSort={toggleSort} />
+                      <SortHeader label="Submitted Date" field="submitted" sort={sort} onSort={toggleSort} />
+                      <th>File</th>
+                      <th className="c-actions">Actions</th>
                     </tr>
                   </thead>
-
                   <tbody>
-                    {visibleRows.map((r, i) => (
-                      <tr key={r.session_id} style={{ animationDelay: `${i * 0.03}s` }}>
-                        <td className="strong">
-                          <Link href={`/resources/${r.session_id}`} className="row-link">
-                            {r.session_topic} →
-                          </Link>
-                        </td>
-                        <td className="muted">{r.session_date}</td>
-                        <td>{r.course_name}</td>
-                        <td>{r.batch_name}</td>
-                        <td>{r.mentor_name}</td>
-                        <td style={{ textAlign: "center" }}>{r.required_count}</td>
-                        <td style={{ textAlign: "center" }}>{r.received_count}</td>
-                        <td
-                          style={{ textAlign: "center", fontWeight: r.missing_count > 0 ? 700 : 400, color: r.missing_count > 0 ? "#dc2626" : "#1e293b" }}
-                          title={r.missing_resources.join(", ")}
-                        >
-                          {r.missing_count}
-                        </td>
-                        <td>
-                          <StatusBadge status={r.status} />
-                        </td>
-                        <td className="muted" style={{ fontSize: "13px" }}>{formatDate(r.due_at)}</td>
-                        <td className="muted" style={{ fontSize: "13px" }}>{formatDate(r.received_at)}</td>
-                        <td className="muted" style={{ fontSize: "13px" }}>
-                          {r.delay_hours > 0 ? `${r.delay_hours} hrs` : "0 hrs"}
-                        </td>
-                        <td style={{ textAlign: "center" }}>{r.reminder_count}</td>
-                      </tr>
-                    ))}
+                    {visible.map((r, i) => {
+                      const files = resourcesBySession[r.session_id] || [];
+                      const open = !!expanded[r.session_id];
+                      const shown = open ? files : files.slice(0, 2);
+                      const note = statusNote(r);
+                      const missing = r.missing_count > 0;
+                      const firstFile = files.find((f) => f.file_path);
+                      return (
+                        <tr key={r.session_id} className={r.status === "Overdue" ? "row-overdue" : r.status === "Delayed" ? "row-late" : ""}>
+                          <td className="c-num">{i + 1}</td>
+                          <td>
+                            <Link href={`/resources/${r.session_id}`} className="session-link">{r.session_topic}</Link>
+                            <span
+                              className="type-chip"
+                              style={TYPE_STYLES[r.session_type] || TYPE_STYLES["Live Session"]}
+                            >
+                              {sessionTypeLabel(r.session_type)}
+                            </span>
+                            <div className="mentor">
+                              <MentorAvatar mentor={mentorsByName[r.mentor_name]} name={r.mentor_name} size={22} />
+                              <span className="mentor-name">{r.mentor_name || "—"}</span>
+                              <span className="sub">· {r.session_date ? formatDate(`${r.session_date}T00:00:00`) : "—"}</span>
+                            </div>
+                          </td>
+                          <td className="nowrap">{r.batch_name || "—"}</td>
+                          <td className="nowrap">
+                            {r.due_at ? (
+                              <>
+                                <div>{formatDate(r.due_at)}</div>
+                                <div className="sub">{formatTime(r.due_at)}</div>
+                              </>
+                            ) : (
+                              <span className="dash" title="No deadline set for this session">—</span>
+                            )}
+                          </td>
+                          <td>
+                            <StatusPill status={displayStatus(r.status)} />
+                            {note && <div className={`note note-${note.tone}`} title={missing ? `Missing: ${(r.missing_resources || []).join(", ")}` : undefined}>{note.text}</div>}
+                          </td>
+                          <td className="nowrap">
+                            {r.received_at && !missing ? (
+                              <>
+                                <div>{formatDate(r.received_at)}</div>
+                                <div className="sub">{formatTime(r.received_at)}</div>
+                              </>
+                            ) : (
+                              <span className="dash">—</span>
+                            )}
+                          </td>
+                          <td>
+                            {files.length === 0 ? (
+                              <span className="dash">—</span>
+                            ) : (
+                              <div className="files">
+                                {shown.map((f) => <FileChip key={f.id} resource={f} />)}
+                                {files.length > 2 && (
+                                  <button className="more" onClick={() => setExpanded((prev) => ({ ...prev, [r.session_id]: !open }))}>
+                                    {open ? "Show less" : `+${files.length - 2} more`}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                          <td className="c-actions">
+                            <div className="actions">
+                              {missing ? (
+                                <Link href={`/resources?session_id=${r.session_id}`} className="btn-primary"><Upload size={14} /> Upload</Link>
+                              ) : firstFile ? (
+                                <a href={`${API}/resources/${firstFile.id}/download`} className="btn-outline"><Download size={14} /> Download</a>
+                              ) : (
+                                <Link href={`/resources/${r.session_id}`} className="btn-outline"><Eye size={14} /> View</Link>
+                              )}
+                              <div className="kebab-wrap">
+                                <button
+                                  className="kebab"
+                                  aria-label="More actions"
+                                  onClick={(e) => { e.stopPropagation(); setRowMenu(rowMenu === r.session_id ? null : r.session_id); }}
+                                >
+                                  <MoreVertical size={16} />
+                                </button>
+                                {rowMenu === r.session_id && (
+                                  <div className="row-menu" onClick={(e) => e.stopPropagation()}>
+                                    <Link href={`/resources/${r.session_id}`}><Eye size={14} /> View details</Link>
+                                    <Link href={`/resources?session_id=${r.session_id}`}><Upload size={14} /> {missing ? "Upload resource" : "Add another resource"}</Link>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -245,322 +534,93 @@ export default function ResourceTrackingPage() {
         </div>
 
         <style jsx>{`
-          .page-hero {
-            position: relative;
-            overflow: hidden;
-            border-radius: 18px;
-            padding: 30px 32px;
-            margin-bottom: 20px;
-            background: linear-gradient(120deg, #0f172a 0%, #1e293b 60%, #0f172a 100%);
-            background-size: 200% 200%;
-            animation: heroShift 12s ease infinite;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 20px;
-            box-shadow: 0 16px 32px -18px rgba(15, 23, 42, 0.55);
-          }
+          .page { margin-left: var(--om-sidebar-width, 280px); transition: margin-left 0.25s ease; padding: 26px 30px 50px; background: #eef3fa; min-height: 100vh; }
 
-          .page-hero-blob {
-            position: absolute;
-            width: 220px;
-            height: 220px;
-            border-radius: 50%;
-            background: #facc15;
-            filter: blur(60px);
-            opacity: 0.25;
-            top: -80px;
-            right: 160px;
-            animation: float 9s ease-in-out infinite;
-          }
+          .filters { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; background: #fff; border: 1px solid #e3eaf4; border-radius: 12px 12px 0 0; padding: 14px 18px; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04); }
+          .filters select { width: 100%; box-sizing: border-box; border: 1px solid #d8e1ee; border-radius: 8px; background: #fff; padding: 9px 10px; font-size: 12.5px; color: #0f172a; outline: none; font-family: inherit; }
+          .filters input { width: 100%; box-sizing: border-box; border: 1px solid #d8e1ee; border-radius: 8px; background: #fff; padding: 9px 10px; font-size: 12.5px; color: #0f172a; outline: none; font-family: inherit; }
+          .filters select:focus, .filters input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }
+          .search { flex: 1.4 1 190px; padding-left: 12px; border-left: 1px solid #e3eaf4; }
+          .search label { display: block; font-size: 11.5px; font-weight: 700; color: #334155; margin-bottom: 4px; }
+          .search-box { display: flex; }
+          .search-box input { border-radius: 8px 0 0 8px; border-right: none; }
+          .search-btn { display: flex; align-items: center; justify-content: center; width: 40px; border: 1px solid #d8e1ee; border-radius: 0 8px 8px 0; background: #f8fafc; color: #334155; }
 
-          .page-hero-content {
-            position: relative;
-            z-index: 1;
-          }
+          .tabs-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fff; border: 1px solid #e3eaf4; border-top: none; padding: 10px 18px 0; }
+          .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+          .tab { display: inline-flex; align-items: center; gap: 7px; background: none; border: none; border-bottom: 2.5px solid transparent; padding: 9px 12px 11px; font-size: 12.5px; font-weight: 600; color: #475569; cursor: pointer; }
+          .tab:hover { color: #0f172a; }
+          .tab-active { color: #1d4ed8; border-bottom-color: #2563eb; background: #eff5ff; border-radius: 8px 8px 0 0; }
+          .tab-overdue :global(svg) { color: #ea580c; }
+          .tab-late :global(svg) { color: #d97706; }
+          .tab-submitted :global(svg) { color: #16a34a; }
+          .tab-pending :global(svg) { color: #d97706; }
 
-          .page-hero-eyebrow {
-            display: inline-block;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: #fbbf24;
-            background: rgba(251, 191, 36, 0.12);
-            border: 1px solid rgba(251, 191, 36, 0.3);
-            padding: 5px 10px;
-            border-radius: 999px;
-            margin-bottom: 10px;
-          }
+          .export { position: relative; padding-bottom: 8px; }
+          .btn-export { display: inline-flex; align-items: center; gap: 7px; background: #fff; border: 1px solid #d8e1ee; border-radius: 8px; padding: 8px 16px; font-size: 12.5px; font-weight: 700; color: #0f172a; cursor: pointer; }
+          .btn-export:hover { background: #f8fafc; }
+          .backdrop { position: fixed; inset: 0; z-index: 20; }
+          .export-menu { position: absolute; right: 0; top: calc(100% - 2px); z-index: 30; background: #fff; border: 1px solid #e3eaf4; border-radius: 10px; box-shadow: 0 14px 28px -14px rgba(15, 23, 42, 0.35); padding: 6px; min-width: 150px; }
+          .export-menu a { display: block; padding: 9px 10px; border-radius: 7px; font-size: 12.5px; font-weight: 600; color: #1e293b; text-decoration: none; }
+          .export-menu a:hover { background: #f1f5f9; }
 
-          .page-hero-title {
-            font-size: 26px;
-            font-weight: 800;
-            color: #f8fafc;
-            margin: 0 0 6px;
-          }
+          .error-banner { display: flex; align-items: center; gap: 10px; background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; padding: 10px 16px; font-size: 13px; }
+          .error-banner button { background: #fff; border: 1px solid #fecaca; border-radius: 6px; padding: 4px 10px; color: #b91c1c; font-weight: 700; cursor: pointer; }
 
-          .page-hero-subtitle {
-            color: #94a3b8;
-            font-size: 14px;
-            margin: 0;
-          }
+          .table-card { background: #fff; border: 1px solid #e3eaf4; border-top: 1px solid #edf1f7; border-radius: 0 0 12px 12px; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04); }
+          .table-wrap { overflow-x: auto; }
+          table { width: 100%; border-collapse: collapse; font-size: 13px; }
+          thead th { text-align: left; font-size: 11.5px; font-weight: 700; color: #1e293b; padding: 12px 14px; background: #f7f9fd; border-bottom: 1px solid #e3eaf4; white-space: nowrap; }
+          /* Sortable headers render inside SortHeader (a separate component), so they need :global styles. */
+          :global(th.sortable) { text-align: left; font-size: 11.5px; font-weight: 700; color: #1e293b; padding: 12px 14px; background: #f7f9fd; border-bottom: 1px solid #e3eaf4; white-space: nowrap; cursor: pointer; user-select: none; }
+          :global(th.sortable:hover) { color: #1d4ed8; }
+          thead th :global(.sort-off) { color: #94a3b8; vertical-align: -1px; margin-left: 2px; }
+          thead th :global(.sort-on) { color: #2563eb; vertical-align: -1px; margin-left: 2px; }
+          tbody td { padding: 14px 14px; border-bottom: 1px solid #edf1f7; color: #1e293b; vertical-align: middle; }
+          tbody tr:last-child td { border-bottom: none; }
+          tbody tr:hover { background: #fafcff; }
+          .row-overdue { background: #fff8f8; }
+          .row-overdue:hover { background: #fff3f3; }
+          .row-late { background: #fffaf3; }
+          .c-num { width: 40px; color: #64748b; }
+          .c-actions { text-align: right; white-space: nowrap; }
+          .nowrap { white-space: nowrap; }
+          .sub { font-size: 11.5px; color: #64748b; margin-top: 2px; }
+          .dash { color: #94a3b8; }
+          tbody :global(.session-link) { font-weight: 700; color: #0f172a; text-decoration: none; }
+          tbody :global(.session-link:hover) { color: #2563eb; text-decoration: underline; }
+          .type-chip { display: inline-block; margin-left: 8px; border-radius: 999px; padding: 2px 8px; font-size: 10.5px; font-weight: 700; vertical-align: 1px; white-space: nowrap; }
+          .mentor { display: flex; align-items: center; gap: 7px; margin-top: 5px; }
+          .mentor-name { font-size: 12px; font-weight: 600; color: #334155; white-space: nowrap; }
+          .mentor .sub { margin: 0; white-space: nowrap; }
+          .note { font-size: 11px; font-weight: 600; margin-top: 5px; }
+          .note-red { color: #b91c1c; }
+          .note-orange { color: #c2410c; }
+          .note-blue { color: #1d4ed8; }
+          .note-slate { color: #64748b; }
 
-          .page-hero-actions {
-            position: relative;
-            z-index: 1;
-            display: flex;
-            gap: 10px;
-            flex-shrink: 0;
-          }
+          .files { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+          .more { background: none; border: none; padding: 0; font-size: 11.5px; font-weight: 700; color: #2563eb; cursor: pointer; }
 
-          .btn {
-            border: none;
-            border-radius: 10px;
-            padding: 10px 18px;
-            font-size: 13px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.15s ease;
-            text-decoration: none;
-            display: inline-block;
-          }
+          .actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+          .actions :global(.btn-primary), .actions :global(.btn-outline) { display: inline-flex; align-items: center; gap: 7px; border-radius: 6px; padding: 8px 16px; font-size: 12px; font-weight: 700; text-decoration: none; min-width: 92px; justify-content: center; box-sizing: border-box; }
+          .actions :global(.btn-primary) { background: #2563eb; color: #fff; border: 1px solid #2563eb; }
+          .actions :global(.btn-primary:hover) { background: #1d4ed8; }
+          .actions :global(.btn-outline) { background: #f3f7ff; color: #1d4ed8; border: 1px solid #c8d8f5; }
+          .actions :global(.btn-outline:hover) { background: #e4eeff; }
+          .kebab-wrap { position: relative; }
+          .kebab { display: flex; background: none; border: none; color: #475569; padding: 6px; border-radius: 6px; cursor: pointer; }
+          .kebab:hover { background: #eef2f7; color: #0f172a; }
+          .row-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; background: #fff; border: 1px solid #e3eaf4; border-radius: 10px; box-shadow: 0 14px 28px -14px rgba(15, 23, 42, 0.35); padding: 6px; min-width: 180px; text-align: left; }
+          .row-menu :global(a) { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 7px; font-size: 12.5px; font-weight: 600; color: #1e293b; text-decoration: none; }
+          .row-menu :global(a:hover) { background: #f1f5f9; }
 
-          .btn-export {
-            background: #facc15;
-            color: #0f172a;
-          }
+          .empty { padding: 60px 20px; text-align: center; color: #94a3b8; font-size: 14px; }
+          .btn-clear { margin-top: 14px; display: inline-flex; align-items: center; gap: 6px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 14px; font-size: 12.5px; font-weight: 700; color: #334155; cursor: pointer; }
 
-          .btn-export:hover {
-            transform: translateY(-1px);
-            filter: brightness(1.05);
-          }
-
-          .btn-export-outline {
-            background: rgba(255, 255, 255, 0.08);
-            color: #f8fafc;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-          }
-
-          .btn-export-outline:hover {
-            background: rgba(255, 255, 255, 0.14);
-          }
-
-          .btn-ghost {
-            background: #f1f5f9;
-            color: #334155;
-            border: 1.5px solid #e2e8f0 !important;
-          }
-
-          .btn-ghost:hover {
-            background: #e2e8f0;
-          }
-
-          .search-wrap {
-            position: relative;
-            margin-bottom: 20px;
-          }
-
-          .search-icon {
-            position: absolute;
-            left: 16px;
-            top: 50%;
-            transform: translateY(-50%);
-            font-size: 14px;
-            opacity: 0.5;
-          }
-
-          .search-input {
-            width: 100%;
-            box-sizing: border-box;
-            padding: 13px 16px 13px 42px !important;
-            border-radius: 10px !important;
-            border: 1px solid #e2e8f0 !important;
-            font-size: 14px;
-            background: #fff !important;
-          }
-
-          .styled-input:focus {
-            border-color: #f59e0b !important;
-            box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
-          }
-
-          .kpi-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 20px;
-          }
-
-          :global(.kpi-tile) {
-            background: #fff;
-            border-radius: 12px;
-            padding: 18px 20px;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
-            transition: transform 0.15s ease, box-shadow 0.15s ease;
-          }
-
-          :global(.kpi-tile:hover) {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 18px -10px rgba(15, 23, 42, 0.25);
-          }
-
-          .card {
-            background: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
-            border: 1px solid #eef2f7;
-            animation: fadeSlideUp 0.4s ease both;
-          }
-
-          .filter-card {
-            padding: 16px 20px;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: flex-end;
-            gap: 16px;
-            flex-wrap: wrap;
-          }
-
-          .table-card {
-            padding: 20px;
-          }
-
-          .table-wrap {
-            overflow-x: auto;
-          }
-
-          .styled-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-          }
-
-          .styled-table thead th {
-            text-align: left;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            color: #94a3b8;
-            font-weight: 700;
-            padding: 10px 12px;
-            border-bottom: 2px solid #f1f5f9;
-            white-space: nowrap;
-          }
-
-          .styled-table tbody tr {
-            animation: fadeSlideUp 0.3s ease both;
-            transition: background 0.12s ease;
-          }
-
-          .styled-table tbody tr:hover {
-            background: #fafaf9;
-          }
-
-          .styled-table td {
-            padding: 12px;
-            border-bottom: 1px solid #f1f5f9;
-            color: #1e293b;
-          }
-
-          .styled-table td.muted {
-            color: #94a3b8;
-          }
-
-          .styled-table td.strong {
-            font-weight: 600;
-          }
-
-          :global(.row-link) {
-            color: #0f172a;
-            text-decoration: none;
-            font-weight: 600;
-          }
-
-          :global(.row-link:hover) {
-            color: #f59e0b;
-          }
-
-          .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: #94a3b8;
-            font-size: 14px;
-          }
-
-          @keyframes heroShift {
-            0% {
-              background-position: 0% 50%;
-            }
-            50% {
-              background-position: 100% 50%;
-            }
-            100% {
-              background-position: 0% 50%;
-            }
-          }
-
-          @keyframes float {
-            0%,
-            100% {
-              transform: translateY(0px);
-            }
-            50% {
-              transform: translateY(16px);
-            }
-          }
-
-          @keyframes fadeSlideUp {
-            from {
-              opacity: 0;
-              transform: translateY(8px);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0);
-            }
-          }
+          @media (max-width: 900px) { .tabs-row { flex-direction: column; align-items: flex-start; } .search { border-left: none; padding-left: 0; } }
         `}</style>
       </>
     </ProtectedRoute>
-  );
-}
-
-function SummaryCard({ title, value, color }) {
-  return (
-    <div className="kpi-tile" style={{ borderLeft: `4px solid ${color}` }}>
-      <div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.03em", textTransform: "uppercase", color: "#94a3b8", marginBottom: "8px" }}>
-        {title}
-      </div>
-      <div style={{ fontSize: "26px", fontWeight: 800, color, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-    </div>
-  );
-}
-
-function FilterSelect({ label, value, options, onChange }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-      <label style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>{label}</label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          border: "1px solid #e2e8f0",
-          borderRadius: "10px",
-          padding: "10px 12px",
-          fontSize: "14px",
-          minWidth: "160px",
-          background: "#f8fafc",
-          outline: "none",
-        }}
-      >
-        <option value="">All {label}s</option>
-        {options.map((opt) => (
-          <option key={opt} value={opt}>
-            {opt}
-          </option>
-        ))}
-      </select>
-    </div>
   );
 }

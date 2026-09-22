@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
 
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
 const inputStyle = {
   width: "100%",
   padding: "11px 14px",
@@ -215,13 +217,13 @@ export default function WebinarReports() {
   const [pollBreakdown, setPollBreakdown] = useState([]);
 
   const loadSessions = async () => {
-    const res = await fetch("http://127.0.0.1:8000/sessions");
+    const res = await fetch(`${API}/sessions`);
     const data = await res.json();
     setSessions(data.filter((s) => s.session_type === "Webinar Session"));
   };
 
   const loadReports = async () => {
-    const res = await fetch("http://127.0.0.1:8000/zoom-analytics");
+    const res = await fetch(`${API}/zoom-analytics`);
     const data = await res.json();
     setReports(data);
   };
@@ -231,7 +233,7 @@ export default function WebinarReports() {
       setRegistrations([]);
       return;
     }
-    const res = await fetch(`http://127.0.0.1:8000/webinar-registrations/${sessionId}`);
+    const res = await fetch(`${API}/webinar-registrations/${sessionId}`);
     const data = await res.json();
     setRegistrations(data);
   };
@@ -279,10 +281,7 @@ export default function WebinarReports() {
       const body = new FormData();
       body.append("file", importFile);
 
-      const res = await fetch(
-        `http://127.0.0.1:8000/webinar-registrations/${form.session_id}/import`,
-        { method: "POST", body }
-      );
+      const res = await fetch(`${API}/webinar-registrations/${form.session_id}/import`, { method: "POST", body });
       const data = await res.json();
       let statusMsg = data.message || "Import complete.";
 
@@ -323,10 +322,7 @@ export default function WebinarReports() {
       const body = new FormData();
       body.append("file", attendanceFile);
 
-      const res = await fetch(
-        `http://127.0.0.1:8000/webinar-registrations/${form.session_id}/import`,
-        { method: "POST", body }
-      );
+      const res = await fetch(`${API}/webinar-registrations/${form.session_id}/import`, { method: "POST", body });
       const data = await res.json();
       let statusMsg = data.message || "Import complete.";
 
@@ -517,7 +513,7 @@ export default function WebinarReports() {
         body: JSON.stringify(payload),
       });
     } else {
-      await fetch("http://127.0.0.1:8000/zoom-analytics", {
+      await fetch(`${API}/zoom-analytics`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

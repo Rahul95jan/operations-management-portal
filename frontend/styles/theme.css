@@ -38,3 +38,59 @@
 body {
   background: var(--om-bg-page);
 }
+
+/* ------------------------------------------------------------------------
+   Portal-wide dark mode.
+
+   Home, Profile, Login and the admin pages carry their own dark styling (the
+   --om-* variables above). Every other page was built light-only with fixed
+   colours, so in dark mode it is rendered through an inverted colour filter
+   (light surfaces become dark, dark text becomes light, hues are preserved).
+   The filter changes colours only — never layout — and text/background
+   contrast is preserved automatically.
+
+   <html data-portal-invert> is set by pages/_document.js and pages/_app.js for
+   every route that is not theme-native (see lib/theme.js).
+   ------------------------------------------------------------------------ */
+html[data-theme="dark"][data-portal-invert] {
+  /* A full invert (no partial strength) is what lets the restore filter below
+     reproduce colours exactly — a partial invert clips very dark/light colours,
+     which turned the logo's black box grey. brightness() only softens the
+     page's pure white text / pure black surfaces. */
+  filter: invert(1) hue-rotate(180deg) brightness(0.92);
+}
+
+/* Exposed page background: pre-inversion value, so it ends up dark too. */
+html[data-theme="dark"][data-portal-invert] body {
+  background: #f1f5f9;
+}
+
+/* Things that must keep their real colours: photos/logos, the (always dark)
+   sidebar and the dark hero banners. This is the exact inverse of the page
+   filter above (brightness(1/0.92), then hue-rotate and invert in reverse order),
+   so they render as designed. */
+html[data-theme="dark"][data-portal-invert] img,
+html[data-theme="dark"][data-portal-invert] video,
+html[data-theme="dark"][data-portal-invert] picture,
+html[data-theme="dark"][data-portal-invert] [class~="sidebar"],
+html[data-theme="dark"][data-portal-invert] [class~="page-hero"],
+html[data-theme="dark"][data-portal-invert] [class~="hero"],
+html[data-theme="dark"][data-portal-invert] [class~="banner"],
+html[data-theme="dark"][data-portal-invert] [data-keep-colors],
+/* Chart marks (bars, slices, lines, legend swatches) keep their real colours so
+   red/amber/green keep their meaning; axis text and gridlines still follow the page. */
+html[data-theme="dark"][data-portal-invert] .recharts-sector,
+html[data-theme="dark"][data-portal-invert] .recharts-rectangle,
+html[data-theme="dark"][data-portal-invert] .recharts-bar-rectangle path,
+html[data-theme="dark"][data-portal-invert] .recharts-line-curve,
+html[data-theme="dark"][data-portal-invert] .recharts-area-area,
+html[data-theme="dark"][data-portal-invert] .recharts-dot,
+html[data-theme="dark"][data-portal-invert] .recharts-scatter-symbol path,
+html[data-theme="dark"][data-portal-invert] .recharts-legend-icon {
+  filter: brightness(1.087) hue-rotate(180deg) invert(1);
+}
+
+/* Already restored by their container — don't restore twice. */
+html[data-theme="dark"][data-portal-invert] :is([class~="sidebar"], [class~="page-hero"], [class~="hero"], [class~="banner"], [data-keep-colors]) :is(img, video, picture) {
+  filter: none;
+}

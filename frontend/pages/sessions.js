@@ -173,7 +173,7 @@ function initials(name) {
 
 function mentorPhotoUrl(mentor) {
   if (!mentor || !mentor.photo_path) return null;
-  return `http://127.0.0.1:8000/mentors/${mentor.id}/photo?v=${encodeURIComponent(mentor.photo_path)}`;
+  return `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/mentors/${mentor.id}/photo?v=${encodeURIComponent(mentor.photo_path)}`;
 }
 
 // Shows the mentor's real photo from Mentor Management when one is on file
@@ -757,7 +757,6 @@ export default function Sessions() {
         <div className="page-hero">
           <div className="page-hero-blob" />
           <div className="page-hero-content">
-            <div className="page-hero-eyebrow">Operations</div>
             <h1 className="page-hero-title">Session Management</h1>
             <p className="page-hero-subtitle">
               Schedule new sessions, track status, and keep mentors &amp; batches in sync.

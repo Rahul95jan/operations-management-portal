@@ -1,0 +1,39 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Portal: Start All",
+      "detail": "Runs the FastAPI backend (:8000) and the Next.js frontend (:3000) in separate terminals.",
+      "dependsOn": ["Portal: Backend", "Portal: Frontend"],
+      "dependsOrder": "parallel",
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": true },
+      "runOptions": { "runOn": "folderOpen" },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Portal: Backend",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/backend.sh",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "portal",
+        "clear": true
+      }
+    },
+    {
+      "label": "Portal: Frontend",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/frontend.sh",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "group": "portal",
+        "clear": true
+      }
+    }
+  ]
+}

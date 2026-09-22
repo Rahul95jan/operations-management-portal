@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --page-bg: #f3f6fb;
+  --card-bg: #ffffff;
+  --card-border: #e6ebf3;
+  --navy-900: #0b1220;
+  --navy-800: #111c33;
+  --gold: #f5a623;
+  --gold-soft: #fff4d7;
+  --text-strong: #0f172a;
+  --text-muted: #64748b;
+  --text-soft: #94a3b8;
+  --shadow-card: 0 2px 10px rgba(15, 23, 42, 0.05);
+}
+
+html {
+  background: var(--page-bg);
+}
+
+body {
+  background: var(--page-bg);
+  color: var(--text-strong);
+  font-family: "Inter", sans-serif;
+}
+
+.font-display {
+  font-family: "Playfair Display", "Times New Roman", serif;
+}
+
+.font-script {
+  font-family: "Caveat", "Dancing Script", cursive;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

@@ -241,6 +241,7 @@ def build_tracking_table(db):
             "course_name": session.course_name,
             "batch_name": session.batch_name,
             "mentor_name": session.mentor_name,
+            "session_type": session.session_type or "Live Session",
             "required_count": agg["required_count"],
             "received_count": agg["received_count"],
             "missing_count": agg["missing_count"],

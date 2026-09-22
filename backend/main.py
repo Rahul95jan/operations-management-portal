@@ -192,22 +192,14 @@ def create_user(user: UserCreate):
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     from fastapi import HTTPException
 
-    # TEMPORARY DEBUG — remove before merging. Surfaces the real exception
-    # instead of a bare 500, to diagnose a production-only login failure.
-    try:
-        user = db.query(User).filter(User.username == payload.username).first()
-        if not user or not verify_password(payload.password, user.password_hash):
-            raise HTTPException(status_code=401, detail="Invalid username or password.")
-        if not user.is_active:
-            raise HTTPException(status_code=403, detail="This account has been deactivated.")
+    user = db.query(User).filter(User.username == payload.username).first()
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="This account has been deactivated.")
 
-        token = create_access_token(user)
-        return {"token": token, "user": user_public(user)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        raise HTTPException(status_code=500, detail={"debug_type": type(e).__name__, "debug_error": str(e), "debug_trace": traceback.format_exc()})
+    token = create_access_token(user)
+    return {"token": token, "user": user_public(user)}
 
 
 @app.get("/auth/me")

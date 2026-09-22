@@ -1,6 +1,7 @@
 import PollTrendChart from "../components/PollTrendChart";
 import { useEffect, useState } from "react";
 import AttendanceChart from "../components/AttendanceChart";
+import { API } from "../lib/config";
 export default function SessionAnalytics() {
   const [summary, setSummary] = useState({
   total_sessions: 0,
@@ -58,37 +59,25 @@ useEffect(() => {
 
 const fetchMentorPerformance = async () => {
   try {
-    const res = await fetch(
-      "http://127.0.0.1:8000/mentor-performance"
-    );
-
+    const res = await fetch(`${API}/mentor-performance`);
     const data = await res.json();
-
     setMentorPerformance(data);
-
   } catch (err) {
     console.log(err);
   }
 };
 const fetchPollTrend = async () => {
   try {
-    const res = await fetch(
-      "http://127.0.0.1:8000/poll-trend"
-    );
-
+    const res = await fetch(`${API}/poll-trend`);
     const data = await res.json();
-
     setPollTrend(data);
-
   } catch (err) {
     console.log(err);
   }
 };
   const fetchSummary = async () => {
     try {
-      const res = await fetch(
-        "http://127.0.0.1:8000/session-analytics-summary"
-      );
+      const res = await fetch(`${API}/session-analytics-summary`);
 
       const data = await res.json();
 
@@ -100,9 +89,7 @@ const fetchPollTrend = async () => {
 
   const fetchAnalytics = async () => {
     try {
-      const res = await fetch(
-        "http://127.0.0.1:8000/session-analytics"
-      );
+      const res = await fetch(`${API}/session-analytics`);
 
       const data = await res.json();
 
@@ -113,9 +100,7 @@ const fetchPollTrend = async () => {
   };
   const fetchAttendanceTrend = async () => {
   try {
-    const res = await fetch(
-      "http://127.0.0.1:8000/attendance-trend"
-    );
+    const res = await fetch(`${API}/attendance-trend`);
 
     const data = await res.json();
 
@@ -128,9 +113,7 @@ const fetchPollTrend = async () => {
 
 const fetchPollSummary = async () => {
   try {
-    const res = await fetch(
-      "http://127.0.0.1:8000/poll-summary"
-    );
+    const res = await fetch(`${API}/poll-summary`);
 
     const data = await res.json();
 

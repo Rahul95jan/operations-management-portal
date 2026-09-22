@@ -1,25 +1,62 @@
 import { useEffect, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
+import SettingsCard from "../components/settings/SettingsCard";
+import SettingsInput from "../components/settings/SettingsInput";
+import FormField from "../components/settings/FormField";
+import ToggleRow from "../components/settings/ToggleRow";
+import StatusTile from "../components/settings/StatusTile";
+import ReminderWindowBar from "../components/settings/ReminderWindowBar";
+import SaveBar from "../components/settings/SaveBar";
+import {
+  Package,
+  Mail,
+  BellRing,
+  CalendarClock,
+  Scale,
+  Tags,
+  Target,
+  Video,
+  Zap,
+  Clock,
+  Info,
+  RefreshCw,
+  AlertTriangle,
+  Timer,
+} from "lucide-react";
 
-const API = "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+const pad = (n) => String(n).padStart(2, "0");
+
+const JUMP_LINKS = [
+  { href: "#email", label: "Email Notifications" },
+  { href: "#reminders", label: "Reminder Automation" },
+  { href: "#deadlines", label: "Resource Deadlines" },
+  { href: "#mentor-360", label: "Mentor 360" },
+  { href: "#webinars", label: "Webinar Operations" },
+];
 
 export default function Settings() {
   const [settings, setSettings] = useState(null);
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [schedulerStatus, setSchedulerStatus] = useState(null);
   const [mentorConfig, setMentorConfig] = useState(null);
   const [webinarConfig, setWebinarConfig] = useState(null);
 
   const load = () => {
+    setLoadError(false);
+
     fetch(`${API}/settings`)
       .then((res) => res.json())
       .then((data) => {
         setSettings(data);
         setForm(data);
-      });
+      })
+      .catch(() => setLoadError(true));
 
     fetch(`${API}/resource-scheduler/status`)
       .then((res) => res.json())
@@ -67,6 +104,9 @@ export default function Settings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      // A rejected save (e.g. validation error) returns an error body, not the
+      // settings — don't let it replace the form.
+      if (!res.ok) throw new Error("save failed");
       const data = await res.json();
       setSettings(data);
       setForm(data);
@@ -79,46 +119,102 @@ export default function Settings() {
     }
   };
 
+  const handleDiscard = () => {
+    setForm(settings);
+    setSaved(false);
+  };
+
   const dirty = settings && form && JSON.stringify(settings) !== JSON.stringify(form);
 
   const liveStatus = form ? (form.email_notifications_enabled && form.reminder_scheduler_enabled ? "Active" : "Paused") : "—";
+
+  const maxWeight = mentorConfig ? Math.max(...Object.values(mentorConfig.dimension_weights), 1) : 1;
+
+  const windowText = form ? `${pad(Number(form.reminder_window_start_hour) || 0)}:00 – ${pad(Number(form.reminder_window_end_hour) || 0)}:00` : "—";
 
   return (
     <ProtectedRoute>
       <>
         <Sidebar />
 
-        <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
+        <div className="page">
           {/* Header */}
-          <div className="page-hero">
-            <div className="page-hero-blob" />
-            <div className="page-hero-content">
-              <div className="page-hero-eyebrow">Configuration</div>
-              <h1 className="page-hero-title">⚙️ Settings</h1>
-              <p className="page-hero-subtitle">
-                One place for how every module in the portal behaves — Resource Portal settings are live and
-                editable here; Mentor 360 and Webinar Operations are shown read-only for now (see each card for why).
+          <div className="hero">
+            <div className="hero-blob" />
+            <div className="hero-content">
+              <div className="hero-eyebrow">Configuration</div>
+              <h1>Settings</h1>
+              <p>
+                One place for how every module in the portal behaves. Resource Portal settings are live and editable here;
+                Mentor 360 and Webinar Operations are shown read-only for now (see each card for why).
               </p>
             </div>
-            <div className={`page-hero-stat ${liveStatus === "Active" ? "" : "page-hero-stat-muted"}`}>
-              <div className="page-hero-stat-value">{liveStatus}</div>
-              <div className="page-hero-stat-label">Automation Status</div>
+            <div className={`hero-stat ${liveStatus === "Active" ? "" : "hero-stat-muted"}`}>
+              <div className="hero-stat-value">
+                <span className="hero-dot" /> {liveStatus}
+              </div>
+              <div className="hero-stat-label">Automation Status</div>
             </div>
           </div>
 
-          {!form ? (
-            <div className="card">
-              <div className="empty-state">Loading…</div>
+          {loadError ? (
+            <div className="state-card">
+              <AlertTriangle size={26} />
+              <h3>Couldn&apos;t load settings</h3>
+              <p>Check that the backend is running, then try again.</p>
+              <button className="btn-retry" onClick={load}><RefreshCw size={14} /> Retry</button>
+            </div>
+          ) : !form ? (
+            <div className="skeletons" aria-busy="true" aria-label="Loading settings">
+              <div className="sk-tiles">{[0, 1, 2, 3].map((i) => <div key={i} className="sk sk-tile" />)}</div>
+              <div className="sk sk-card" />
+              <div className="sk sk-card sk-card-tall" />
             </div>
           ) : (
             <>
-              <GroupHeader icon="📦" title="Resource Portal" />
+              {/* Summary */}
+              <div className="tiles">
+                <StatusTile
+                  icon={Mail}
+                  label="Email Notifications"
+                  value={form.email_notifications_enabled ? "On" : "Paused"}
+                  sub={form.email_notifications_enabled ? "Mentors are being emailed" : "Nothing is emailed right now"}
+                  tone={form.email_notifications_enabled ? "green" : "amber"}
+                />
+                <StatusTile
+                  icon={BellRing}
+                  label="Auto Reminders"
+                  value={form.reminder_scheduler_enabled ? "On" : "Off"}
+                  sub={form.reminder_scheduler_enabled ? `Every ${form.reminder_interval_hours || 2}h · final after ${form.max_reminders_before_final}` : "Overdue resources aren't chased"}
+                  tone={form.reminder_scheduler_enabled ? "green" : "slate"}
+                />
+                <StatusTile icon={Clock} label="Reminder Window" value={windowText} sub={form.reminder_timezone || "No timezone set"} tone="slate" />
+                <StatusTile
+                  icon={Timer}
+                  label="Default Deadline"
+                  value={`${form.resource_default_deadline_hours}h`}
+                  sub={form.weekend_deadline_enabled ? "Weekend sessions due Monday" : "Weekend rule off"}
+                  tone="slate"
+                />
+              </div>
 
-              <Section
-                icon="✉️"
+              <nav className="jump" aria-label="Jump to section">
+                <span className="jump-label">Jump to</span>
+                {JUMP_LINKS.map((l) => <a key={l.href} href={l.href}>{l.label}</a>)}
+              </nav>
+
+              <div className="group-head">
+                <span className="group-icon"><Package size={16} strokeWidth={2.2} /></span>
+                <h2>Resource Portal</h2>
+                <div className="group-line" />
+              </div>
+
+              <SettingsCard
+                id="email"
+                icon={Mail}
+                tone="blue"
                 title="Email Notifications"
                 description="Controls every automated email the Resource Portal sends: initial requests, reminders, submission confirmations, and operations notifications."
-                delay={0}
               >
                 <ToggleRow
                   label="Enable email notifications"
@@ -127,23 +223,23 @@ export default function Settings() {
                   warning={!form.email_notifications_enabled ? "Notifications are paused — nothing will be emailed to mentors right now." : null}
                 />
 
-                <Field label="Operations notification email" hint="Optional — gets pinged whenever a mentor submits a resource. Leave blank to disable.">
-                  <input
+                <FormField label="Operations notification email" hint="Optional — gets pinged whenever a mentor submits a resource. Leave blank to disable.">
+                  <SettingsInput
                     type="email"
                     value={form.ops_notification_email || ""}
                     onChange={(e) => update("ops_notification_email", e.target.value)}
                     placeholder="ops-team@yourcompany.com"
-                    className="styled-input"
-                    style={inputStyle}
+                    width="460px"
                   />
-                </Field>
-              </Section>
+                </FormField>
+              </SettingsCard>
 
-              <Section
-                icon="⏰"
+              <SettingsCard
+                id="reminders"
+                icon={BellRing}
+                tone="amber"
                 title="Reminder Automation"
                 description="The scheduler checks for overdue resources in the background. Sending itself is gated by this toggle AND the Email Notifications switch above — both must be on."
-                delay={0.05}
               >
                 <ToggleRow
                   label="Enable automatic reminders"
@@ -152,531 +248,268 @@ export default function Settings() {
                   warning={form.reminder_scheduler_enabled ? `This will start emailing mentors with overdue resources automatically, every ${form.reminder_interval_hours || 2}h per requirement (within the reminder window below), with no further confirmation.` : null}
                 />
 
-                <Field label={'Reminders before escalating to "Final Reminder"'}>
-                  <input
-                    type="number"
-                    min="1"
-                    value={form.max_reminders_before_final}
-                    onChange={(e) => update("max_reminders_before_final", e.target.value)}
-                    className="styled-input"
-                    style={{ ...inputStyle, maxWidth: "120px" }}
-                  />
-                </Field>
-
-                <Field label="Reminder interval (hours)" hint="How often an overdue requirement can be re-reminded. This is the real per-requirement cadence — live, no restart needed.">
-                  <input
-                    type="number"
-                    min="0.5"
-                    step="0.5"
-                    value={form.reminder_interval_hours}
-                    onChange={(e) => update("reminder_interval_hours", e.target.value)}
-                    className="styled-input"
-                    style={{ ...inputStyle, maxWidth: "120px" }}
-                  />
-                </Field>
-
-                <div style={{ display: "flex", gap: "18px" }}>
-                  <Field label="Reminder window start (hour, 0-23)">
-                    <input
+                <div className="grid-2">
+                  <FormField label={'Reminders before escalating to "Final Reminder"'}>
+                    <SettingsInput
                       type="number"
-                      min="0"
-                      max="23"
-                      value={form.reminder_window_start_hour}
-                      onChange={(e) => update("reminder_window_start_hour", e.target.value)}
-                      className="styled-input"
-                      style={{ ...inputStyle, maxWidth: "120px" }}
+                      min="1"
+                      value={form.max_reminders_before_final}
+                      onChange={(e) => update("max_reminders_before_final", e.target.value)}
+                      unit="reminders"
+                      width="220px"
                     />
-                  </Field>
-                  <Field label="Reminder window end (hour, 0-23)">
-                    <input
+                  </FormField>
+
+                  <FormField label="Reminder interval" hint="How often an overdue requirement can be re-reminded. This is the real per-requirement cadence — live, no restart needed.">
+                    <SettingsInput
                       type="number"
-                      min="0"
-                      max="23"
-                      value={form.reminder_window_end_hour}
-                      onChange={(e) => update("reminder_window_end_hour", e.target.value)}
-                      className="styled-input"
-                      style={{ ...inputStyle, maxWidth: "120px" }}
+                      min="0.5"
+                      step="0.5"
+                      value={form.reminder_interval_hours}
+                      onChange={(e) => update("reminder_interval_hours", e.target.value)}
+                      unit="hours"
+                      width="220px"
                     />
-                  </Field>
+                  </FormField>
                 </div>
 
-                <Field label="Timezone" hint="IANA timezone used for the reminder window and the weekend deadline rule below.">
-                  <input
-                    type="text"
-                    value={form.reminder_timezone || ""}
-                    onChange={(e) => update("reminder_timezone", e.target.value)}
-                    placeholder="Asia/Kolkata"
-                    className="styled-input"
-                    style={{ ...inputStyle, maxWidth: "220px" }}
-                  />
-                </Field>
+                <div>
+                  <div className="subhead">Reminder window</div>
+                  <div className="grid-3">
+                    <FormField label="Start hour (0-23)">
+                      <SettingsInput
+                        type="number"
+                        min="0"
+                        max="23"
+                        value={form.reminder_window_start_hour}
+                        onChange={(e) => update("reminder_window_start_hour", e.target.value)}
+                        unit="o'clock"
+                      />
+                    </FormField>
+                    <FormField label="End hour (0-23)">
+                      <SettingsInput
+                        type="number"
+                        min="0"
+                        max="23"
+                        value={form.reminder_window_end_hour}
+                        onChange={(e) => update("reminder_window_end_hour", e.target.value)}
+                        unit="o'clock"
+                      />
+                    </FormField>
+                    <FormField label="Timezone" hint="IANA timezone used for the window and the weekend deadline rule.">
+                      <SettingsInput
+                        type="text"
+                        value={form.reminder_timezone || ""}
+                        onChange={(e) => update("reminder_timezone", e.target.value)}
+                        placeholder="Asia/Kolkata"
+                      />
+                    </FormField>
+                  </div>
+                  <div className="window-bar">
+                    <ReminderWindowBar start={form.reminder_window_start_hour} end={form.reminder_window_end_hour} timezone={form.reminder_timezone} />
+                  </div>
+                </div>
 
                 {schedulerStatus && (
-                  <p className="hint-text">
-                    Note: this is different from the background check's own tick, which runs every {schedulerStatus.interval_hours}h
-                    (set via <code>RESOURCE_REMINDER_INTERVAL_HOURS</code> — needs a server restart to change). The reminder interval
-                    above controls whether any given requirement is actually due for a resend when that tick runs.
-                  </p>
+                  <div className="note">
+                    <Info size={16} />
+                    <p>
+                      This is different from the background check&apos;s own tick, which runs every {schedulerStatus.interval_hours}h
+                      (set via <code>RESOURCE_REMINDER_INTERVAL_HOURS</code> — needs a server restart to change). The reminder interval
+                      above controls whether any given requirement is actually due for a resend when that tick runs.
+                    </p>
+                  </div>
                 )}
-              </Section>
+              </SettingsCard>
 
-              <Section
-                icon="📅"
+              <SettingsCard
+                id="deadlines"
+                icon={CalendarClock}
+                tone="green"
                 title="Resource Deadlines"
                 description="Default deadline applied when Operations configures required resources without specifying one."
-                delay={0.1}
               >
-                <Field label="Default deadline (hours after configuration)">
-                  <input
+                <FormField label="Default deadline (hours after configuration)">
+                  <SettingsInput
                     type="number"
                     min="1"
                     value={form.resource_default_deadline_hours}
                     onChange={(e) => update("resource_default_deadline_hours", e.target.value)}
-                    className="styled-input"
-                    style={{ ...inputStyle, maxWidth: "120px" }}
+                    unit="hours"
+                    width="220px"
                   />
-                </Field>
+                </FormField>
 
-                <ToggleRow
-                  label="Weekend sessions due first-half Monday"
-                  checked={form.weekend_deadline_enabled}
-                  onChange={(v) => update("weekend_deadline_enabled", v)}
-                />
-                <p className="hint-text">
-                  When on, Saturday/Sunday sessions get a due date on the following Monday at the reminder window's start hour,
-                  instead of the flat default-deadline offset above.
-                </p>
-              </Section>
+                <div>
+                  <ToggleRow
+                    label="Weekend sessions due first-half Monday"
+                    checked={form.weekend_deadline_enabled}
+                    onChange={(v) => update("weekend_deadline_enabled", v)}
+                  />
+                  <div className="note note-inline">
+                    <Info size={16} />
+                    <p>
+                      When on, Saturday/Sunday sessions get a due date on the following Monday at the reminder window&apos;s start hour,
+                      instead of the flat default-deadline offset above.
+                    </p>
+                  </div>
+                </div>
+              </SettingsCard>
 
-              <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "36px" }}>
-                <button onClick={handleSave} disabled={saving || !dirty} className="btn btn-save">
-                  {saving ? "Saving..." : "Save Settings"}
-                </button>
+              <SaveBar dirty={!!dirty} saving={saving} saved={saved} updatedAt={settings?.updated_at} onSave={handleSave} onDiscard={handleDiscard} />
 
-                {saved && <span className="saved-chip">✓ Saved</span>}
-                {settings?.updated_at && (
-                  <span className="updated-text">Last updated {new Date(settings.updated_at).toLocaleString()}</span>
-                )}
+              <div className="group-head">
+                <span className="group-icon"><Target size={16} strokeWidth={2.2} /></span>
+                <h2>Mentor 360</h2>
+                <div className="group-line" />
               </div>
-
-              <GroupHeader icon="🎯" title="Mentor 360" />
-              <Section
-                icon="⚖️"
+              <SettingsCard
+                id="mentor-360"
+                icon={Scale}
+                tone="purple"
                 title="Business Score Weights"
+                badge="Read-only"
                 description="How the 8 dimensions combine into the overall Mentor Business Score. Currently fixed in code, not database-backed — shown here for reference until it's made editable."
-                delay={0}
               >
                 {mentorConfig ? (
                   <>
-                    <div className="weights-grid">
+                    <div className="weights">
                       {Object.entries(mentorConfig.dimension_weights).map(([key, weight]) => (
-                        <div key={key} className="weight-row">
-                          <span className="weight-label">{key.replace(/_/g, " ")}</span>
-                          <span className="weight-value">{weight}%</span>
+                        <div key={key} className="weight">
+                          <div className="weight-top">
+                            <span className="weight-label">{key.replace(/_/g, " ")}</span>
+                            <span className="weight-value">{weight}%</span>
+                          </div>
+                          <div className="weight-track"><div className="weight-fill" style={{ width: `${(weight / maxWeight) * 100}%` }} /></div>
                         </div>
                       ))}
                     </div>
-                    <p className="hint-text" style={{ marginTop: "14px" }}>
-                      Classification bands: {mentorConfig.classification_bands.map((b) => `${b.label} ≥${b.min_score}`).join(" · ")}
-                    </p>
+                    <div>
+                      <div className="subhead">Classification bands</div>
+                      <div className="chips">
+                        {mentorConfig.classification_bands.map((b) => (
+                          <span key={b.label} className="chip chip-band">{b.label} <b>≥ {b.min_score}</b></span>
+                        ))}
+                      </div>
+                    </div>
                   </>
                 ) : (
-                  <p className="hint-text">Unable to load — is the backend running?</p>
+                  <p className="muted">Unable to load — is the backend running?</p>
                 )}
-              </Section>
+              </SettingsCard>
 
-              <GroupHeader icon="🎥" title="Webinar Operations" />
-              <Section
-                icon="🏷️"
+              <div className="group-head">
+                <span className="group-icon"><Video size={16} strokeWidth={2.2} /></span>
+                <h2>Webinar Operations</h2>
+                <div className="group-line" />
+              </div>
+              <SettingsCard
+                id="webinars"
+                icon={Tags}
+                tone="slate"
                 title="Status Vocabularies"
+                badge="Read-only"
                 description="The fixed status values used across the Webinar Scheduler and Leads pages. Currently fixed in code, not database-backed — shown here for reference until it's made editable."
-                delay={0}
               >
                 {webinarConfig ? (
-                  <>
-                    <Field label="Webinar Status">
-                      <div className="chip-row">
-                        {webinarConfig.webinar_statuses.map((s) => <span key={s} className="ref-chip">{s}</span>)}
+                  <div className="grid-2">
+                    <div>
+                      <div className="subhead">Webinar Status</div>
+                      <div className="chips">
+                        {webinarConfig.webinar_statuses.map((s) => <span key={s} className="chip">{s}</span>)}
                       </div>
-                    </Field>
-                    <Field label="Lead Status">
-                      <div className="chip-row">
-                        {webinarConfig.lead_statuses.map((s) => <span key={s} className="ref-chip">{s}</span>)}
+                    </div>
+                    <div>
+                      <div className="subhead">Lead Status</div>
+                      <div className="chips">
+                        {webinarConfig.lead_statuses.map((s) => <span key={s} className="chip">{s}</span>)}
                       </div>
-                    </Field>
-                  </>
+                    </div>
+                  </div>
                 ) : (
-                  <p className="hint-text">Unable to load — is the backend running?</p>
+                  <p className="muted">Unable to load — is the backend running?</p>
                 )}
-              </Section>
+              </SettingsCard>
             </>
           )}
         </div>
 
         <style jsx>{`
-          .page-hero {
-            position: relative;
-            overflow: hidden;
-            border-radius: 18px;
-            padding: 30px 32px;
-            margin-bottom: 24px;
-            background: linear-gradient(120deg, #0f172a 0%, #1e293b 60%, #0f172a 100%);
-            background-size: 200% 200%;
-            animation: heroShift 12s ease infinite;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 20px;
-            box-shadow: 0 16px 32px -18px rgba(15, 23, 42, 0.55);
-          }
+          .page { margin-left: var(--om-sidebar-width, 280px); transition: margin-left 0.25s ease; padding: 28px 36px 40px; background: #f1f5f9; min-height: 100vh; }
 
-          .page-hero-blob {
-            position: absolute;
-            width: 220px;
-            height: 220px;
-            border-radius: 50%;
-            background: #22c55e;
-            filter: blur(60px);
-            opacity: 0.3;
-            top: -80px;
-            right: 160px;
-            animation: float 9s ease-in-out infinite;
-          }
+          .hero { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-radius: 18px; padding: 28px 32px; margin-bottom: 20px; background: linear-gradient(120deg, #0b1220 0%, #16233e 60%, #0b1220 100%); box-shadow: 0 16px 32px -18px rgba(15, 23, 42, 0.55); border: 1px solid rgba(245, 166, 35, 0.12); }
+          .hero-blob { position: absolute; width: 260px; height: 260px; border-radius: 50%; background: rgba(245, 166, 35, 0.28); filter: blur(70px); top: -100px; right: 200px; pointer-events: none; }
+          .hero-content { position: relative; z-index: 1; }
+          .hero-eyebrow { display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: #f5a623; background: rgba(245, 166, 35, 0.12); border: 1px solid rgba(245, 166, 35, 0.3); padding: 5px 11px; border-radius: 999px; margin-bottom: 12px; }
+          h1 { margin: 0 0 6px; font-size: 26px; font-weight: 800; color: #f8fafc; }
+          .hero-content p { margin: 0; max-width: 620px; font-size: 13.5px; line-height: 1.55; color: #94a3b8; }
+          .hero-stat { position: relative; z-index: 1; text-align: center; padding: 14px 26px; border-radius: 14px; background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.32); flex-shrink: 0; }
+          .hero-stat-muted { background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.3); }
+          .hero-stat-value { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 22px; font-weight: 800; color: #4ade80; }
+          .hero-stat-muted .hero-stat-value { color: #fbbf24; }
+          .hero-dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08); }
+          .hero-stat-label { font-size: 11px; color: #94a3b8; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
 
-          .page-hero-content {
-            position: relative;
-            z-index: 1;
-          }
+          .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
 
-          .page-hero-eyebrow {
-            display: inline-block;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: #fbbf24;
-            background: rgba(251, 191, 36, 0.12);
-            border: 1px solid rgba(251, 191, 36, 0.3);
-            padding: 5px 10px;
-            border-radius: 999px;
-            margin-bottom: 10px;
-          }
+          .jump { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+          .jump-label { font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #94a3b8; margin-right: 4px; }
+          .jump a { font-size: 12.5px; font-weight: 600; color: #334155; background: #fff; border: 1px solid #e2e8f0; border-radius: 999px; padding: 6px 13px; text-decoration: none; transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease; }
+          .jump a:hover { border-color: #f59e0b; color: #92400e; background: #fffbeb; }
+          .jump a:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.3); }
 
-          .page-hero-title {
-            font-size: 26px;
-            font-weight: 800;
-            color: #f8fafc;
-            margin: 0 0 6px;
-          }
+          .group-head { display: flex; align-items: center; gap: 10px; margin: 10px 0 14px; }
+          .group-icon { width: 28px; height: 28px; border-radius: 8px; background: #0f172a; color: #facc15; display: flex; align-items: center; justify-content: center; }
+          h2 { margin: 0; font-size: 12.5px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #475569; }
+          .group-line { flex: 1; height: 1px; background: #dbe3ee; }
 
-          .page-hero-subtitle {
-            color: #94a3b8;
-            font-size: 14px;
-            margin: 0;
-            max-width: 520px;
-          }
+          .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; align-items: start; }
+          .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; align-items: start; }
+          .subhead { font-size: 12px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: #64748b; margin-bottom: 10px; }
+          .window-bar { margin-top: 16px; }
 
-          .page-hero-stat {
-            position: relative;
-            z-index: 1;
-            text-align: center;
-            padding: 14px 26px;
-            border-radius: 14px;
-            background: rgba(34, 197, 94, 0.12);
-            border: 1px solid rgba(34, 197, 94, 0.3);
-            flex-shrink: 0;
-          }
+          .note { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; background: #eff6ff; border: 1px solid #dbeafe; color: #1e40af; }
+          .note :global(svg) { flex-shrink: 0; margin-top: 2px; }
+          .note p { margin: 0; font-size: 12.5px; line-height: 1.55; }
+          .note code { background: rgba(37, 99, 235, 0.1); border-radius: 4px; padding: 1px 5px; font-size: 11.5px; }
+          .note-inline { margin-top: 10px; }
 
-          .page-hero-stat-muted {
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-          }
+          .weights { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+          .weight { padding: 12px 14px; background: #f8fafc; border: 1px solid #eef2f7; border-radius: 10px; }
+          .weight-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+          .weight-label { font-size: 13px; font-weight: 600; color: #334155; text-transform: capitalize; }
+          .weight-value { font-size: 14px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums; }
+          .weight-track { height: 6px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+          .weight-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #8b5cf6, #6366f1); }
 
-          .page-hero-stat-value {
-            font-size: 22px;
-            font-weight: 800;
-            color: #4ade80;
-          }
+          .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+          .chip { background: #eef2ff; color: #3730a3; font-size: 12px; font-weight: 600; padding: 6px 13px; border-radius: 999px; }
+          .chip-band { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; }
+          .chip-band b { color: #0f172a; margin-left: 3px; }
+          .muted { margin: 0; font-size: 13px; color: #94a3b8; }
 
-          .page-hero-stat-muted .page-hero-stat-value {
-            color: #fbbf24;
-          }
+          .state-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 50px 20px; background: #fff; border: 1px solid #e6ecf5; border-radius: 16px; text-align: center; color: #b45309; }
+          .state-card h3 { margin: 6px 0 0; font-size: 17px; color: #0f172a; }
+          .state-card p { margin: 0; font-size: 13px; color: #64748b; }
+          .btn-retry { margin-top: 12px; display: inline-flex; align-items: center; gap: 7px; background: #0f172a; color: #facc15; border: none; border-radius: 10px; padding: 10px 18px; font-size: 13px; font-weight: 700; cursor: pointer; }
 
-          .page-hero-stat-label {
-            font-size: 11px;
-            color: #94a3b8;
-            margin-top: 2px;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            white-space: nowrap;
-          }
+          .skeletons { display: flex; flex-direction: column; gap: 16px; }
+          .sk-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+          .sk { border-radius: 14px; background: linear-gradient(90deg, #e8edf4 25%, #f3f6fa 50%, #e8edf4 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+          .sk-tile { height: 96px; }
+          .sk-card { height: 180px; }
+          .sk-card-tall { height: 320px; }
+          @keyframes shimmer { to { background-position: -200% 0; } }
 
-          .card {
-            background: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
-            border: 1px solid #eef2f7;
-            padding: 22px;
+          @media (max-width: 1100px) { .tiles, .sk-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+          @media (max-width: 800px) {
+            .page { padding: 20px 16px 30px; }
+            .hero { flex-direction: column; align-items: flex-start; padding: 22px 20px; }
+            .grid-2, .grid-3 { grid-template-columns: 1fr; }
           }
-
-          :global(.settings-section) {
-            background: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
-            border: 1px solid #eef2f7;
-            padding: 22px;
-            margin-bottom: 20px;
-            animation: fadeSlideUp 0.4s ease both;
-          }
-
-          :global(.settings-section-title) {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-top: 0;
-            margin-bottom: 4px;
-            font-size: 16px;
-            color: #1e293b;
-          }
-
-          :global(.settings-section-desc) {
-            color: #94a3b8;
-            font-size: 13px;
-            margin-top: 0;
-            margin-bottom: 18px;
-          }
-
-          .styled-input:focus {
-            border-color: #f59e0b !important;
-            background: #ffffff !important;
-            box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
-          }
-
-          .hint-text {
-            font-size: 12px;
-            color: #94a3b8;
-            margin-top: 4px;
-          }
-
-          .weights-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 10px;
-          }
-
-          .weight-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 10px 14px;
-            background: #f8fafc;
-            border: 1px solid #eef2f7;
-            border-radius: 10px;
-          }
-
-          .weight-label {
-            font-size: 13px;
-            color: #334155;
-            text-transform: capitalize;
-          }
-
-          .weight-value {
-            font-size: 14px;
-            font-weight: 700;
-            color: #0f172a;
-          }
-
-          .chip-row {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-          }
-
-          .ref-chip {
-            background: #eef2ff;
-            color: #3730a3;
-            font-size: 12px;
-            font-weight: 600;
-            padding: 5px 12px;
-            border-radius: 999px;
-          }
-
-          .btn {
-            border: none;
-            border-radius: 10px;
-            padding: 12px 24px;
-            font-size: 14px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.15s ease;
-          }
-
-          .btn:disabled {
-            cursor: not-allowed;
-          }
-
-          .btn-save {
-            background: linear-gradient(120deg, #0f172a, #1e293b);
-            color: #facc15;
-            box-shadow: 0 6px 16px -6px rgba(15, 23, 42, 0.5);
-          }
-
-          .btn-save:hover:not(:disabled) {
-            transform: translateY(-1px);
-            box-shadow: 0 10px 20px -6px rgba(15, 23, 42, 0.6);
-          }
-
-          .btn-save:disabled {
-            background: #94a3b8;
-            color: #f1f5f9;
-            box-shadow: none;
-          }
-
-          .saved-chip {
-            color: #16a34a;
-            font-weight: 700;
-            font-size: 13px;
-          }
-
-          .updated-text {
-            color: #94a3b8;
-            font-size: 12px;
-          }
-
-          .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: #94a3b8;
-            font-size: 14px;
-          }
-
-          @keyframes heroShift {
-            0% {
-              background-position: 0% 50%;
-            }
-            50% {
-              background-position: 100% 50%;
-            }
-            100% {
-              background-position: 0% 50%;
-            }
-          }
-
-          @keyframes float {
-            0%,
-            100% {
-              transform: translateY(0px);
-            }
-            50% {
-              transform: translateY(16px);
-            }
-          }
-
-          @keyframes fadeSlideUp {
-            from {
-              opacity: 0;
-              transform: translateY(8px);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0);
-            }
-          }
+          @media (max-width: 520px) { .tiles, .sk-tiles { grid-template-columns: 1fr; } }
         `}</style>
       </>
     </ProtectedRoute>
   );
 }
-
-function GroupHeader({ icon, title }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "8px 0 14px" }}>
-      <span style={{ fontSize: "18px" }}>{icon}</span>
-      <h2 style={{ margin: 0, fontSize: "13px", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: "#64748b" }}>{title}</h2>
-      <div style={{ flex: 1, height: "1px", background: "#e2e8f0" }} />
-    </div>
-  );
-}
-
-function Section({ icon, title, description, children, delay = 0 }) {
-  return (
-    <div className="settings-section" style={{ animationDelay: `${delay}s` }}>
-      <h3 className="settings-section-title">
-        <span>{icon}</span> {title}
-      </h3>
-      <p className="settings-section-desc">{description}</p>
-      <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>{children}</div>
-    </div>
-  );
-}
-
-function Field({ label, hint, children }) {
-  return (
-    <div>
-      <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "6px", color: "#334155" }}>{label}</label>
-      {children}
-      {hint && <p style={{ color: "#94a3b8", fontSize: "12px", marginTop: "4px", marginBottom: 0 }}>{hint}</p>}
-    </div>
-  );
-}
-
-function ToggleRow({ label, checked, onChange, warning }) {
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: "14px", fontWeight: 600, color: "#1e293b" }}>{label}</span>
-        <Switch checked={checked} onChange={onChange} />
-      </div>
-      {warning && (
-        <p style={{ background: "#fffbeb", color: "#92400e", fontSize: "12px", padding: "8px 12px", borderRadius: "8px", marginTop: "8px" }}>
-          ⚠️ {warning}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function Switch({ checked, onChange }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      style={{
-        width: "44px",
-        height: "24px",
-        borderRadius: "999px",
-        border: "none",
-        background: checked ? "#16a34a" : "#cbd5e1",
-        position: "relative",
-        cursor: "pointer",
-        transition: "background 0.15s ease",
-        flexShrink: 0,
-      }}
-    >
-      <span
-        style={{
-          position: "absolute",
-          top: "3px",
-          left: checked ? "23px" : "3px",
-          width: "18px",
-          height: "18px",
-          borderRadius: "50%",
-          background: "#fff",
-          transition: "left 0.15s ease",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
-        }}
-      />
-    </button>
-  );
-}
-
-const inputStyle = {
-  width: "100%",
-  boxSizing: "border-box",
-  padding: "10px 12px",
-  borderRadius: "10px",
-  border: "1px solid #e2e8f0",
-  background: "#f8fafc",
-  fontSize: "14px",
-  outline: "none",
-};

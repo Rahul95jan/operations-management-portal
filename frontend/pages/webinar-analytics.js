@@ -1,728 +1,343 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
-import AnalyticsCard from "../components/AnalyticsCard";
+import KpiTile from "../components/webinarAnalytics/KpiTile";
+import AttendanceTrendCard from "../components/webinarAnalytics/AttendanceTrendCard";
+import PollAnalyticsCard from "../components/webinarAnalytics/PollAnalyticsCard";
+import InsightsPanel from "../components/webinarAnalytics/InsightsPanel";
+import AttentionPanel from "../components/webinarAnalytics/AttentionPanel";
+import KeyTakeaways from "../components/webinarAnalytics/KeyTakeaways";
+import WebinarReportPanel from "../components/webinarAnalytics/WebinarReportPanel";
+import { buildInsights, buildAttention, buildTakeaways, chartInsight, pollInsight, pollTotals } from "../lib/webinarAnalytics/insights";
+import {
+  Video,
+  Users,
+  UserCheck,
+  Percent,
+  MessageSquareText,
+  Star,
+  Heart,
+  Bell,
+  CalendarDays,
+  Presentation,
+  ChevronDown,
+  FileText,
+  FileSpreadsheet,
+  RefreshCw,
+  Quote,
+  AlertTriangle,
+} from "lucide-react";
 
-import ZoomAttendanceChart from "../components/ZoomAttendanceChart";
-import ZoomPollChart from "../components/ZoomPollChart";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-const selectStyle = {
-  width: "100%",
-  padding: "11px 14px",
-  borderRadius: "10px",
-  border: "1px solid #e2e8f0",
-  fontSize: "14px",
-  background: "#f8fafc",
-  boxSizing: "border-box",
-  outline: "none",
-};
-
-const fieldLabelStyle = {
-  display: "block",
-  fontSize: "12px",
-  fontWeight: 700,
-  letterSpacing: "0.03em",
-  color: "#64748b",
-  marginBottom: "6px",
-};
-
-function Field({ label, children }) {
-  return (
-    <div>
-      <label style={fieldLabelStyle}>{label}</label>
-      {children}
-    </div>
-  );
+function initials(name) {
+  if (!name) return "?";
+  return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("");
 }
 
-function InfoChip({ label, value }) {
-  return (
-    <div className="info-chip">
-      <div className="info-chip-label">{label}</div>
-      <div className="info-chip-value">{value ?? "—"}</div>
-    </div>
-  );
+function userPhotoUrl(user) {
+  if (!user || !user.photo_path) return null;
+  return `${API}/users/${user.id}/photo?v=${encodeURIComponent(user.photo_path)}`;
 }
 
-const HEALTH_STYLES = {
-  Excellent: { bg: "#dcfce7", color: "#15803d" },
-  Good: { bg: "#dbeafe", color: "#1d4ed8" },
-  "Needs Improvement": { bg: "#fef3c7", color: "#b45309" },
-  Poor: { bg: "#fee2e2", color: "#b91c1c" },
-};
+function buildQuery(params) {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v) qs.set(k, v);
+  });
+  const text = qs.toString();
+  return text ? `?${text}` : "";
+}
 
-function HealthBadge({ status }) {
-  const s = HEALTH_STYLES[status] || { bg: "#e2e8f0", color: "#475569" };
+function FilterField({ icon: Icon, label, value, onChange, children }) {
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "6px",
-        background: s.bg,
-        color: s.color,
-        fontSize: "13px",
-        fontWeight: 700,
-        padding: "6px 14px",
-        borderRadius: "999px",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {status || "—"}
-    </span>
+    <div className="filter-field">
+      <span className="filter-icon"><Icon size={26} strokeWidth={1.8} /></span>
+      <div className="filter-control">
+        <label>{label}</label>
+        <div className="select-wrap">
+          <select value={value} onChange={(e) => onChange(e.target.value)}>{children}</select>
+          <ChevronDown size={14} />
+        </div>
+      </div>
+
+      <style jsx>{`
+        .filter-field { display: flex; align-items: center; gap: 10px; flex: 1 1 170px; min-width: 150px; }
+        .filter-icon { color: #2563eb; display: flex; flex-shrink: 0; }
+        .filter-control { flex: 1; min-width: 0; }
+        label { display: block; font-size: 11.5px; font-weight: 700; color: #475569; margin-bottom: 4px; }
+        .select-wrap { position: relative; }
+        select { width: 100%; appearance: none; border: 1px solid #dbe3ee; border-radius: 8px; background: #fff; padding: 9px 30px 9px 12px; font-size: 12.5px; color: #0f172a; outline: none; cursor: pointer; text-overflow: ellipsis; }
+        select:focus { border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15); }
+        .select-wrap :global(svg) { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: #0f172a; }
+      `}</style>
+    </div>
   );
 }
 
 export default function WebinarAnalytics() {
-  const [summary, setSummary] = useState(null);
-
-  const [attendanceTrend, setAttendanceTrend] = useState([]);
-  const [pollData, setPollData] = useState([]);
-
   const [webinars, setWebinars] = useState([]);
   const [selectedDate, setSelectedDate] = useState("");
-  const [selectedWebinar, setSelectedWebinar] = useState("");
   const [selectedMentor, setSelectedMentor] = useState("");
-  const [selectedCourse, setSelectedCourse] = useState("");
-  const [selectedReport, setSelectedReport] = useState(null);
+  const [selectedKey, setSelectedKey] = useState(""); // index into `webinars`
+
+  const [summary, setSummary] = useState(null);
+  const [attendanceTrend, setAttendanceTrend] = useState([]);
+  const [pollData, setPollData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const [report, setReport] = useState(null);
   const [registrations, setRegistrations] = useState([]);
+  const [notice, setNotice] = useState("");
+  const [attentionExpanded, setAttentionExpanded] = useState(false);
+
+  const [currentUser, setCurrentUser] = useState(null);
+
+  const selectedWebinar = selectedKey !== "" ? webinars[Number(selectedKey)] : null;
+  const selectedTitle = selectedWebinar ? selectedWebinar.title : "";
 
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/zoom-summary")
-      .then((res) => res.json())
-      .then((data) => setSummary(data));
-
-    fetch("http://127.0.0.1:8000/zoom-attendance-trend")
-      .then((res) => res.json())
-      .then((data) => setAttendanceTrend(data));
-
-    fetch("http://127.0.0.1:8000/zoom-poll-analytics")
-      .then((res) => res.json())
-      .then((data) => setPollData(data));
-
-    fetch("http://127.0.0.1:8000/webinars")
-      .then((res) => res.json())
-      .then((data) => setWebinars(data));
+    fetch(`${API}/webinars`).then((r) => r.json()).then((d) => setWebinars(Array.isArray(d) ? d : [])).catch(() => {});
+    fetch(`${API}/users/me`).then((r) => r.json()).then(setCurrentUser).catch(() => setCurrentUser(null));
   }, []);
 
-  const generateReport = () => {
-    if (!selectedWebinar) {
-      alert("Please select a webinar");
-      return;
-    }
-
-    fetch(`http://127.0.0.1:8000/webinar-report/${selectedWebinar}`)
-      .then((res) => res.json())
-      .then((data) => {
-        setSelectedReport(data);
+  // Date / Mentor / Webinar filters drive every KPI, chart and insight below.
+  useEffect(() => {
+    const qs = buildQuery({ date: selectedDate, mentor: selectedMentor, title: selectedTitle });
+    setLoading(true);
+    setError("");
+    Promise.all([
+      fetch(`${API}/zoom-summary${qs}`).then((r) => r.json()),
+      fetch(`${API}/zoom-attendance-trend${qs}`).then((r) => r.json()),
+      fetch(`${API}/zoom-poll-analytics${qs}`).then((r) => r.json()),
+    ])
+      .then(([sum, trend, polls]) => {
+        setSummary(sum);
+        setAttendanceTrend(Array.isArray(trend) ? trend : []);
+        setPollData(Array.isArray(polls) ? polls : []);
+        setLastUpdated(new Date());
       })
-      .catch((err) => console.error(err));
+      .catch(() => setError("Couldn't load webinar analytics. Please check your connection and try again."))
+      .finally(() => setLoading(false));
+  }, [selectedDate, selectedMentor, selectedTitle]);
 
-    fetch(`http://127.0.0.1:8000/webinar-registrations/${selectedWebinar}`)
-      .then((res) => res.json())
-      .then((data) => setRegistrations(data))
-      .catch((err) => console.error(err));
+  const dateOptions = useMemo(() => [...new Set(webinars.map((w) => w.date).filter(Boolean))].sort().reverse(), [webinars]);
+  const mentorOptions = useMemo(() => [...new Set(webinars.map((w) => w.mentor).filter(Boolean))].sort(), [webinars]);
+  const webinarOptions = useMemo(
+    () =>
+      webinars
+        .map((w, index) => ({ ...w, index }))
+        .filter((w) => (!selectedDate || w.date === selectedDate) && (!selectedMentor || w.mentor === selectedMentor)),
+    [webinars, selectedDate, selectedMentor]
+  );
+
+  const changeDate = (v) => { setSelectedDate(v); setSelectedKey(""); setReport(null); setNotice(""); };
+  const changeMentor = (v) => { setSelectedMentor(v); setSelectedKey(""); setReport(null); setNotice(""); };
+  const changeWebinar = (v) => { setSelectedKey(v); setReport(null); setNotice(""); };
+
+  // Individual-webinar actions need a webinar that has a linked session record.
+  const requireReportableWebinar = () => {
+    if (!selectedWebinar) {
+      setNotice("Please select a webinar first.");
+      return null;
+    }
+    if (!selectedWebinar.session_id) {
+      setNotice("This webinar has no linked session record, so a detailed report isn't available.");
+      return null;
+    }
+    setNotice("");
+    return selectedWebinar.session_id;
   };
 
-  if (!summary) {
-    return (
-      <ProtectedRoute>
-        <>
-          <Sidebar />
-          <div
-            style={{
-              marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease",
-              minHeight: "100vh",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexDirection: "column",
-              gap: "14px",
-              background: "#f1f5f9",
-            }}
-          >
-            <div className="spinner" />
-            <div style={{ color: "#64748b", fontSize: "14px" }}>Loading webinar analytics…</div>
-          </div>
-          <style jsx>{`
-            .spinner {
-              width: 36px;
-              height: 36px;
-              border-radius: 50%;
-              border: 3px solid #e2e8f0;
-              border-top-color: #f59e0b;
-              animation: spin 0.8s linear infinite;
-            }
-            @keyframes spin {
-              to {
-                transform: rotate(360deg);
-              }
-            }
-          `}</style>
-        </>
-      </ProtectedRoute>
-    );
-  }
+  const generateReport = () => {
+    const id = requireReportableWebinar();
+    if (!id) return;
+    fetch(`${API}/webinar-report/${id}`).then((r) => r.json()).then(setReport).catch(() => setNotice("Couldn't generate the report."));
+    fetch(`${API}/webinar-registrations/${id}`).then((r) => r.json()).then((d) => setRegistrations(Array.isArray(d) ? d : [])).catch(() => setRegistrations([]));
+  };
+
+  const exportPdf = () => {
+    const id = requireReportableWebinar();
+    if (id) window.open(`${API}/export-webinar-pdf/${id}`, "_blank");
+  };
+
+  const exportExcel = () => {
+    window.open(`${API}/webinar-analytics/export-excel${buildQuery({ date: selectedDate, mentor: selectedMentor, title: selectedTitle })}`, "_blank");
+  };
+
+  const insights = useMemo(() => buildInsights(summary, attendanceTrend), [summary, attendanceTrend]);
+  const attention = useMemo(() => buildAttention(summary, attendanceTrend, pollData), [summary, attendanceTrend, pollData]);
+  const takeaways = useMemo(() => buildTakeaways(summary, attendanceTrend), [summary, attendanceTrend]);
+  const totals = useMemo(() => pollTotals(pollData), [pollData]);
 
   return (
     <ProtectedRoute>
       <>
         <Sidebar />
 
-        <div
-          style={{
-            marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease",
-            padding: "32px 36px 60px",
-            background: "#f1f5f9",
-            minHeight: "100vh",
-          }}
-        >
-          {/* Header */}
-          <div className="page-hero">
-            <div className="page-hero-blob" />
-            <div className="page-hero-content">
-              <div className="page-hero-eyebrow">Learner Feedback</div>
-              <h1 className="page-hero-title">Webinar Analytics Dashboard</h1>
-              <p className="page-hero-subtitle">
-                Attendance, engagement, and poll performance across live webinars.
-              </p>
+        <div className="page">
+          {/* Hero */}
+          <div className="hero">
+            <div className="hero-glow" />
+            <div className="hero-left">
+              <div className="hero-eyebrow">Learner Engagement</div>
+              <h1>Webinar Analytics Dashboard</h1>
+              <p>Track attendance, engagement and performance across all your webinars.</p>
             </div>
-            <div className="page-hero-stat">
-              <div className="page-hero-stat-value">{summary.attendance_rate}%</div>
-              <div className="page-hero-stat-label">Attendance Rate</div>
+            <div className="hero-tagline">
+              <Quote size={12} />
+              <span>Better Webinars<br />Build Brighter Careers”</span>
             </div>
-          </div>
-
-          {/* Webinar Filter */}
-          <div className="card">
-            <h2 className="card-title">📄 Individual Webinar Report</h2>
-
-            <div className="filter-grid">
-              <Field label="📅 Date">
-                <select className="styled-input" style={selectStyle} value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}>
-                  <option value="">All Dates</option>
-                  {[...new Set(webinars.map((item) => item.date))].map((date) => (
-                    <option key={date} value={date}>
-                      {date}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="👨‍🏫 Mentor">
-                <select className="styled-input" style={selectStyle} value={selectedMentor} onChange={(e) => setSelectedMentor(e.target.value)}>
-                  <option value="">All Mentors</option>
-                  {[...new Set(webinars.map((item) => item.mentor))].map((mentor) => (
-                    <option key={mentor} value={mentor}>
-                      {mentor}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="🎥 Webinar">
-                <select className="styled-input" style={selectStyle} value={selectedWebinar} onChange={(e) => setSelectedWebinar(e.target.value)}>
-                  <option value="">Select Webinar</option>
-                  {webinars
-                    .filter((item) => {
-                      const dateMatch = selectedDate === "" || item.date === selectedDate;
-                      const mentorMatch = selectedMentor === "" || item.mentor === selectedMentor;
-                      return dateMatch && mentorMatch;
-                    })
-                    .map((item) => (
-                      <option key={item.session_id} value={item.session_id}>
-                        {item.title} | {item.mentor} | {item.batch} | {item.date}
-                      </option>
-                    ))}
-                </select>
-              </Field>
-
-              <div style={{ alignSelf: "end" }}>
-                <button className="btn btn-primary" onClick={generateReport} style={{ width: "100%" }}>
-                  Generate Report
-                </button>
-              </div>
+            <div className="hero-user">
+              <span className="hero-bell"><Bell size={16} strokeWidth={2.1} /></span>
+              {currentUser && (
+                <>
+                  {userPhotoUrl(currentUser) ? (
+                    <img src={userPhotoUrl(currentUser)} alt={currentUser.name} className="hero-avatar" />
+                  ) : (
+                    <span className="hero-avatar hero-avatar-fallback">{initials(currentUser.name)}</span>
+                  )}
+                  <div className="hero-user-text">
+                    <div className="hero-user-name">{currentUser.name}</div>
+                    <div className="hero-user-role">{currentUser.role || ""}</div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
-          {/* Webinar Details */}
-          {selectedReport && (
-            <div className="card" style={{ marginTop: "24px" }}>
-              <h2 className="card-title">📄 Individual Webinar Report</h2>
+          {/* Filters */}
+          <div className="filters">
+            <FilterField icon={CalendarDays} label="Date" value={selectedDate} onChange={changeDate}>
+              <option value="">All Dates</option>
+              {dateOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+            </FilterField>
+            <FilterField icon={Users} label="Mentor" value={selectedMentor} onChange={changeMentor}>
+              <option value="">All Mentors</option>
+              {mentorOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+            </FilterField>
+            <FilterField icon={Presentation} label="Webinar" value={selectedKey} onChange={changeWebinar}>
+              <option value="">Select Webinar</option>
+              {webinarOptions.map((w) => (
+                <option key={w.index} value={w.index}>{`${(w.title || "Untitled").trim()} | ${w.mentor || "—"} | ${w.date || "—"}`}</option>
+              ))}
+            </FilterField>
 
-              <h3 className="subsection-title">Webinar Information</h3>
-              <div className="info-grid">
-                <InfoChip label="Title" value={selectedReport.title} />
-                <InfoChip label="Course" value={selectedReport.course} />
-                <InfoChip label="Batch" value={selectedReport.batch} />
-                <InfoChip label="Mentor" value={selectedReport.mentor} />
-                <InfoChip label="Mentor Email" value={selectedReport.mentor_email} />
-                <InfoChip label="Date" value={selectedReport.date} />
-                <InfoChip label="Time" value={selectedReport.time} />
-                <InfoChip label="Duration" value={`${selectedReport.duration} mins`} />
-                <InfoChip label="Platform" value={selectedReport.platform} />
-                <InfoChip label="Status" value={selectedReport.status} />
+            <button className="btn-generate" onClick={generateReport}>Generate Report</button>
+            <div className="export-group">
+              <button className="btn-pdf" onClick={exportPdf}><FileText size={14} /> Export PDF</button>
+              <button className="btn-excel" onClick={exportExcel}><FileSpreadsheet size={14} /> Export Excel</button>
+            </div>
+          </div>
+          {notice && (
+            <div className="notice"><AlertTriangle size={14} /> {notice}</div>
+          )}
+
+          {error && <div className="error-banner">{error}</div>}
+
+          {/* KPI row */}
+          {summary ? (
+            <div className={`kpis ${loading ? "kpis-loading" : ""}`}>
+              <KpiTile icon={Video} label="Total Webinars" value={summary.total_webinars} color="blue" />
+              <KpiTile icon={Users} label="Registered Learners" value={summary.registered_learners} color="green" />
+              <KpiTile icon={UserCheck} label="Attended Learners" value={summary.attended_learners} color="blue" />
+              <KpiTile icon={Percent} label="Attendance Rate" value={`${summary.attendance_rate}%`} color="purple" />
+              <KpiTile icon={MessageSquareText} label="Poll Response Rate" value={`${summary.poll_response_rate}%`} color="green" />
+              <KpiTile icon={Star} label="Session Rating" value={summary.session_rating} color="amber" />
+              <KpiTile icon={Heart} label="Health Score" value={summary.webinar_health_score} suffix="/ 100" color="red" />
+            </div>
+          ) : (
+            <div className="loading-box"><RefreshCw size={16} className="spin" /> Loading webinar analytics…</div>
+          )}
+
+          {summary && (
+            <>
+              <div className="row row-attendance">
+                <AttendanceTrendCard data={attendanceTrend} average={summary.total_webinars ? summary.attendance_rate : null} insight={chartInsight(summary, attendanceTrend)} />
+                <InsightsPanel insights={insights} />
               </div>
 
-              <h3 className="subsection-title">📊 Webinar Performance</h3>
-              <div className="kpi-grid">
-                <AnalyticsCard title="Registered Learners" value={selectedReport.registered_learners} color="#2563eb" />
-                <AnalyticsCard title="Attended Learners" value={selectedReport.attended_learners} color="#16a34a" />
-                <AnalyticsCard title="Attendance %" value={`${selectedReport.attendance_rate}%`} color="#0891b2" />
-                <AnalyticsCard title="No Shows" value={selectedReport.no_show_learners} color="#dc2626" />
-                <AnalyticsCard title="Polls Conducted" value={selectedReport.polls_conducted} color="#9333ea" />
-                <AnalyticsCard title="Poll Responses" value={selectedReport.poll_responses} color="#7c3aed" />
-                <AnalyticsCard title="Poll Response %" value={`${selectedReport.poll_response_rate}%`} color="#f59e0b" />
-                <AnalyticsCard title="Engagement Score" value={selectedReport.engagement_score} color="#ea580c" />
+              <div className="row row-poll">
+                <PollAnalyticsCard polls={pollData} totals={totals} insight={pollInsight(pollData)} />
+                <AttentionPanel
+                  items={attention}
+                  healthStatus={summary.total_webinars ? summary.webinar_health_status : ""}
+                  expanded={attentionExpanded}
+                  onToggle={() => setAttentionExpanded((v) => !v)}
+                />
               </div>
 
-              <h3 className="subsection-title">🩺 Webinar Health</h3>
-              <div className="health-row">
-                <div className="health-score">
-                  <div className="health-score-value">{selectedReport.webinar_health_score}</div>
-                  <div className="health-score-label">Health Score / 100</div>
-                </div>
-                <HealthBadge status={selectedReport.webinar_health_status} />
-                <div className="info-grid" style={{ flex: 1 }}>
-                  <InfoChip label="Dropout Rate" value={`${selectedReport.dropout_rate}%`} />
-                  <InfoChip label="Q&A Resolution Rate" value={`${selectedReport.qa_resolution_rate}%`} />
-                  <InfoChip label="Learner Satisfaction" value={`⭐ ${selectedReport.learner_satisfaction}`} />
-                </div>
+              <div className="row-single">
+                <KeyTakeaways items={takeaways} />
               </div>
+            </>
+          )}
 
-              <h3 className="subsection-title">🧑‍🎓 Registered Learners ({registrations.length})</h3>
-              <div className="table-scroll">
-                <table className="reg-table">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Email</th>
-                      <th>Phone</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {registrations.length === 0 && (
-                      <tr>
-                        <td colSpan={3} style={{ textAlign: "center", color: "#94a3b8", padding: "16px" }}>
-                          No registration records for this webinar.
-                        </td>
-                      </tr>
-                    )}
-                    {registrations.map((learner) => (
-                      <tr key={learner.id}>
-                        <td>{learner.learner_name}</td>
-                        <td className="muted">{learner.learner_email}</td>
-                        <td className="muted">{learner.phone ?? "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <h3 className="subsection-title">📊 Attendance Summary</h3>
-              <div className="info-grid">
-                <InfoChip label="Registered Learners" value={selectedReport.registered_learners} />
-                <InfoChip label="Attended Learners" value={selectedReport.attended_learners} />
-                <InfoChip label="Attendance Rate" value={`${selectedReport.attendance_rate}%`} />
-                <InfoChip label="No Shows" value={selectedReport.no_show_learners} />
-                <InfoChip label="No Show Rate" value={`${selectedReport.no_show_rate}%`} />
-                <InfoChip label="Peak Concurrent Users" value={selectedReport.peak_concurrent_users} />
-              </div>
-
-              <h3 className="subsection-title">📊 Poll Analytics</h3>
-              <div className="info-grid">
-                <InfoChip label="Polls Conducted" value={selectedReport.polls_conducted} />
-                <InfoChip label="Poll Responses" value={selectedReport.poll_responses} />
-                <InfoChip label="Response Rate" value={`${selectedReport.poll_response_rate}%`} />
-                <InfoChip label="Average Rating" value={selectedReport.poll_average_rating} />
-                <InfoChip label="Highest Rated Poll" value={selectedReport.highest_rated_poll} />
-                <InfoChip label="Engagement Score" value={selectedReport.engagement_score} />
-              </div>
+          {report && (
+            <div className="row-single">
+              <WebinarReportPanel report={report} registrations={registrations} />
             </div>
           )}
 
-          {/* Export */}
-          <div className="export-row">
-            <button
-              className="btn btn-export-pdf"
-              onClick={() => {
-                if (!selectedWebinar) {
-                  alert("Please select a webinar first.");
-                  return;
-                }
-
-                window.open(`http://127.0.0.1:8000/export-webinar-pdf/${selectedWebinar}`, "_blank");
-              }}
-            >
-              📄 Export PDF
-            </button>
-
-            <button className="btn btn-export-excel">📊 Export Excel</button>
-          </div>
-
-          {/* Overall Dashboard */}
-          <div className="section-title-row">
-            <h2 className="section-title">📊 Overall Dashboard</h2>
-            <div className="overall-health">
-              <span className="overall-health-label">Overall Webinar Health</span>
-              <HealthBadge status={summary.webinar_health_status} />
-            </div>
-          </div>
-
-          <div className="kpi-grid" style={{ marginBottom: "10px" }}>
-            <AnalyticsCard title="Total Webinars" value={summary.total_webinars} color="#2563eb" />
-            <AnalyticsCard title="Registered Learners" value={summary.registered_learners} color="#16a34a" />
-            <AnalyticsCard title="Attended Learners" value={summary.attended_learners} color="#0891b2" />
-            <AnalyticsCard title="Attendance Rate" value={`${summary.attendance_rate}%`} color="#9333ea" />
-            <AnalyticsCard title="Poll Response Rate" value={`${summary.poll_response_rate}%`} color="#0d9488" />
-            <AnalyticsCard title="Session Rating" value={`⭐ ${summary.session_rating}`} color="#059669" />
-            <AnalyticsCard title="Health Score" value={`${summary.webinar_health_score} / 100`} color="#be123c" />
-          </div>
-
-          <ZoomAttendanceChart data={attendanceTrend} />
-          <ZoomPollChart data={pollData} />
+          <footer className="foot">
+            <span><RefreshCw size={12} /> Last updated: {lastUpdated ? lastUpdated.toLocaleString(undefined, { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</span>
+            <em>“Insight today. Impact tomorrow.”</em>
+          </footer>
         </div>
 
         <style jsx>{`
-          .page-hero {
-            position: relative;
-            overflow: hidden;
-            border-radius: 18px;
-            padding: 30px 32px;
-            margin-bottom: 24px;
-            background: linear-gradient(120deg, #0f172a 0%, #1e293b 60%, #0f172a 100%);
-            background-size: 200% 200%;
-            animation: heroShift 12s ease infinite;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 20px;
-            box-shadow: 0 16px 32px -18px rgba(15, 23, 42, 0.55);
-          }
+          .page { margin-left: var(--om-sidebar-width, 280px); transition: margin-left 0.25s ease; padding: 0 22px 24px; background: #f1f5f9; min-height: 100vh; }
 
-          .page-hero-blob {
-            position: absolute;
-            width: 220px;
-            height: 220px;
-            border-radius: 50%;
-            background: #8b5cf6;
-            filter: blur(60px);
-            opacity: 0.3;
-            top: -80px;
-            right: 160px;
-            animation: float 9s ease-in-out infinite;
-          }
+          .hero { position: relative; overflow: hidden; display: flex; align-items: center; gap: 24px; margin: 0 -22px 14px; padding: 18px 30px 20px; background: linear-gradient(115deg, #0b1220 0%, #101b33 55%, #0b1220 100%); border-radius: 0 0 16px 16px; box-shadow: 0 10px 28px -16px rgba(11, 18, 32, 0.8); }
+          .hero-glow { position: absolute; width: 320px; height: 220px; right: 22%; top: -110px; background: rgba(245, 166, 35, 0.16); filter: blur(70px); pointer-events: none; }
+          .hero-left { position: relative; z-index: 1; flex: 1; min-width: 0; }
+          .hero-eyebrow { display: inline-block; font-size: 9.5px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: #f5a623; border: 1px solid rgba(245, 166, 35, 0.6); border-radius: 999px; padding: 3px 9px; margin-bottom: 8px; }
+          h1 { margin: 0 0 4px; font-size: 21px; font-weight: 800; color: #f8fafc; line-height: 1.2; }
+          .hero-left p { margin: 0; font-size: 11.5px; color: #94a3b8; }
+          .hero-tagline { position: relative; z-index: 1; display: flex; align-items: flex-start; gap: 6px; font-family: "Playfair Display", Georgia, serif; font-style: italic; font-size: 13px; color: #94a3b8; text-align: left; line-height: 1.5; }
+          .hero-user { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; }
+          .hero-bell { color: #e2e8f0; display: flex; }
+          .hero-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
+          .hero-avatar-fallback { background: linear-gradient(135deg, #7c3aed, #6366f1); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; }
+          .hero-user-name { font-size: 12px; font-weight: 700; color: #f8fafc; }
+          .hero-user-role { font-size: 10.5px; color: #94a3b8; }
 
-          .page-hero-content {
-            position: relative;
-            z-index: 1;
-          }
+          .filters { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; background: #fff; border: 1px solid #e8edf5; border-radius: 12px; padding: 14px 18px; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); margin-bottom: 14px; }
+          .btn-generate { flex: 1.2 1 130px; border: none; border-radius: 8px; padding: 11px 18px; font-size: 13px; font-weight: 700; color: #0f172a; cursor: pointer; background: linear-gradient(90deg, #f59e0b, #fbbf24); box-shadow: 0 6px 14px -8px rgba(245, 158, 11, 0.8); transition: transform 0.15s ease; }
+          .btn-generate:hover { transform: translateY(-1px); }
+          .export-group { display: flex; gap: 8px; padding-left: 14px; border-left: 1px solid #e8edf5; flex-shrink: 0; }
+          .btn-pdf, .btn-excel { display: inline-flex; align-items: center; gap: 6px; border: none; border-radius: 6px; padding: 10px 13px; font-size: 12px; font-weight: 700; color: #fff; cursor: pointer; white-space: nowrap; transition: transform 0.15s ease; }
+          .btn-pdf { background: #dc2626; }
+          .btn-excel { background: #16a34a; }
+          .btn-pdf:hover, .btn-excel:hover { transform: translateY(-1px); }
 
-          .page-hero-eyebrow {
-            display: inline-block;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: #fbbf24;
-            background: rgba(251, 191, 36, 0.12);
-            border: 1px solid rgba(251, 191, 36, 0.3);
-            padding: 5px 10px;
-            border-radius: 999px;
-            margin-bottom: 10px;
-          }
+          .notice { display: flex; align-items: center; gap: 8px; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 8px; padding: 9px 14px; font-size: 12.5px; font-weight: 600; margin: -6px 0 14px; }
+          .error-banner { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 14px; }
 
-          .page-hero-title {
-            font-size: 26px;
-            font-weight: 800;
-            color: #f8fafc;
-            margin: 0 0 6px;
-          }
+          .kpis { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; transition: opacity 0.15s ease; }
+          .kpis-loading { opacity: 0.55; }
+          .loading-box { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 60px 0; color: #64748b; font-size: 13.5px; }
+          .loading-box :global(.spin) { animation: spin 0.9s linear infinite; }
 
-          .page-hero-subtitle {
-            color: #94a3b8;
-            font-size: 14px;
-            margin: 0;
-          }
+          .row { display: grid; gap: 14px; margin-bottom: 14px; }
+          .row-attendance { grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); }
+          .row-poll { grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); }
+          .row-single { margin-bottom: 14px; }
 
-          .page-hero-stat {
-            position: relative;
-            z-index: 1;
-            text-align: center;
-            padding: 14px 26px;
-            border-radius: 14px;
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            flex-shrink: 0;
-          }
+          .foot { display: flex; align-items: center; justify-content: space-between; padding: 6px 4px 0; font-size: 11px; color: #64748b; }
+          .foot span { display: inline-flex; align-items: center; gap: 6px; }
+          .foot em { font-family: "Playfair Display", Georgia, serif; }
 
-          .page-hero-stat-value {
-            font-size: 26px;
-            font-weight: 800;
-            color: #fbbf24;
-          }
+          @keyframes spin { to { transform: rotate(360deg); } }
 
-          .page-hero-stat-label {
-            font-size: 11px;
-            color: #94a3b8;
-            margin-top: 2px;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
+          @media (max-width: 1500px) { .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+          @media (max-width: 1200px) {
+            .row-attendance, .row-poll { grid-template-columns: 1fr; }
+            .hero-tagline { display: none; }
           }
-
-          .card {
-            background: #ffffff;
-            border-radius: 16px;
-            padding: 26px 28px;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
-            border: 1px solid #eef2f7;
-            animation: fadeSlideUp 0.4s ease both;
-          }
-
-          .card-title {
-            margin: 0 0 18px;
-            font-size: 17px;
-            color: #1e293b;
-          }
-
-          .subsection-title {
-            font-size: 14px;
-            color: #475569;
-            margin: 26px 0 14px;
-            padding-top: 18px;
-            border-top: 1px solid #f1f5f9;
-          }
-
-          .subsection-title:first-of-type {
-            border-top: none;
-            padding-top: 0;
-            margin-top: 8px;
-          }
-
-          .filter-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 16px;
-            align-items: end;
-          }
-
-          .styled-input:focus {
-            border-color: #f59e0b !important;
-            background: #ffffff !important;
-            box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
-          }
-
-          .btn {
-            border: none;
-            border-radius: 10px;
-            padding: 11px 20px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.15s ease;
-          }
-
-          .btn-primary {
-            background: linear-gradient(120deg, #f59e0b, #fbbf24);
-            color: #0f172a;
-            box-shadow: 0 6px 16px -6px rgba(245, 158, 11, 0.6);
-          }
-
-          .btn-primary:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 10px 20px -6px rgba(245, 158, 11, 0.7);
-          }
-
-          .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 14px;
-          }
-
-          :global(.info-chip) {
-            background: #f8fafc;
-            border: 1px solid #eef2f7;
-            border-radius: 10px;
-            padding: 12px 14px;
-          }
-
-          :global(.info-chip-label) {
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-            color: #94a3b8;
-            margin-bottom: 4px;
-          }
-
-          :global(.info-chip-value) {
-            font-size: 14px;
-            font-weight: 600;
-            color: #1e293b;
-          }
-
-          .kpi-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-            gap: 16px;
-          }
-
-          .export-row {
-            display: flex;
-            justify-content: flex-end;
-            gap: 14px;
-            margin: 24px 0;
-          }
-
-          .btn-export-pdf {
-            background: #dc2626;
-            color: #fff;
-          }
-
-          .btn-export-pdf:hover {
-            background: #b91c1c;
-            transform: translateY(-1px);
-          }
-
-          .btn-export-excel {
-            background: #16a34a;
-            color: #fff;
-          }
-
-          .btn-export-excel:hover {
-            background: #15803d;
-            transform: translateY(-1px);
-          }
-
-          .section-title {
-            font-size: 20px;
-            color: #1e293b;
-            margin: 0 0 16px;
-          }
-
-          .section-title-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin-bottom: 16px;
-          }
-
-          .section-title-row .section-title {
-            margin: 0;
-          }
-
-          .overall-health {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            background: #ffffff;
-            border: 1px solid #eef2f7;
-            border-radius: 999px;
-            padding: 6px 8px 6px 16px;
-          }
-
-          .overall-health-label {
-            font-size: 12px;
-            font-weight: 700;
-            color: #64748b;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-          }
-
-          .health-row {
-            display: flex;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 20px;
-            padding: 16px;
-            background: #f8fafc;
-            border: 1px solid #eef2f7;
-            border-radius: 12px;
-          }
-
-          .health-score {
-            text-align: center;
-            flex-shrink: 0;
-          }
-
-          .health-score-value {
-            font-size: 30px;
-            font-weight: 800;
-            color: #1e293b;
-          }
-
-          .health-score-label {
-            font-size: 11px;
-            color: #94a3b8;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-          }
-
-          .table-scroll {
-            overflow-x: auto;
-          }
-
-          .reg-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-          }
-
-          .reg-table th {
-            text-align: left;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-            color: #94a3b8;
-            padding: 10px 12px;
-            border-bottom: 2px solid #eef2f7;
-            white-space: nowrap;
-          }
-
-          .reg-table td {
-            padding: 10px 12px;
-            border-bottom: 1px solid #f1f5f9;
-            white-space: nowrap;
-          }
-
-          .reg-table .muted {
-            color: #64748b;
-          }
-
-          @keyframes heroShift {
-            0% {
-              background-position: 0% 50%;
-            }
-            50% {
-              background-position: 100% 50%;
-            }
-            100% {
-              background-position: 0% 50%;
-            }
-          }
-
-          @keyframes float {
-            0%,
-            100% {
-              transform: translateY(0px);
-            }
-            50% {
-              transform: translateY(16px);
-            }
-          }
-
-          @keyframes fadeSlideUp {
-            from {
-              opacity: 0;
-              transform: translateY(8px);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0);
-            }
-          }
+          @media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .export-group { border-left: none; padding-left: 0; } }
         `}</style>
       </>
     </ProtectedRoute>

@@ -3,9 +3,9 @@ import { useRouter } from "next/router";
 import Link from "next/link";
 import { Bell, ChevronDown, ChevronLeft, ChevronRight, LogOut, User as UserIcon, Settings as SettingsIcon, Sun, Moon, CalendarDays } from "lucide-react";
 import { clearSession } from "../lib/auth";
-import { getStoredTheme, setTheme } from "../lib/theme";
+import { setTheme, useTheme } from "../lib/theme";
 
-const API = "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 function initials(name) {
   if (!name) return "?";
@@ -39,7 +39,7 @@ export default function Header({ notificationCount = 0, notifications = [] }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [user, setUser] = useState(null);
-  const [theme, setThemeState] = useState("dark");
+  const theme = useTheme();
   const [now, setNow] = useState(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [viewDate, setViewDate] = useState(null);
@@ -48,7 +48,6 @@ export default function Header({ notificationCount = 0, notifications = [] }) {
 
   useEffect(() => {
     fetch(`${API}/users/me`).then((r) => r.json()).then(setUser).catch(() => setUser(null));
-    setThemeState(getStoredTheme());
     const nowDate = new Date();
     setNow(nowDate);
     setViewDate(nowDate);
@@ -60,7 +59,6 @@ export default function Header({ notificationCount = 0, notifications = [] }) {
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
-    setThemeState(next);
   };
 
   useEffect(() => {

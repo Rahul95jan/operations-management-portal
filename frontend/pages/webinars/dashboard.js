@@ -5,7 +5,7 @@ import OperationsKPI from "../../components/analytics/OperationsKPI";
 import BarChartCard from "../../components/resources/analytics/BarChartCard";
 import BreakdownDonutChart from "../../components/mentorPerformance/BreakdownDonutChart";
 
-const API = "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const EMPTY_FILTERS = { mentor_name: "", category: "", status: "", date_from: "", date_to: "" };
 const STATUS_OPTIONS = ["Draft", "Scheduled", "Live", "Completed", "Cancelled", "Rescheduled"];

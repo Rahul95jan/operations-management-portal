@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import Head from "next/head";
 import ResourceRow from "../../../components/resources/ResourceRow";
+import { API } from "../../../lib/config";
 
 function rowFromRequirement(req) {
   return {
@@ -42,7 +43,7 @@ export default function SubmitResourcesByToken() {
   useEffect(() => {
     if (!token) return;
 
-    fetch(`http://127.0.0.1:8000/resources/submit/${token}`)
+    fetch(`${API}/resources/submit/${token}`)
       .then((res) => res.json())
       .then((data) => {
         if (!data.success) {
@@ -98,7 +99,7 @@ export default function SubmitResourcesByToken() {
         if (row.file) body.append("file", row.file);
 
         try {
-          const res = await fetch(`http://127.0.0.1:8000/resources/submit/${token}`, {
+          const res = await fetch(`${API}/resources/submit/${token}`, {
             method: "POST",
             body,
           });

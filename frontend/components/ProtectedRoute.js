@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { getToken, getStoredUser, setStoredUser, hasPermission, clearSession } from "../lib/auth";
 
-const API = "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 function sectionLabel(section) {
   if (!section) return null;
@@ -72,7 +72,26 @@ export default function ProtectedRoute({ children, permission }) {
     return () => { cancelled = true; };
   }, [router.pathname]);
 
-  if (status === "checking") return null;
+  if (status === "checking") {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#0b0f12",
+          color: "#cbd5e1",
+          fontFamily: "inherit",
+          fontSize: "14px",
+        }}
+      >
+        Checking your session…
+      </div>
+    );
+  }
   if (status === "denied") return <AccessDenied section={permission?.[0]} />;
   return children;
 }

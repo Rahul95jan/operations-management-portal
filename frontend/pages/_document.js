@@ -8,6 +8,11 @@ const THEME_INIT_SCRIPT = `
     var theme = localStorage.getItem("omTheme") || "dark";
     document.documentElement.setAttribute("data-theme", theme);
   } catch (e) {}
+  // Pages without their own dark styling get the portal-wide dark treatment
+  // (see styles/theme.css). Keep this list in sync with lib/theme.js.
+  var p = location.pathname;
+  var native = p === "/" || p === "/login" || p === "/nps" || p === "/profile" || p.indexOf("/admin/") === 0;
+  if (!native) document.documentElement.setAttribute("data-portal-invert", "");
 })();
 `;
 

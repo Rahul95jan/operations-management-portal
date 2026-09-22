@@ -4,6 +4,7 @@ const STATUS_STYLES = {
   Pending: { bg: "#fef9c3", color: "#854d0e" },
   "Partially Submitted": { bg: "#dbeafe", color: "#1e40af" },
   Delayed: { bg: "#ffedd5", color: "#9a3412" },
+  Late: { bg: "#ffedd5", color: "#9a3412" },
   Overdue: { bg: "#fee2e2", color: "#991b1b" },
   "Not Required": { bg: "#f1f5f9", color: "#64748b" },
 };

@@ -13,24 +13,23 @@ import {
   PieChart,
   Video,
   FilePlus2,
-  Package,
   ListChecks,
-  Clock,
-  TrendingUp,
-  Award,
+  UploadCloud,
   Gauge,
   FileBarChart,
   Settings as SettingsIcon,
   LogOut,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   UserCog,
   History,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { hasPermission, isSuperAdmin, clearSession } from "../lib/auth";
+import { setTheme, useTheme } from "../lib/theme";
 
-const API = "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 function initials(name) {
   if (!name) return "?";
@@ -66,11 +65,8 @@ export default function Sidebar() {
     } catch (e) {}
   }, [collapsed]);
 
-  const [resourcesOpen, setResourcesOpen] = useState(
-    router.pathname === "/resources" ||
-      router.pathname.startsWith("/resources/") ||
-      router.pathname.startsWith("/resource-analytics")
-  );
+  const theme = useTheme();
+  const isDark = theme === "dark";
 
   const logout = () => {
     clearSession();
@@ -78,10 +74,11 @@ export default function Sidebar() {
   };
 
   const isActive = (href) => router.pathname === href;
-  const resourcesGroupActive =
-    router.pathname === "/resources" ||
-    router.pathname.startsWith("/resources/") ||
-    router.pathname.startsWith("/resource-analytics");
+  // The tracker also owns the per-session detail page reached from it.
+  const resourceTrackerActive =
+    router.pathname === "/resources/tracking" ||
+    router.pathname === "/resources/pending" ||
+    router.pathname === "/resources/[id]";
 
   return (
     <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
@@ -140,28 +137,8 @@ export default function Sidebar() {
               {hasPermission(user, "resources") && (
                 <>
                   <NavGroupLabel>Resource Portal</NavGroupLabel>
-                  <li className={`nav-item ${resourcesGroupActive ? "nav-item-parent-active" : ""}`}>
-                    <div className="nav-parent-row" onClick={() => setResourcesOpen((prev) => !prev)}>
-                      <Link href="/resources" className="nav-link nav-link-parent">
-                        <span className="nav-icon">
-                          <Package size={16} strokeWidth={2} />
-                        </span>
-                        <span className="nav-label">Resource Portal</span>
-                      </Link>
-                      <span className={`nav-chevron ${resourcesOpen ? "nav-chevron-open" : ""}`}>
-                        <ChevronDown size={14} strokeWidth={2.5} />
-                      </span>
-                    </div>
-
-                    <div className={`nav-submenu ${resourcesOpen ? "nav-submenu-open" : ""}`}>
-                      <ul className="nav-sublist">
-                        <SubNavItem href="/resources/tracking" icon={ListChecks} label="Resource Tracking" active={isActive("/resources/tracking")} />
-                        <SubNavItem href="/resources/pending" icon={Clock} label="Pending Resources" active={isActive("/resources/pending")} />
-                        <SubNavItem href="/resource-analytics" icon={TrendingUp} label="Resource Analytics" active={isActive("/resource-analytics")} />
-                        <SubNavItem href="/resource-analytics/mentors" icon={Award} label="Mentor Performance" active={isActive("/resource-analytics/mentors")} />
-                      </ul>
-                    </div>
-                  </li>
+                  <NavItem href="/resources" icon={UploadCloud} label="Upload Resource" active={isActive("/resources")} />
+                  <NavItem href="/resources/tracking" icon={ListChecks} label="Resource Tracker" active={resourceTrackerActive} />
                 </>
               )}
 
@@ -193,6 +170,19 @@ export default function Sidebar() {
             <div className="profile-role">{user?.role || "No role set"}</div>
           </div>
         </Link>
+
+        <button
+          type="button"
+          className="theme-btn"
+          onClick={() => setTheme(isDark ? "light" : "dark")}
+          role="switch"
+          aria-checked={isDark}
+          title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          <span className="theme-btn-icon">{isDark ? <Moon size={16} strokeWidth={2.2} /> : <Sun size={16} strokeWidth={2.2} />}</span>
+          <span className="theme-btn-label">{isDark ? "Dark mode" : "Light mode"}</span>
+          <span className={`theme-btn-track ${isDark ? "theme-btn-track-on" : ""}`}><span className="theme-btn-knob" /></span>
+        </button>
 
         <button onClick={logout} className="logout-btn" title="Logout">
           <LogOut size={16} strokeWidth={2.2} /> <span className="logout-label">Logout</span>
@@ -635,6 +625,83 @@ export default function Sidebar() {
           font-weight: 600;
         }
 
+        .theme-btn {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px 12px;
+          margin-bottom: 10px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 10px;
+          color: #cbd5e1;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: background 0.15s ease, border-color 0.15s ease;
+        }
+
+        .theme-btn:hover {
+          background: rgba(255, 255, 255, 0.09);
+          border-color: rgba(240, 199, 94, 0.35);
+        }
+
+        .theme-btn:focus-visible {
+          outline: 2px solid #f0c75e;
+          outline-offset: 2px;
+        }
+
+        .theme-btn-icon {
+          display: flex;
+          color: #f0c75e;
+        }
+
+        .theme-btn-label {
+          flex: 1;
+          text-align: left;
+        }
+
+        .theme-btn-track {
+          position: relative;
+          width: 34px;
+          height: 19px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.18);
+          flex-shrink: 0;
+          transition: background 0.18s ease;
+        }
+
+        .theme-btn-track-on {
+          background: #f0c75e;
+        }
+
+        .theme-btn-knob {
+          position: absolute;
+          top: 2px;
+          left: 2px;
+          width: 15px;
+          height: 15px;
+          border-radius: 50%;
+          background: #fff;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+          transition: transform 0.18s ease;
+        }
+
+        .theme-btn-track-on .theme-btn-knob {
+          transform: translateX(15px);
+        }
+
+        .sidebar-collapsed .theme-btn {
+          justify-content: center;
+          padding: 10px 0;
+        }
+
+        .sidebar-collapsed .theme-btn-label,
+        .sidebar-collapsed .theme-btn-track {
+          display: none;
+        }
+
         .logout-btn {
           width: 100%;
           padding: 12px;
@@ -678,17 +745,6 @@ function NavItem({ href, icon: Icon, label, active }) {
           <Icon size={16} strokeWidth={2} />
         </span>
         <span className="nav-label">{label}</span>
-      </Link>
-    </li>
-  );
-}
-
-function SubNavItem({ href, icon: Icon, label, active }) {
-  return (
-    <li>
-      <Link href={href} className={`nav-sublink ${active ? "nav-sublink-active" : ""}`}>
-        <Icon size={14} strokeWidth={2} />
-        {label}
       </Link>
     </li>
   );

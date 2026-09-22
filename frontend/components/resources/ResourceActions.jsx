@@ -1,4 +1,4 @@
-const API = "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export default function ResourceActions({ resource }) {
   const hasFile = Boolean(resource.file_path);

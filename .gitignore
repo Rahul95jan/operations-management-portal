@@ -1,6 +1,9 @@
 venv/
 .venv/
 __pycache__/
+frontend/.next/
+frontend/out/
+*.tsbuildinfo
 .env
 .env.save
 node_modules/

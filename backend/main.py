@@ -167,6 +167,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# An unhandled exception that reaches Starlette's default error handling can end up
+# bypassing CORSMiddleware entirely, so the browser sees a response with no
+# Access-Control-Allow-Origin header and reports a confusing "blocked by CORS policy" /
+# "Failed to fetch" — hiding the real 500 underneath it. This catch-all makes sure any
+# unhandled exception still comes back as a normal, CORS-safe JSON error instead.
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request, exc: Exception):
+    import traceback
+    from fastapi.responses import JSONResponse
+
+    print(f"❌ Unhandled exception on {request.method} {request.url.path}: {exc}")
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Something went wrong on the server. Please try again."},
+    )
+
 # ==========================
 # HOME
 # ==========================
@@ -629,6 +647,9 @@ def update_session(session_id: int, session: SessionCreate, _user: User = Depend
 
 @app.delete("/sessions/{session_id}")
 def delete_session(session_id: int, _user: User = Depends(require_permission("sessions", "delete"))):
+    from fastapi import HTTPException
+    from sqlalchemy import or_
+    from sqlalchemy.exc import IntegrityError
 
     db = SessionLocal()
 
@@ -640,8 +661,48 @@ def delete_session(session_id: int, _user: User = Depends(require_permission("se
 
     if session:
         _notify_mentor_session_change(db, session, "Cancelled")
+
+        # Resources/requirements/their email + download logs are foreign-keyed to
+        # sessions.id (unlike session_reports/session_attendance/session_analytics/
+        # zoom_analytics, which are deliberately plain int columns so that historical
+        # reports/analytics survive a session being deleted). Those FK'd rows can't
+        # outlive their session, so they're cleaned up first, children before parents,
+        # or Postgres rejects the session delete with a ForeignKeyViolation.
+        requirement_ids = [
+            r.id for r in db.query(ResourceRequirement.id).filter(ResourceRequirement.session_id == session_id).all()
+        ]
+        resource_ids = [
+            r.id for r in db.query(Resource.id).filter(Resource.session_id == session_id).all()
+        ]
+
+        db.query(ResourceEmailLog).filter(
+            or_(
+                ResourceEmailLog.session_id == session_id,
+                ResourceEmailLog.resource_requirement_id.in_(requirement_ids),
+                ResourceEmailLog.resource_id.in_(resource_ids),
+            )
+        ).delete(synchronize_session=False)
+
+        db.query(ResourceDownloadLog).filter(
+            or_(
+                ResourceDownloadLog.session_id == session_id,
+                ResourceDownloadLog.resource_id.in_(resource_ids),
+            )
+        ).delete(synchronize_session=False)
+
+        db.query(Resource).filter(Resource.session_id == session_id).delete(synchronize_session=False)
+        db.query(ResourceRequirement).filter(ResourceRequirement.session_id == session_id).delete(synchronize_session=False)
+
         db.delete(session)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as e:
+            db.rollback()
+            db.close()
+            raise HTTPException(
+                status_code=409,
+                detail="Can't delete this session — other records still reference it. Please try again or contact support.",
+            ) from e
 
     db.close()
 

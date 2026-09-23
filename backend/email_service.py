@@ -207,7 +207,7 @@ def send_session_calendar_invite(receiver_email, subject, body, ics_content, met
         attachments=[{
             "filename": "invite.ics",
             "content": ics_b64,
-            "content_type": f"text/calendar; method={method}; charset=UTF-8",
+            "content_type": f"text/calendar; method={method}",
         }],
     )
 

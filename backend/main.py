@@ -479,9 +479,21 @@ def delete_zoom_account(account_id: int, db: Session = Depends(get_db), _user: U
 def _notify_mentor_session_change(db, session_obj, action, old_date=None, old_time=None):
     """Emails the mentor (address pulled fresh from Mentor Management, never a stale
     stored value) whenever a session they're assigned to is scheduled, rescheduled, or
-    cancelled/deleted. Reuses the same SMTP config as invoice emails — see email_service.py.
+    cancelled/deleted — with a real calendar invite (.ics) attached, so it actually blocks
+    time on the mentor's own calendar app (Gmail/Outlook/Apple), not just an internal
+    Ops Portal record. Same event (UID) gets updated in place across Scheduled ->
+    Rescheduled, then cancelled via METHOD:CANCEL on delete — not a new invite each time.
+    Reuses the same SMTP config as invoice emails — see email_service.py.
     Never raises: a notification failure must never block the session CRUD it's attached to."""
-    from email_service import send_session_notification
+    import time as _time
+
+    from email_service import (
+        EMAIL_ADDRESS,
+        SESSION_TZ,
+        build_session_ics,
+        send_session_calendar_invite,
+        send_session_notification,
+    )
 
     if not session_obj.mentor_name:
         return {"notified": False, "reason": "no_mentor_assigned"}
@@ -494,6 +506,19 @@ def _notify_mentor_session_change(db, session_obj, action, old_date=None, old_ti
 
     id_line = f"Zoom ID: {session_obj.zoom_id}" if session_obj.zoom_id else (f"Webinar ID: {session_obj.webinar_id}" if session_obj.webinar_id else None)
 
+    # session_date/session_time are free-text columns (the UI sends "YYYY-MM-DD"/"HH:MM"
+    # from native date/time inputs, but nothing enforces that server-side) — a parse
+    # failure here just skips the calendar invite and falls back to the old plain-text
+    # email, instead of failing the session create/update/delete itself.
+    start_dt = None
+    try:
+        start_dt = datetime.strptime(
+            f"{session_obj.session_date} {session_obj.session_time}", "%Y-%m-%d %H:%M"
+        ).replace(tzinfo=SESSION_TZ)
+    except (ValueError, TypeError):
+        pass
+    end_dt = start_dt + timedelta(minutes=session_obj.duration or 60) if start_dt else None
+
     if action == "Scheduled":
         subject = f"Session Scheduled: {session_obj.topic}"
         body = (
@@ -504,9 +529,10 @@ def _notify_mentor_session_change(db, session_obj, action, old_date=None, old_ti
             f"Date: {session_obj.session_date}\n"
             f"Time: {session_obj.session_time}\n"
             + (f"{id_line}\n" if id_line else "")
-            + f"\nThis session is now blocked on the Operations Portal calendar.\n\n"
+            + f"\nThis session is now blocked on your calendar — please accept the attached invite to confirm.\n\n"
             f"Regards,\nKrish Naik Academy Team"
         )
+        ics_method, ics_status = "REQUEST", "CONFIRMED"
     elif action == "Rescheduled":
         subject = f"Session Rescheduled: {session_obj.topic}"
         body = (
@@ -517,9 +543,10 @@ def _notify_mentor_session_change(db, session_obj, action, old_date=None, old_ti
             f"Previous: {old_date} {old_time}\n"
             f"New: {session_obj.session_date} {session_obj.session_time}\n"
             + (f"{id_line}\n" if id_line else "")
-            + f"\nPlease update your calendar accordingly.\n\n"
+            + f"\nYour calendar invite has been updated to the new time.\n\n"
             f"Regards,\nKrish Naik Academy Team"
         )
+        ics_method, ics_status = "REQUEST", "CONFIRMED"
     else:  # Cancelled
         subject = f"Session Cancelled: {session_obj.topic}"
         body = (
@@ -528,10 +555,29 @@ def _notify_mentor_session_change(db, session_obj, action, old_date=None, old_ti
             f"Topic: {session_obj.topic}\n"
             f"Batch: {session_obj.batch_name or 'N/A (Webinar)'}\n"
             f"Was scheduled for: {session_obj.session_date} {session_obj.session_time}\n\n"
+            f"This has been removed from your calendar.\n\n"
             f"Regards,\nKrish Naik Academy Team"
         )
+        ics_method, ics_status = "CANCEL", "CANCELLED"
 
-    sent = send_session_notification(mentor_email, subject, body)
+    if start_dt and end_dt:
+        ics_content = build_session_ics(
+            session_id=session_obj.id,
+            sequence=int(_time.time()),
+            method=ics_method,
+            summary=session_obj.topic or "Session",
+            description=body,
+            start_dt=start_dt,
+            end_dt=end_dt,
+            organizer_email=EMAIL_ADDRESS,
+            attendee_email=mentor_email,
+            location=id_line,
+            status=ics_status,
+        )
+        sent = send_session_calendar_invite(mentor_email, subject, body, ics_content, method=ics_method)
+    else:
+        sent = send_session_notification(mentor_email, subject, body)
+
     return {"notified": sent, "reason": "sent" if sent else "email_unavailable", "mentor_email": mentor_email}
 
 

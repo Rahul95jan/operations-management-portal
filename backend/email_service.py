@@ -13,6 +13,14 @@ EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 RESEND_API_URL = "https://api.resend.com/emails"
 
+# Resend only accepts a "from" address on Resend's own sandbox domain (resend.dev) or on
+# a domain that's been explicitly verified with them (DNS records added in their
+# dashboard) — EMAIL_ADDRESS is a personal Gmail address, which Resend rejects outright
+# ("domain is not verified") since nobody can verify google's own domain. Falls back to
+# the sandbox address so sending works immediately; once a real domain is verified in
+# Resend, set RESEND_FROM_ADDRESS to something on it for a branded From.
+RESEND_FROM_ADDRESS = os.getenv("RESEND_FROM_ADDRESS") or "onboarding@resend.dev"
+
 # Sessions are scheduled in IST (matches AppSettings.reminder_timezone's own default) —
 # there's no per-session timezone field, so this is the one place that assumption lives
 # for turning a session's date/time into a real calendar event.
@@ -33,7 +41,7 @@ def _resend_send(to, subject, text=None, html=None, attachments=None):
     if not to:
         return False
 
-    payload = {"from": EMAIL_ADDRESS or "onboarding@resend.dev", "to": [to], "subject": subject}
+    payload = {"from": RESEND_FROM_ADDRESS, "to": [to], "subject": subject}
     if text:
         payload["text"] = text
     if html:
@@ -215,7 +223,7 @@ def send_email(receiver_email, subject, body):
         resp = requests.post(
             RESEND_API_URL,
             headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            json={"from": EMAIL_ADDRESS or "onboarding@resend.dev", "to": [receiver_email], "subject": subject, "text": body},
+            json={"from": RESEND_FROM_ADDRESS, "to": [receiver_email], "subject": subject, "text": body},
             timeout=30,
         )
         if resp.status_code >= 400:

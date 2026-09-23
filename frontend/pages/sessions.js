@@ -375,6 +375,9 @@ export default function Sessions() {
   const [zoomAccounts, setZoomAccounts] = useState([]);
   const [addingZoomId, setAddingZoomId] = useState(false);
   const [newZoomEmail, setNewZoomEmail] = useState("");
+  const [managingZoomIds, setManagingZoomIds] = useState(false);
+  const [editingZoomAccountId, setEditingZoomAccountId] = useState(null);
+  const [editZoomEmail, setEditZoomEmail] = useState("");
 
   const [form, setForm] = useState(EMPTY_FORM);
 
@@ -471,6 +474,57 @@ export default function Sessions() {
       setAddingZoomId(false);
     } catch (err) {
       showToast("Couldn't add that Zoom ID. Please try again.");
+    }
+  };
+
+  const startEditZoomAccount = (account) => {
+    setEditingZoomAccountId(account.id);
+    setEditZoomEmail(account.email);
+  };
+
+  const cancelEditZoomAccount = () => {
+    setEditingZoomAccountId(null);
+    setEditZoomEmail("");
+  };
+
+  const saveEditZoomAccount = async (account) => {
+    const email = editZoomEmail.trim();
+    if (!email) return;
+    if (email === account.email) {
+      cancelEditZoomAccount();
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/zoom-accounts/${account.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "bad status");
+      }
+      const updated = await res.json();
+      setZoomAccounts((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+      setForm((prev) => (prev.zoom_id === account.email ? { ...prev, zoom_id: updated.email } : prev));
+      cancelEditZoomAccount();
+      showToast("Zoom ID updated.", "success");
+    } catch (err) {
+      showToast(err.message === "That Zoom ID already exists." ? err.message : "Couldn't update that Zoom ID. Please try again.");
+    }
+  };
+
+  const deleteZoomAccount = async (account) => {
+    if (!window.confirm(`Remove Zoom ID "${account.email}"?`)) return;
+    try {
+      const res = await fetch(`${API}/zoom-accounts/${account.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("bad status");
+      setZoomAccounts((prev) => prev.filter((a) => a.id !== account.id));
+      setForm((prev) => (prev.zoom_id === account.email ? { ...prev, zoom_id: "" } : prev));
+      if (editingZoomAccountId === account.id) cancelEditZoomAccount();
+      showToast("Zoom ID removed.", "success");
+    } catch (err) {
+      showToast("Couldn't remove that Zoom ID. Please try again.");
     }
   };
 
@@ -860,7 +914,20 @@ export default function Sessions() {
               </select>
             </Field>
 
-            <Field label="Zoom ID">
+            <div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                <label style={{ ...fieldLabelStyle, marginBottom: 0 }}>Zoom ID</label>
+                {zoomAccounts.length > 0 && !addingZoomId && (
+                  <button
+                    type="button"
+                    onClick={() => { setManagingZoomIds((v) => !v); cancelEditZoomAccount(); }}
+                    style={{ background: "none", border: "none", padding: 0, fontSize: "12px", fontWeight: 700, color: "#b45309", cursor: "pointer" }}
+                  >
+                    {managingZoomIds ? "Done" : "Manage"}
+                  </button>
+                )}
+              </div>
+
               {addingZoomId ? (
                 <div style={{ display: "flex", gap: "6px" }}>
                   <input
@@ -882,31 +949,70 @@ export default function Sessions() {
                   </button>
                 </div>
               ) : (
-                <select
-                  className="styled-input"
-                  style={inputStyle}
-                  value={form.zoom_id}
-                  onChange={(e) => {
-                    if (e.target.value === "__add_new__") {
-                      setAddingZoomId(true);
-                      return;
-                    }
-                    setForm({ ...form, zoom_id: e.target.value });
-                  }}
-                >
-                  <option value="">Select Zoom ID</option>
-                  {zoomAccounts.map((account) => (
-                    <option key={account.id} value={account.email}>
-                      {account.email}
-                    </option>
-                  ))}
-                  {form.zoom_id && !zoomAccounts.some((a) => a.email === form.zoom_id) && (
-                    <option value={form.zoom_id}>{form.zoom_id}</option>
+                <>
+                  <select
+                    className="styled-input"
+                    style={inputStyle}
+                    value={form.zoom_id}
+                    onChange={(e) => {
+                      if (e.target.value === "__add_new__") {
+                        setAddingZoomId(true);
+                        return;
+                      }
+                      setForm({ ...form, zoom_id: e.target.value });
+                    }}
+                  >
+                    <option value="">Select Zoom ID</option>
+                    {zoomAccounts.map((account) => (
+                      <option key={account.id} value={account.email}>
+                        {account.email}
+                      </option>
+                    ))}
+                    {form.zoom_id && !zoomAccounts.some((a) => a.email === form.zoom_id) && (
+                      <option value={form.zoom_id}>{form.zoom_id}</option>
+                    )}
+                    <option value="__add_new__">+ Add New Zoom ID…</option>
+                  </select>
+
+                  {managingZoomIds && (
+                    <div style={{ marginTop: "8px", border: "1px solid #e2e8f0", borderRadius: "10px", overflow: "hidden" }}>
+                      {zoomAccounts.map((account) => (
+                        <div
+                          key={account.id}
+                          style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 10px", borderBottom: "1px solid #f1f5f9", background: "#fff" }}
+                        >
+                          {editingZoomAccountId === account.id ? (
+                            <>
+                              <input
+                                className="styled-input"
+                                style={{ ...inputStyle, padding: "6px 10px", fontSize: "13px" }}
+                                value={editZoomEmail}
+                                autoFocus
+                                onChange={(e) => setEditZoomEmail(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") { e.preventDefault(); saveEditZoomAccount(account); }
+                                  if (e.key === "Escape") { e.preventDefault(); cancelEditZoomAccount(); }
+                                }}
+                              />
+                              <button type="button" className="btn btn-primary btn-sm" onClick={() => saveEditZoomAccount(account)}>Save</button>
+                              <button type="button" className="btn btn-sm btn-ghost" onClick={cancelEditZoomAccount}>Cancel</button>
+                            </>
+                          ) : (
+                            <>
+                              <span style={{ flex: 1, fontSize: "13px", color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {account.email}
+                              </span>
+                              <button type="button" className="btn btn-icon" title="Rename" onClick={() => startEditZoomAccount(account)}>✏️ Edit</button>
+                              <button type="button" className="btn btn-icon btn-danger" title="Delete" onClick={() => deleteZoomAccount(account)}>🗑️ Delete</button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   )}
-                  <option value="__add_new__">+ Add New Zoom ID…</option>
-                </select>
+                </>
               )}
-            </Field>
+            </div>
 
             <Field label="Webinar ID">
               <input

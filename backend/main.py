@@ -100,6 +100,7 @@ from schemas import (
     AdminUserCreate,
     AdminUserPermissionsUpdate,
     ZoomAccountCreate,
+    ZoomAccountUpdate,
     SessionCreate,
     MentorCreate,
     BatchCreate,
@@ -411,6 +412,32 @@ def create_zoom_account(payload: ZoomAccountCreate, db: Session = Depends(get_db
 
     account = ZoomAccount(email=email)
     db.add(account)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+@app.put("/zoom-accounts/{account_id}")
+def update_zoom_account(account_id: int, payload: ZoomAccountUpdate, db: Session = Depends(get_db), _user: User = Depends(require_permission("sessions", "edit"))):
+    from fastapi import HTTPException
+
+    email = payload.email.strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Zoom ID can't be empty.")
+
+    account = db.query(ZoomAccount).filter(ZoomAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Zoom ID not found.")
+
+    duplicate = (
+        db.query(ZoomAccount)
+        .filter(func.lower(ZoomAccount.email) == email.lower(), ZoomAccount.id != account_id)
+        .first()
+    )
+    if duplicate:
+        raise HTTPException(status_code=400, detail="That Zoom ID already exists.")
+
+    account.email = email
     db.commit()
     db.refresh(account)
     return account

@@ -6,6 +6,10 @@ class ZoomAccountCreate(BaseModel):
     email: str
 
 
+class ZoomAccountUpdate(BaseModel):
+    email: str
+
+
 class UserCreate(BaseModel):
     name: str
     email: str

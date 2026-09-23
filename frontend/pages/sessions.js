@@ -975,10 +975,12 @@ export default function Sessions() {
                   </select>
 
                   {managingZoomIds && (
-                    <div style={{ marginTop: "8px", border: "1px solid #e2e8f0", borderRadius: "10px", overflow: "hidden" }}>
+                    <div className="zoom-manage-panel" style={{ marginTop: "8px", border: "1px solid #e2e8f0", borderRadius: "10px", overflow: "hidden" }}>
                       {zoomAccounts.map((account) => (
                         <div
                           key={account.id}
+                          className="zoom-manage-row"
+                          data-zoom-account-id={account.id}
                           style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 10px", borderBottom: "1px solid #f1f5f9", background: "#fff" }}
                         >
                           {editingZoomAccountId === account.id ? (

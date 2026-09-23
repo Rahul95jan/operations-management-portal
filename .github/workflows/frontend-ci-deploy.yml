@@ -13,6 +13,7 @@ name: CI Checks
 on:
   pull_request:
     branches: [ main ]
+  workflow_dispatch: {}
 
 jobs:
   frontend-build:

@@ -29,3 +29,4 @@ export default function App({ Component, pageProps }) {
 
   return <Component {...pageProps} />;
 }
+// Pipeline verification: 2026-09-23T13:30:48Z — safe to delete

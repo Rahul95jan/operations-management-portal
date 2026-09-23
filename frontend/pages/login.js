@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
+import { Eye, EyeOff } from "lucide-react";
 import { apiLogin, setSession } from "../lib/auth";
 
 function RecoveryModal({ mode, onClose }) {
@@ -316,7 +317,7 @@ export default function Login() {
                   aria-label={showPassword ? "Hide password" : "Show password"}
                   title={showPassword ? "Hide password" : "Show password"}
                 >
-                  {showPassword ? "🙈" : "👁️"}
+                  {showPassword ? <EyeOff size={18} strokeWidth={2} /> : <Eye size={18} strokeWidth={2} />}
                 </button>
               </div>
             </div>
@@ -551,18 +552,19 @@ export default function Login() {
           right: 6px;
           top: 50%;
           transform: translateY(-50%);
+          display: flex;
+          align-items: center;
+          justify-content: center;
           background: none;
           border: none;
           padding: 6px;
-          font-size: 15px;
-          line-height: 1;
           cursor: pointer;
-          opacity: 0.6;
+          color: #64748b;
           border-radius: 6px;
         }
 
         .field-toggle:hover {
-          opacity: 1;
+          color: #1e293b;
           background: rgba(15, 23, 42, 0.05);
         }
 

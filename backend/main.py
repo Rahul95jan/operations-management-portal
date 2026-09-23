@@ -679,7 +679,6 @@ def delete_session(session_id: int, _user: User = Depends(require_permission("se
             or_(
                 ResourceEmailLog.session_id == session_id,
                 ResourceEmailLog.resource_requirement_id.in_(requirement_ids),
-                ResourceEmailLog.resource_id.in_(resource_ids),
             )
         ).delete(synchronize_session=False)
 

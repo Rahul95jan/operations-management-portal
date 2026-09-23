@@ -202,6 +202,7 @@ export default function Login() {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(false);
   const [error, setError] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
@@ -302,12 +303,21 @@ export default function Login() {
               <div className="field-wrap">
                 <span className="field-icon">🔒</span>
                 <input
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="login-input"
+                  className="login-input login-input-with-toggle"
                 />
+                <button
+                  type="button"
+                  className="field-toggle"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  title={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? "🙈" : "👁️"}
+                </button>
               </div>
             </div>
 
@@ -530,6 +540,30 @@ export default function Login() {
           border-color: #f59e0b;
           background: #ffffff;
           box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
+        }
+
+        .login-input-with-toggle {
+          padding-right: 40px;
+        }
+
+        .field-toggle {
+          position: absolute;
+          right: 6px;
+          top: 50%;
+          transform: translateY(-50%);
+          background: none;
+          border: none;
+          padding: 6px;
+          font-size: 15px;
+          line-height: 1;
+          cursor: pointer;
+          opacity: 0.6;
+          border-radius: 6px;
+        }
+
+        .field-toggle:hover {
+          opacity: 1;
+          background: rgba(15, 23, 42, 0.05);
         }
 
         .error-banner {

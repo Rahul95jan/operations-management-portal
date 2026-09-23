@@ -581,11 +581,15 @@ export default function Sessions() {
 
     try {
       const res = await fetch(`${API}/sessions/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("bad status");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || `Server returned ${res.status}.`);
+      }
       showToast("Session deleted.", "success");
       loadSessions();
     } catch (err) {
-      showToast("Failed to delete session. Please try again.");
+      console.error("Delete session failed:", err);
+      showToast(`Failed to delete session: ${err.message || "Please try again."}`);
     }
   };
 

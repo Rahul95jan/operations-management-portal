@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
 
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
 // Small hand-drawn icon set (no external icon library) — used for the chrome
 // elements (top bar, stat cards, filters, view toggle) so they render as
 // consistent flat line icons instead of relying on the OS/browser's emoji
@@ -173,7 +175,7 @@ function initials(name) {
 
 function mentorPhotoUrl(mentor) {
   if (!mentor || !mentor.photo_path) return null;
-  return `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/mentors/${mentor.id}/photo?v=${encodeURIComponent(mentor.photo_path)}`;
+  return `${API}/mentors/${mentor.id}/photo?v=${encodeURIComponent(mentor.photo_path)}`;
 }
 
 // Shows the mentor's real photo from Mentor Management when one is on file
@@ -411,7 +413,7 @@ export default function Sessions() {
   const loadSessions = async () => {
     setLoadingSessions(true);
     try {
-      const res = await fetch("http://127.0.0.1:8000/sessions");
+      const res = await fetch(`${API}/sessions`);
       if (!res.ok) throw new Error("bad status");
       const data = await res.json();
       setSessions(data);
@@ -424,7 +426,7 @@ export default function Sessions() {
 
   const loadMentors = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/mentors");
+      const res = await fetch(`${API}/mentors`);
       const data = await res.json();
       setMentors(data);
     } catch (err) {
@@ -434,7 +436,7 @@ export default function Sessions() {
 
   const loadBatches = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/batches");
+      const res = await fetch(`${API}/batches`);
       const data = await res.json();
       setBatches(data);
     } catch (err) {
@@ -444,7 +446,7 @@ export default function Sessions() {
 
   const loadZoomAccounts = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/zoom-accounts");
+      const res = await fetch(`${API}/zoom-accounts`);
       const data = await res.json();
       setZoomAccounts(data);
     } catch (err) {
@@ -456,7 +458,7 @@ export default function Sessions() {
     const email = newZoomEmail.trim();
     if (!email) return;
     try {
-      const res = await fetch("http://127.0.0.1:8000/zoom-accounts", {
+      const res = await fetch(`${API}/zoom-accounts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -486,7 +488,7 @@ export default function Sessions() {
 
   const createSession = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/sessions", {
+      const res = await fetch(`${API}/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
@@ -504,7 +506,7 @@ export default function Sessions() {
 
   const updateSession = async () => {
     try {
-      const res = await fetch(`http://127.0.0.1:8000/sessions/${editId}`, {
+      const res = await fetch(`${API}/sessions/${editId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
@@ -524,7 +526,7 @@ export default function Sessions() {
     if (!window.confirm("Delete this session?")) return;
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/sessions/${id}`, { method: "DELETE" });
+      const res = await fetch(`${API}/sessions/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("bad status");
       showToast("Session deleted.", "success");
       loadSessions();
@@ -599,7 +601,7 @@ export default function Sessions() {
           : rescheduleSession.remarks || null,
       };
 
-      const res = await fetch(`http://127.0.0.1:8000/sessions/${rescheduleSession.id}`, {
+      const res = await fetch(`${API}/sessions/${rescheduleSession.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -1153,7 +1155,7 @@ export default function Sessions() {
 
             <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
               <a
-                href="http://127.0.0.1:8000/export-sessions"
+                href={`${API}/export-sessions`}
                 target="_blank"
                 rel="noreferrer"
                 style={{ textDecoration: "none" }}

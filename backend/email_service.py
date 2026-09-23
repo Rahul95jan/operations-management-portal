@@ -1,19 +1,17 @@
+import base64
 import os
-import smtplib
-import socket
-import time
 import traceback
 from datetime import datetime
-from email.message import EmailMessage
 from zoneinfo import ZoneInfo
+
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+RESEND_API_URL = "https://api.resend.com/emails"
 
 # Sessions are scheduled in IST (matches AppSettings.reminder_timezone's own default) —
 # there's no per-session timezone field, so this is the one place that assumption lives
@@ -22,80 +20,38 @@ SESSION_TZ = ZoneInfo("Asia/Kolkata")
 ICS_UID_DOMAIN = "krishnaik-academy-ops-portal"
 
 
-def _smtp_connect_ipv4(host, port, timeout=30):
-    """This machine's route to an SMTP host's IPv6 address is unreachable (mail hosts
-    like smtp.gmail.com publish both A and AAAA records, and Python prefers IPv6 when
-    it's advertised) — a plain smtplib.SMTP(host, port) fails immediately with
-    'Network is unreachable'. Same gap database.py's _connect() already works around for
-    the Postgres connection; this is the SMTP equivalent — connect by IPv4 address, but
-    keep the real hostname on the SMTP object so STARTTLS still validates the server's
-    certificate against the actual domain, not a raw IP."""
-    ipv4 = socket.getaddrinfo(host, port, socket.AF_INET)[0][4][0]
-    smtp = smtplib.SMTP(timeout=timeout)
-    smtp.connect(ipv4, port)
-    smtp._host = host  # noqa: SLF001 — starttls() reads this for the TLS SNI/cert hostname check
-    return smtp
+def _resend_send(to, subject, text=None, html=None, attachments=None):
+    """Sends an email through Resend's HTTPS API. This app used to send over raw SMTP,
+    but Render's free-tier web services block all outbound traffic to SMTP ports
+    (25/465/587) at the network firewall level — confirmed directly from Render's own
+    changelog, not something any amount of SMTP-side code could work around. Resend (and
+    any other HTTP-API email provider) sends over plain HTTPS, so it isn't affected.
+    Never raises: a send failure must never block the request it's attached to."""
+    if not RESEND_API_KEY:
+        print("⚠️  RESEND_API_KEY not configured — skipping email send.")
+        return False
+    if not to:
+        return False
 
+    payload = {"from": EMAIL_ADDRESS or "onboarding@resend.dev", "to": [to], "subject": subject}
+    if text:
+        payload["text"] = text
+    if html:
+        payload["html"] = html
+    if attachments:
+        payload["attachments"] = attachments
 
-def send_invoice_email(receiver_email, pdf_path, invoice_number):
     try:
-        print("\n" + "=" * 70)
-        print("EMAIL CONFIGURATION")
-        print("EMAIL_ADDRESS :", repr(EMAIL_ADDRESS))
-        print("EMAIL_PASSWORD:", "*" * len(EMAIL_PASSWORD) if EMAIL_PASSWORD else "None")
-        print("SMTP_SERVER   :", SMTP_SERVER)
-        print("SMTP_PORT     :", SMTP_PORT)
-        print("RECEIVER      :", receiver_email)
-        print("PDF EXISTS    :", os.path.exists(pdf_path))
-        print("PDF PATH      :", pdf_path)
-        print("=" * 70)
-
-        msg = EmailMessage()
-        msg["Subject"] = f"Invoice {invoice_number}"
-        msg["From"] = EMAIL_ADDRESS
-        msg["To"] = receiver_email
-
-        msg.set_content(f"""
-Hello,
-
-Please find your invoice attached.
-
-Invoice Number: {invoice_number}
-
-Thank you.
-
-Regards,
-Krish Naik Academy Team
-""")
-
-        with open(pdf_path, "rb") as f:
-            msg.add_attachment(
-                f.read(),
-                maintype="application",
-                subtype="pdf",
-                filename=os.path.basename(pdf_path),
-            )
-
-        print("Connecting to Gmail SMTP...")
-
-        with _smtp_connect_ipv4(SMTP_SERVER, SMTP_PORT) as smtp:
-            smtp.set_debuglevel(1)
-
-            smtp.ehlo()
-
-            print("Starting TLS...")
-            smtp.starttls()
-
-            smtp.ehlo()
-
-            print("Logging in...")
-            smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-
-            print("Sending email...")
-            smtp.send_message(msg)
-
-        print("✅ Email sent successfully")
-
+        resp = requests.post(
+            RESEND_API_URL,
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            print(f"❌ Resend API error {resp.status_code}: {resp.text}")
+            return False
+        print(f"✅ Email sent via Resend to {to} (id={resp.json().get('id')})")
         return True
 
     except Exception as e:
@@ -104,43 +60,58 @@ Krish Naik Academy Team
         print("ERROR:", str(e))
         traceback.print_exc()
         print("=" * 70 + "\n")
-
         return False
 
 
-def send_session_notification(receiver_email, subject, body):
-    """Generic plain-text notifier for session scheduled/rescheduled/cancelled events —
-    reuses the same SMTP config as invoice emails. Returns False (never raises) if SMTP
-    isn't configured yet or sending fails, so a session create/update/delete never gets
-    blocked by a notification problem."""
-    if not receiver_email:
-        print("⚠️  Skipping session notification — mentor has no email on file.")
-        return False
-
+def send_invoice_email(receiver_email, pdf_path, invoice_number):
     try:
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = EMAIL_ADDRESS
-        msg["To"] = receiver_email
-        msg.set_content(body)
+        print("\n" + "=" * 70)
+        print("EMAIL CONFIGURATION")
+        print("EMAIL_ADDRESS  :", repr(EMAIL_ADDRESS))
+        print("RESEND_API_KEY :", "set" if RESEND_API_KEY else "None")
+        print("RECEIVER       :", receiver_email)
+        print("PDF EXISTS     :", os.path.exists(pdf_path))
+        print("PDF PATH       :", pdf_path)
+        print("=" * 70)
 
-        with _smtp_connect_ipv4(SMTP_SERVER, SMTP_PORT) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.ehlo()
-            smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            smtp.send_message(msg)
+        with open(pdf_path, "rb") as f:
+            pdf_b64 = base64.b64encode(f.read()).decode("ascii")
 
-        print(f"✅ Session notification sent to {receiver_email}")
-        return True
+        return _resend_send(
+            receiver_email,
+            f"Invoice {invoice_number}",
+            text=(
+                f"Hello,\n\n"
+                f"Please find your invoice attached.\n\n"
+                f"Invoice Number: {invoice_number}\n\n"
+                f"Thank you.\n\n"
+                f"Regards,\nKrish Naik Academy Team"
+            ),
+            attachments=[{
+                "filename": os.path.basename(pdf_path),
+                "content": pdf_b64,
+                "content_type": "application/pdf",
+            }],
+        )
 
     except Exception as e:
         print("\n" + "=" * 70)
-        print("❌ SESSION NOTIFICATION FAILED")
+        print("❌ EMAIL SENDING FAILED")
         print("ERROR:", str(e))
         traceback.print_exc()
         print("=" * 70 + "\n")
         return False
+
+
+def send_session_notification(receiver_email, subject, body):
+    """Generic plain-text notifier for session scheduled/rescheduled/cancelled events.
+    Returns False (never raises) if Resend isn't configured or sending fails, so a
+    session create/update/delete never gets blocked by a notification problem."""
+    if not receiver_email:
+        print("⚠️  Skipping session notification — mentor has no email on file.")
+        return False
+
+    return _resend_send(receiver_email, subject, text=body)
 
 
 def _ics_escape(text):
@@ -219,58 +190,36 @@ def send_session_calendar_invite(receiver_email, subject, body, ics_content, met
         print("⚠️  Skipping calendar invite — mentor has no email on file.")
         return False
 
-    try:
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = EMAIL_ADDRESS
-        msg["To"] = receiver_email
-        msg.set_content(body)
+    ics_b64 = base64.b64encode(ics_content.encode("utf-8")).decode("ascii")
 
-        msg.add_attachment(
-            ics_content.encode("utf-8"),
-            maintype="text",
-            subtype="calendar",
-            filename="invite.ics",
-            params={"method": method, "name": "invite.ics"},
-        )
-
-        with _smtp_connect_ipv4(SMTP_SERVER, SMTP_PORT) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.ehlo()
-            smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            smtp.send_message(msg)
-
-        print(f"✅ Calendar invite ({method}) sent to {receiver_email}")
-        return True
-
-    except Exception as e:
-        print("\n" + "=" * 70)
-        print("❌ CALENDAR INVITE SENDING FAILED")
-        print("ERROR:", str(e))
-        traceback.print_exc()
-        print("=" * 70 + "\n")
-        return False
+    return _resend_send(
+        receiver_email,
+        subject,
+        text=body,
+        attachments=[{
+            "filename": "invite.ics",
+            "content": ics_b64,
+            "content_type": f"text/calendar; method={method}; charset=UTF-8",
+        }],
+    )
 
 
 def send_email(receiver_email, subject, body):
-    """Generic plain-text sender, reusing the same SMTP config as send_invoice_email().
-    Returns (success: bool, error_message: str | None) instead of raising, so callers
-    can log the outcome without their own business logic failing on an SMTP error."""
+    """Generic plain-text sender. Returns (success: bool, error_message: str | None)
+    instead of raising, so callers can log the outcome without their own business logic
+    failing on a send error."""
+    if not RESEND_API_KEY:
+        return False, "RESEND_API_KEY not configured"
+
     try:
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = EMAIL_ADDRESS
-        msg["To"] = receiver_email
-        msg.set_content(body)
-
-        with _smtp_connect_ipv4(SMTP_SERVER, SMTP_PORT) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.ehlo()
-            smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            smtp.send_message(msg)
-
+        resp = requests.post(
+            RESEND_API_URL,
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={"from": EMAIL_ADDRESS or "onboarding@resend.dev", "to": [receiver_email], "subject": subject, "text": body},
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            return False, resp.text
         return True, None
 
     except Exception as e:

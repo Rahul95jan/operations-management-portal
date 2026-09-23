@@ -1,5 +1,6 @@
 import os
 import smtplib
+import socket
 import time
 import traceback
 from datetime import datetime
@@ -19,6 +20,21 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 # for turning a session's date/time into a real calendar event.
 SESSION_TZ = ZoneInfo("Asia/Kolkata")
 ICS_UID_DOMAIN = "krishnaik-academy-ops-portal"
+
+
+def _smtp_connect_ipv4(host, port, timeout=30):
+    """This machine's route to an SMTP host's IPv6 address is unreachable (mail hosts
+    like smtp.gmail.com publish both A and AAAA records, and Python prefers IPv6 when
+    it's advertised) — a plain smtplib.SMTP(host, port) fails immediately with
+    'Network is unreachable'. Same gap database.py's _connect() already works around for
+    the Postgres connection; this is the SMTP equivalent — connect by IPv4 address, but
+    keep the real hostname on the SMTP object so STARTTLS still validates the server's
+    certificate against the actual domain, not a raw IP."""
+    ipv4 = socket.getaddrinfo(host, port, socket.AF_INET)[0][4][0]
+    smtp = smtplib.SMTP(timeout=timeout)
+    smtp.connect(ipv4, port)
+    smtp._host = host  # noqa: SLF001 — starttls() reads this for the TLS SNI/cert hostname check
+    return smtp
 
 
 def send_invoice_email(receiver_email, pdf_path, invoice_number):
@@ -62,7 +78,7 @@ Krish Naik Academy Team
 
         print("Connecting to Gmail SMTP...")
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as smtp:
+        with _smtp_connect_ipv4(SMTP_SERVER, SMTP_PORT) as smtp:
             smtp.set_debuglevel(1)
 
             smtp.ehlo()
@@ -108,7 +124,7 @@ def send_session_notification(receiver_email, subject, body):
         msg["To"] = receiver_email
         msg.set_content(body)
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as smtp:
+        with _smtp_connect_ipv4(SMTP_SERVER, SMTP_PORT) as smtp:
             smtp.ehlo()
             smtp.starttls()
             smtp.ehlo()
@@ -218,7 +234,7 @@ def send_session_calendar_invite(receiver_email, subject, body, ics_content, met
             params={"method": method, "name": "invite.ics"},
         )
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as smtp:
+        with _smtp_connect_ipv4(SMTP_SERVER, SMTP_PORT) as smtp:
             smtp.ehlo()
             smtp.starttls()
             smtp.ehlo()
@@ -248,7 +264,7 @@ def send_email(receiver_email, subject, body):
         msg["To"] = receiver_email
         msg.set_content(body)
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as smtp:
+        with _smtp_connect_ipv4(SMTP_SERVER, SMTP_PORT) as smtp:
             smtp.ehlo()
             smtp.starttls()
             smtp.ehlo()

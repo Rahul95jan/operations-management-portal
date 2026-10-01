@@ -64,17 +64,48 @@ function Section({ icon, title, subtitle, children, action }) {
   );
 }
 
-function Card({ title, children, style }) {
+function Card({ title, children, style, action }) {
   return (
     <div className="card" style={style}>
-      {title && <div className="card-title">{title}</div>}
+      {(title || action) && (
+        <div className="card-header">
+          {title && <div className="card-title">{title}</div>}
+          {action}
+        </div>
+      )}
       {children}
     </div>
   );
 }
 
-function BarRow({ label, value, max, color }) {
-  const pct = max > 0 ? (value / max) * 100 : 0;
+const RATING_LABELS = { 5: "Excellent", 4: "Good", 3: "Average", 2: "Poor", 1: "Very Poor" };
+
+// Poll-style option: the whole row fills behind the label like a vote share.
+function PollOption({ star, count, pct, leading }) {
+  return (
+    <div className={`poll-option ${leading ? "poll-option-leading" : ""}`}>
+      <div className="poll-option-fill" style={{ width: `${pct}%` }} />
+      <div className="poll-option-content">
+        <span className="poll-option-label">
+          <span className="poll-option-stars">{"★".repeat(star)}</span> {RATING_LABELS[star]}
+          {leading && <span className="poll-option-check">✓</span>}
+        </span>
+        <span className="poll-option-pct">
+          {pct}% <span className="poll-option-votes">({count})</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function normName(value) {
+  return (value || "").trim().toLowerCase();
+}
+
+function BarRow({ label, value, max, color, rawValue }) {
+  // value may be display text like "45%", so parse it when no raw number is given.
+  const numeric = rawValue !== undefined ? rawValue : parseFloat(value);
+  const pct = max > 0 && numeric ? Math.min(100, (numeric / max) * 100) : 0;
   return (
     <div className="bar-row">
       <div className="bar-row-label">{label}</div>
@@ -97,6 +128,10 @@ export default function Analytics() {
   const [npsResponses, setNpsResponses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
+  // Dates are staged here and only take effect on "Apply Filter".
+  const [draftDates, setDraftDates] = useState({ date_from: "", date_to: "" });
+  const [dateError, setDateError] = useState("");
+  const [ratingMentor, setRatingMentor] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -114,9 +149,34 @@ export default function Analytics() {
   }, []);
 
   const batchOptions = useMemo(() => unique(batches.map((b) => b.batch_name)), [batches]);
-  const mentorOptions = useMemo(() => unique(mentors.map((m) => m.name)), [mentors]);
+  // Mentors can appear in sessions/feedback without an exact Mentor
+  // Management record (or with different casing), so build the list from
+  // every source and de-duplicate on a normalized name.
+  const mentorNames = useMemo(() => {
+    const seen = new Map();
+    [...mentors.map((m) => m.name), ...sessions.map((s) => s.mentor_name), ...npsResponses.map((n) => n.mentor_name)].forEach((name) => {
+      const key = normName(name);
+      if (key && !seen.has(key)) seen.set(key, name.trim());
+    });
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }, [mentors, sessions, npsResponses]);
+  const mentorOptions = mentorNames;
   const hasActiveFilter = Object.values(filters).some(Boolean);
-  const clearFilters = () => setFilters(EMPTY_FILTERS);
+  const datesDirty = draftDates.date_from !== filters.date_from || draftDates.date_to !== filters.date_to;
+  const clearFilters = () => {
+    setFilters(EMPTY_FILTERS);
+    setDraftDates({ date_from: "", date_to: "" });
+    setDateError("");
+  };
+  const applyDateFilter = () => {
+    const { date_from, date_to } = draftDates;
+    if (date_from && date_to && date_from > date_to) {
+      setDateError("“From” date must be on or before the “To” date.");
+      return;
+    }
+    setDateError("");
+    setFilters((prev) => ({ ...prev, date_from, date_to }));
+  };
 
   // ---- Filtered sessions (every downstream metric derives from this) ----
   const filteredSessions = useMemo(() => {
@@ -124,7 +184,7 @@ export default function Analytics() {
       if (filters.date_from && s.session_date && s.session_date < filters.date_from) return false;
       if (filters.date_to && s.session_date && s.session_date > filters.date_to) return false;
       if (filters.batch_name && s.batch_name !== filters.batch_name) return false;
-      if (filters.mentor_name && s.mentor_name !== filters.mentor_name) return false;
+      if (filters.mentor_name && normName(s.mentor_name) !== normName(filters.mentor_name)) return false;
       if (filters.session_type && (s.session_type || "Live Session") !== filters.session_type) return false;
       return true;
     });
@@ -133,7 +193,7 @@ export default function Analytics() {
   const filteredNps = useMemo(() => {
     return npsResponses.filter((n) => {
       if (filters.batch_name && n.batch_name !== filters.batch_name) return false;
-      if (filters.mentor_name && n.mentor_name !== filters.mentor_name) return false;
+      if (filters.mentor_name && normName(n.mentor_name) !== normName(filters.mentor_name)) return false;
       if (filters.date_from && n.created_at && n.created_at.slice(0, 10) < filters.date_from) return false;
       if (filters.date_to && n.created_at && n.created_at.slice(0, 10) > filters.date_to) return false;
       return true;
@@ -149,7 +209,6 @@ export default function Analytics() {
     const dt = sessionDt(s);
     return s.status === "Scheduled" && dt && dt.getTime() > nowMs;
   }).length;
-  const rescheduledSessions = filteredSessions.filter((s) => (s.remarks || "").includes("Rescheduled from")).length;
 
   const totalSessionMinutes = filteredSessions.reduce((sum, s) => sum + (Number(s.duration) || 0), 0);
   const sessionsWithDuration = filteredSessions.filter((s) => Number(s.duration) > 0).length;
@@ -169,55 +228,17 @@ export default function Analytics() {
   const totalBatches = batches.length;
   const activeBatches = batches.filter((b) => b.status !== "Inactive").length;
 
-  // ================= Session Trend (real, grouped by date) =================
-  const sessionTrend = useMemo(() => {
-    const byDate = {};
-    filteredSessions.forEach((s) => {
-      if (!s.session_date) return;
-      if (!byDate[s.session_date]) byDate[s.session_date] = { completed: 0, cancelled: 0, upcoming: 0 };
-      const dt = sessionDt(s);
-      if (s.status === "Completed") byDate[s.session_date].completed += 1;
-      else if (s.status === "Cancelled") byDate[s.session_date].cancelled += 1;
-      else if (dt && dt.getTime() > nowMs) byDate[s.session_date].upcoming += 1;
-    });
-    return Object.keys(byDate).sort().map((date) => ({ date, ...byDate[date] }));
-  }, [filteredSessions, nowMs]);
-
-  // ================= Session Type breakdown (real 2 categories) =================
-  const sessionTypeBreakdown = useMemo(() => {
-    const map = {};
-    filteredSessions.forEach((s) => {
-      const t = s.session_type || "Live Session";
-      map[t] = (map[t] || 0) + 1;
-    });
-    return Object.entries(map).map(([type, count]) => ({ type, count }));
-  }, [filteredSessions]);
-
-  // ================= Session Issues (all real, existing fields) =================
-  const sessionIssues = useMemo(() => {
-    const noMentor = filteredSessions.filter((s) => !s.mentor_name).length;
-    const lowAttendance = filteredSessions.filter((s) => Number(s.registered_students) > 0 && Number(s.attendance_percentage) < 50).length;
-    const lowRating = filteredSessions.filter((s) => Number(s.feedback_score) > 0 && Number(s.feedback_score) < 3).length;
-    const missingRecording = filteredSessions.filter((s) => s.status === "Completed" && !s.recording_link).length;
-    const missingFeedback = filteredSessions.filter((s) => s.status === "Completed" && !(Number(s.feedback_score) > 0)).length;
-    return [
-      { label: "Sessions without mentor", value: noMentor },
-      { label: "Low attendance (< 50%)", value: lowAttendance },
-      { label: "Low rating (< 3.0)", value: lowRating },
-      { label: "Missing recording", value: missingRecording },
-      { label: "Missing feedback", value: missingFeedback },
-    ].filter((i) => i.value > 0);
-  }, [filteredSessions]);
-
   // ================= Mentor Analytics (real, from sessions + nps) =================
   const mentorStats = useMemo(() => {
-    return mentors.map((m) => {
-      const mSessions = filteredSessions.filter((s) => s.mentor_name === m.name);
+    return mentorNames.map((name) => {
+      const m = { name };
+      const mSessions = filteredSessions.filter((s) => normName(s.mentor_name) === normName(name));
       const hours = mSessions.reduce((sum, s) => sum + (Number(s.duration) || 0), 0) / 60;
       const attendanceList = mSessions.filter((s) => Number(s.registered_students) > 0).map((s) => Number(s.attendance_percentage) || 0);
-      const npsForMentor = filteredNps.filter((n) => n.mentor_name === m.name);
+      const npsForMentor = filteredNps.filter((n) => normName(n.mentor_name) === normName(name));
       const teaching = avg(npsForMentor.map((n) => n.instructor_rating));
       const doubt = avg(npsForMentor.map((n) => n.doubt_rating));
+      const experience = avg(npsForMentor.map((n) => n.website_rating));
       const overall = avg(npsForMentor.map((n) => (n.instructor_rating + n.doubt_rating + n.website_rating) / 3));
       const nonCancelled = mSessions.filter((s) => s.status !== "Cancelled").length;
       const sla = mSessions.length ? (nonCancelled / mSessions.length) * 100 : null;
@@ -228,11 +249,16 @@ export default function Analytics() {
         attendance: avg(attendanceList),
         teaching,
         doubt,
+        experience,
         overall,
+        responses: npsForMentor.length,
         sla,
       };
-    }).filter((m) => !filters.mentor_name || m.name === filters.mentor_name);
-  }, [mentors, filteredSessions, filteredNps, filters.mentor_name]);
+    }).filter((m) => !filters.mentor_name || normName(m.name) === normName(filters.mentor_name));
+  }, [mentorNames, filteredSessions, filteredNps, filters.mentor_name]);
+
+  const ratedMentors = mentorStats.filter((m) => m.teaching !== null);
+  const selectedRatingMentor = ratingMentor ? mentorStats.find((m) => m.name === ratingMentor) : null;
 
   const topMentorsBySessions = useMemo(
     () => [...mentorStats].sort((a, b) => b.sessions - a.sessions).slice(0, 5),
@@ -309,6 +335,8 @@ export default function Analytics() {
     const total = feedbackResponses || 1;
     return [5, 4, 3, 2, 1].map((star) => ({ star, count: buckets[star], pct: Math.round((buckets[star] / total) * 100) }));
   }, [npsWithOverall, feedbackResponses]);
+
+  const leadingRatingCount = Math.max(...ratingDistribution.map((r) => r.count));
 
   const ratingTrend = useMemo(() => {
     const byDate = {};
@@ -418,11 +446,28 @@ export default function Analytics() {
 
           {/* Filter bar */}
           <div className="filter-bar">
-            <div className="date-range-field">
-              <input type="date" className="filter-input" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} />
+            <div className={`date-range-field ${dateError ? "date-range-field-error" : ""}`}>
+              <label className="date-range-label">From</label>
+              <input
+                type="date"
+                className="filter-input"
+                value={draftDates.date_from}
+                max={draftDates.date_to || undefined}
+                onChange={(e) => setDraftDates({ ...draftDates, date_from: e.target.value })}
+              />
               <span className="muted">–</span>
-              <input type="date" className="filter-input" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} />
+              <label className="date-range-label">To</label>
+              <input
+                type="date"
+                className="filter-input"
+                value={draftDates.date_to}
+                min={draftDates.date_from || undefined}
+                onChange={(e) => setDraftDates({ ...draftDates, date_to: e.target.value })}
+              />
             </div>
+            <button className="btn-apply" onClick={applyDateFilter} disabled={!datesDirty}>
+              Apply Filter
+            </button>
             <select className="filter-input" value={filters.batch_name} onChange={(e) => setFilters({ ...filters, batch_name: e.target.value })}>
               <option value="">All Batches</option>
               {batchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
@@ -436,10 +481,11 @@ export default function Analytics() {
               <option value="Live Session">Live Session</option>
               <option value="Webinar Session">Webinar Session</option>
             </select>
-            {hasActiveFilter && (
+            {(hasActiveFilter || draftDates.date_from || draftDates.date_to) && (
               <button className="btn-reset" onClick={clearFilters}>↺ Reset Filters</button>
             )}
           </div>
+          {dateError && <div className="filter-error">{dateError}</div>}
 
           {/* Executive Operations Summary */}
           <Section icon="🧭" title="Executive Operations Summary" subtitle="Key metrics at a glance">
@@ -465,72 +511,6 @@ export default function Analytics() {
             </div>
           </Section>
 
-          {/* Session Analytics */}
-          <Section icon="📅" title="Session Analytics" subtitle="Track session trends, status and performance">
-            <div className="kpi-grid kpi-grid-4">
-              <KPI icon="📅" value={totalSessions} label="Total Sessions" color="#2563eb" bg="#dbeafe" />
-              <KPI icon="✅" value={completedSessions} label="Completed" color="#16a34a" bg="#dcfce7" />
-              <KPI icon="❌" value={cancelledSessions} label="Cancelled" color="#dc2626" bg="#fee2e2" />
-              <KPI icon="🔁" value={rescheduledSessions} label="Rescheduled" color="#8b5cf6" bg="#ede9fe" />
-              <KPI icon="📆" value={upcomingSessions} label="Upcoming" color="#0891b2" bg="#e0f2fe" />
-              <KPI icon="⏱️" value={`${round1(totalSessionMinutes / 60)}h`} label="Total Hours" color="#eab308" bg="#fef9c3" />
-              <KPI icon="⏳" value={avgDurationHours === null ? "—" : `${fmt1(avgDurationHours)}h`} label="Avg Duration" color="#0891b2" bg="#e0f2fe" />
-              <KPI icon="👥" value={fmtPct(avgAttendance)} label="Avg Attendance" color="#7c3aed" bg="#ede9fe" />
-            </div>
-
-            <div className="grid-4col">
-              <Card title="Session Trend" style={{ gridColumn: "span 2" }}>
-                {sessionTrend.length === 0 ? <EmptyChart /> : (
-                  <Line
-                    data={{
-                      labels: sessionTrend.map((d) => d.date.slice(5)),
-                      datasets: [
-                        { label: "Completed", data: sessionTrend.map((d) => d.completed), borderColor: "#22c55e", backgroundColor: "#22c55e33", tension: 0.35 },
-                        { label: "Cancelled", data: sessionTrend.map((d) => d.cancelled), borderColor: "#ef4444", backgroundColor: "#ef444433", tension: 0.35 },
-                        { label: "Upcoming", data: sessionTrend.map((d) => d.upcoming), borderColor: "#3b82f6", backgroundColor: "#3b82f633", tension: 0.35 },
-                      ],
-                    }}
-                    options={{ responsive: true, plugins: { legend: { position: "top", labels: { font: chartFont } } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }}
-                    height={110}
-                  />
-                )}
-              </Card>
-
-              <Card title="Session Status">
-                {totalSessions === 0 ? <EmptyChart /> : (
-                  <Doughnut
-                    data={{
-                      labels: ["Completed", "Upcoming", "Cancelled", "Rescheduled"],
-                      datasets: [{ data: [completedSessions, upcomingSessions, cancelledSessions, rescheduledSessions], backgroundColor: ["#22c55e", "#3b82f6", "#ef4444", "#eab308"] }],
-                    }}
-                    options={{ plugins: { legend: { position: "bottom", labels: { font: chartFont, boxWidth: 10 } } } }}
-                    height={140}
-                  />
-                )}
-                <div className="donut-center-label">{totalSessions}<br /><span>Sessions</span></div>
-              </Card>
-
-              <Card title="Session Type">
-                {sessionTypeBreakdown.map((t) => (
-                  <BarRow key={t.type} label={t.type} value={t.count} max={totalSessions} color="#6366f1" />
-                ))}
-              </Card>
-            </div>
-
-            {sessionIssues.length > 0 && (
-              <Card title="⚠️ Session Issues">
-                <div className="issues-grid">
-                  {sessionIssues.map((issue) => (
-                    <div key={issue.label} className="issue-row">
-                      <span className="issue-icon">⚠️</span>
-                      <span>{issue.value} {issue.label}</span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            )}
-          </Section>
-
           {/* Mentor Analytics */}
           <Section icon="🧑‍🏫" title="Mentor Analytics" subtitle="Track mentor performance, ratings and engagement">
             <div className="kpi-grid kpi-grid-4">
@@ -549,20 +529,49 @@ export default function Analytics() {
                   <BarRow key={m.name} label={m.name} value={m.sessions} max={Math.max(...topMentorsBySessions.map((x) => x.sessions), 1)} color="#3b82f6" />
                 ))}
               </Card>
-              <Card title="Mentor Rating Breakdown">
-                {mentorStats.filter((m) => m.teaching !== null).length === 0 ? <EmptyChart /> : (
-                  <Bar
-                    data={{
-                      labels: mentorStats.filter((m) => m.teaching !== null).map((m) => m.name),
-                      datasets: [
-                        { label: "Teaching Method", data: mentorStats.filter((m) => m.teaching !== null).map((m) => fmt1(m.teaching)), backgroundColor: "#3b82f6" },
-                        { label: "Doubt Handling", data: mentorStats.filter((m) => m.teaching !== null).map((m) => fmt1(m.doubt)), backgroundColor: "#8b5cf6" },
-                        { label: "Overall", data: mentorStats.filter((m) => m.teaching !== null).map((m) => fmt1(m.overall)), backgroundColor: "#22c55e" },
-                      ],
-                    }}
-                    options={{ responsive: true, plugins: { legend: { position: "top", labels: { font: chartFont, boxWidth: 10 } } }, scales: { y: { min: 0, max: 5 } } }}
-                    height={140}
-                  />
+              <Card
+                title="Mentor Rating Breakdown"
+                action={
+                  <select className="filter-input card-select" value={ratingMentor} onChange={(e) => setRatingMentor(e.target.value)}>
+                    <option value="">All Mentors</option>
+                    {mentorStats.map((m) => (
+                      <option key={m.name} value={m.name}>
+                        {m.name}{m.responses ? ` (${m.responses})` : " (no feedback)"}
+                      </option>
+                    ))}
+                  </select>
+                }
+              >
+                {!ratingMentor ? (
+                  ratedMentors.length === 0 ? <EmptyChart /> : (
+                    <Bar
+                      data={{
+                        labels: ratedMentors.map((m) => m.name),
+                        datasets: [
+                          { label: "Teaching Method", data: ratedMentors.map((m) => fmt1(m.teaching)), backgroundColor: "#3b82f6" },
+                          { label: "Doubt Handling", data: ratedMentors.map((m) => fmt1(m.doubt)), backgroundColor: "#8b5cf6" },
+                          { label: "Overall", data: ratedMentors.map((m) => fmt1(m.overall)), backgroundColor: "#22c55e" },
+                        ],
+                      }}
+                      options={{ responsive: true, plugins: { legend: { position: "top", labels: { font: chartFont, boxWidth: 10 } } }, scales: { y: { min: 0, max: 5 } } }}
+                      height={140}
+                    />
+                  )
+                ) : !selectedRatingMentor || selectedRatingMentor.responses === 0 ? (
+                  <div className="empty-state">No learner feedback for {ratingMentor} yet{hasActiveFilter ? " in the selected filters" : ""}.</div>
+                ) : (
+                  <div className="mentor-rating-detail">
+                    <div className="mentor-rating-summary">
+                      <div className="mentor-rating-score">{fmt1(selectedRatingMentor.overall)}<span> / 5</span></div>
+                      <div className="mentor-rating-meta">
+                        Overall rating from {selectedRatingMentor.responses} response{selectedRatingMentor.responses === 1 ? "" : "s"}
+                      </div>
+                    </div>
+                    <BarRow label="Teaching Method" value={fmt1(selectedRatingMentor.teaching)} max={5} color="#3b82f6" rawValue={selectedRatingMentor.teaching} />
+                    <BarRow label="Doubt Handling" value={fmt1(selectedRatingMentor.doubt)} max={5} color="#8b5cf6" rawValue={selectedRatingMentor.doubt} />
+                    <BarRow label="Overall Experience" value={fmt1(selectedRatingMentor.experience)} max={5} color="#f59e0b" rawValue={selectedRatingMentor.experience} />
+                    <BarRow label="Overall" value={fmt1(selectedRatingMentor.overall)} max={5} color="#22c55e" rawValue={selectedRatingMentor.overall} />
+                  </div>
                 )}
               </Card>
             </div>
@@ -667,9 +676,16 @@ export default function Analytics() {
 
             <div className="grid-2col">
               <Card title="Rating Distribution">
-                {ratingDistribution.map((r) => (
-                  <BarRow key={r.star} label={"★".repeat(r.star)} value={`${r.pct}%`} max={100} color="#3b82f6" />
-                ))}
+                {feedbackResponses === 0 ? <EmptyChart /> : (
+                  <div className="poll">
+                    {ratingDistribution.map((r) => (
+                      <PollOption key={r.star} star={r.star} count={r.count} pct={r.pct} leading={r.count > 0 && r.count === leadingRatingCount} />
+                    ))}
+                    <div className="poll-footer">
+                      {feedbackResponses} response{feedbackResponses === 1 ? "" : "s"} · overall rating rounded to the nearest star
+                    </div>
+                  </div>
+                )}
               </Card>
               <Card title="Rating Trend">
                 {ratingTrend.length === 0 ? <EmptyChart /> : (
@@ -831,6 +847,39 @@ export default function Analytics() {
             padding: 9px 4px;
           }
 
+          .date-range-label {
+            font-size: 12px;
+            font-weight: 700;
+            color: #64748b;
+          }
+
+          .date-range-field-error {
+            border-color: #ef4444;
+          }
+
+          .filter-error {
+            color: #dc2626;
+            font-size: 12.5px;
+            font-weight: 600;
+            margin: -14px 0 20px;
+          }
+
+          .btn-apply {
+            border: none;
+            background: linear-gradient(120deg, #f59e0b, #fbbf24);
+            color: #0f172a;
+            border-radius: 10px;
+            padding: 10px 16px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+          }
+
+          .btn-apply:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+          }
+
           .btn-reset {
             border: 1px solid #e2e8f0;
             background: #ffffff;
@@ -882,11 +931,125 @@ export default function Analytics() {
             position: relative;
           }
 
+          :global(.card-header) {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+          }
+
           :global(.card-title) {
             font-size: 13.5px;
             font-weight: 700;
             color: #1e293b;
+          }
+
+          :global(.card-select) {
+            padding: 7px 10px !important;
+            font-size: 12.5px !important;
+            max-width: 220px;
+          }
+
+          :global(.mentor-rating-summary) {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
             margin-bottom: 14px;
+          }
+
+          :global(.mentor-rating-score) {
+            font-size: 28px;
+            font-weight: 800;
+            color: #1e293b;
+          }
+
+          :global(.mentor-rating-score span) {
+            font-size: 14px;
+            color: #94a3b8;
+            font-weight: 700;
+          }
+
+          :global(.mentor-rating-meta) {
+            font-size: 12.5px;
+            color: #64748b;
+          }
+
+          :global(.poll) {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+          }
+
+          :global(.poll-option) {
+            position: relative;
+            overflow: hidden;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            background: #ffffff;
+          }
+
+          :global(.poll-option-leading) {
+            border-color: #3b82f6;
+          }
+
+          :global(.poll-option-fill) {
+            position: absolute;
+            inset: 0 auto 0 0;
+            background: #dbeafe;
+            transition: width 0.5s ease;
+          }
+
+          :global(.poll-option-leading .poll-option-fill) {
+            background: #bfdbfe;
+          }
+
+          :global(.poll-option-content) {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 9px 12px;
+            font-size: 13px;
+          }
+
+          :global(.poll-option-label) {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: #1e293b;
+            font-weight: 600;
+          }
+
+          :global(.poll-option-stars) {
+            color: #f59e0b;
+            letter-spacing: 1px;
+            min-width: 70px;
+          }
+
+          :global(.poll-option-check) {
+            color: #2563eb;
+            font-weight: 800;
+          }
+
+          :global(.poll-option-pct) {
+            font-weight: 800;
+            color: #1e293b;
+            white-space: nowrap;
+          }
+
+          :global(.poll-option-votes) {
+            font-weight: 600;
+            color: #64748b;
+            font-size: 12px;
+          }
+
+          :global(.poll-footer) {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-top: 4px;
           }
 
           .kpi-grid {
@@ -1044,25 +1207,6 @@ export default function Analytics() {
             font-size: 10px;
             font-weight: 600;
             color: #94a3b8;
-          }
-
-          .issues-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 10px;
-          }
-
-          .issue-row {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: #fffbeb;
-            border: 1px solid #fde68a;
-            color: #92400e;
-            border-radius: 10px;
-            padding: 8px 12px;
-            font-size: 12.5px;
-            font-weight: 600;
           }
 
           .table-wrap {

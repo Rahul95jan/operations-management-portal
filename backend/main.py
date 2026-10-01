@@ -1926,7 +1926,9 @@ def _filtered_nps_query(db, course_name=None, batch_name=None, mentor_name=None)
     if batch_name:
         query = query.filter(NPSFeedback.batch_name == batch_name)
     if mentor_name:
-        query = query.filter(NPSFeedback.mentor_name == mentor_name)
+        # The filter's names come from Mentor Management, so match feedback
+        # rows case- and whitespace-insensitively.
+        query = query.filter(func.lower(func.trim(NPSFeedback.mentor_name)) == mentor_name.strip().lower())
 
     return query
 

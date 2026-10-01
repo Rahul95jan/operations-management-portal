@@ -301,14 +301,19 @@ export default function NPSAnalyticsPage() {
   }, []);
 
   useEffect(() => {
-    fetch(`${API}/nps`).then((r) => r.json()).then((data) => {
-      const all = Array.isArray(data) ? data : [];
+    // Mentor names come from Mentor Management; course/batch from the responses.
+    Promise.all([
+      fetch(`${API}/nps`).then((r) => r.json()).catch(() => []),
+      fetch(`${API}/mentors`).then((r) => r.json()).catch(() => []),
+    ]).then(([npsData, mentorData]) => {
+      const all = Array.isArray(npsData) ? npsData : [];
+      const mentorList = Array.isArray(mentorData) ? mentorData : [];
       setFilterOptions({
         course_name: unique(all.map((r) => r.course_name)),
         batch_name: unique(all.map((r) => r.batch_name)),
-        mentor_name: unique(all.map((r) => r.mentor_name)),
+        mentor_name: unique(mentorList.map((m) => (m.name || "").trim())),
       });
-    }).catch(() => {});
+    });
   }, []);
 
   const loadResponses = () => {
@@ -441,7 +446,17 @@ export default function NPSAnalyticsPage() {
     });
   }, [current, stats, prevStats]);
 
-  const byMentor = useMemo(() => buildGroupTable(current, "mentor_name"), [current]);
+  // Per-mentor breakdown covers only mentors in Mentor Management, shown under
+  // their Mentor Management name (feedback names are matched ignoring case).
+  // Until that list loads, fall back to grouping by the raw feedback names.
+  const byMentor = useMemo(() => {
+    const canonical = new Map(filterOptions.mentor_name.map((n) => [n.trim().toLowerCase(), n]));
+    if (canonical.size === 0) return buildGroupTable(current, "mentor_name");
+    const known = current
+      .map((r) => ({ ...r, mentor_name: canonical.get((r.mentor_name || "").trim().toLowerCase()) }))
+      .filter((r) => r.mentor_name);
+    return buildGroupTable(known, "mentor_name");
+  }, [current, filterOptions.mentor_name]);
   const byCourse = useMemo(() => buildGroupTable(current, "course_name"), [current]);
   const byBatch = useMemo(() => buildGroupTable(current, "batch_name"), [current]);
 

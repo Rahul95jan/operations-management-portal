@@ -867,10 +867,10 @@ export default function Batches() {
 
         {/* Create / Update form — fields unchanged from the existing Batch Management flow */}
         <div className="card form-card">
-          <h2 className="card-title" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <h2 className="card-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
             <span className="icon-badge"><Icon name="plus" size={14} color="#ffffff" /></span> {editId ? "Update Batch" : "Create New Batch"}
           </h2>
-          <p className="hint-text" style={{ marginTop: "-12px", marginBottom: "18px" }}>
+          <p className="hint-text" style={{ margin: "4px 0 18px" }}>
             {editId ? "Update the details for this batch." : "Add a new batch with course, mentor and strength details."}
           </p>
 
@@ -940,10 +940,10 @@ export default function Batches() {
 
         {/* Filters & Search */}
         <div className="card" style={{ marginTop: "24px" }}>
-          <h2 className="card-title" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <h2 className="card-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
             <Icon name="filter" size={16} color="#b45309" /> Filters &amp; Search
           </h2>
-          <p className="hint-text" style={{ marginTop: "-12px", marginBottom: "18px" }}>Find and manage batches easily.</p>
+          <p className="hint-text" style={{ margin: "4px 0 18px" }}>Find and manage batches easily.</p>
 
           <div className="filters-row">
             <div className="search-wrap">

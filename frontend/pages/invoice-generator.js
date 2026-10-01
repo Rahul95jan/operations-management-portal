@@ -300,6 +300,37 @@ export default function InvoiceGenerator() {
   const [historyTab, setHistoryTab] = useState("invoices");
 
   const [openMenuId, setOpenMenuId] = useState(null);
+  // Screen position for the row actions menu. It's position: fixed so the
+  // table's scroll container and later rows can't clip or cover it.
+  const [menuPos, setMenuPos] = useState(null);
+
+  const toggleRowMenu = (e, invoiceId) => {
+    e.stopPropagation();
+    if (openMenuId === invoiceId) {
+      setOpenMenuId(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const MENU_HEIGHT = 130;
+    const openUp = rect.bottom + MENU_HEIGHT + 8 > window.innerHeight;
+    setMenuPos({
+      right: window.innerWidth - rect.right,
+      ...(openUp ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
+    });
+    setOpenMenuId(invoiceId);
+  };
+
+  // A fixed menu would drift away from its row on scroll/resize, so close it.
+  useEffect(() => {
+    if (!openMenuId) return undefined;
+    const close = () => setOpenMenuId(null);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [openMenuId]);
   const [viewInvoice, setViewInvoice] = useState(null);
   const [drawerTab, setDrawerTab] = useState("overview");
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -872,9 +903,9 @@ export default function InvoiceGenerator() {
                             <th>Mentor</th>
                             <th>Batch</th>
                             <th>Month</th>
-                            <th>Sessions</th>
-                            <th>Hours</th>
-                            <th>Amount</th>
+                            <th className="num">Sessions</th>
+                            <th className="num">Hours</th>
+                            <th className="num">Amount</th>
                             <th>Invoice Date</th>
                             <th>Due Date</th>
                             <th>Status</th>
@@ -889,19 +920,21 @@ export default function InvoiceGenerator() {
                               <td className="strong">{inv.mentor_name}</td>
                               <td>{inv.batch_name}</td>
                               <td>{monthLabel(inv.month)}</td>
-                              <td>{inv.total_sessions}</td>
-                              <td>{inv.total_hours}</td>
-                              <td className="strong">{money(inv.total_amount)}</td>
+                              <td className="num">{inv.total_sessions}</td>
+                              <td className="num">{inv.total_hours}</td>
+                              <td className="strong num">{money(inv.total_amount)}</td>
                               <td className="muted">{fmtDate(inv.invoice_date)}</td>
                               <td className="muted">{fmtDate(inv.due_date)}</td>
                               <td><StatusBadge status={displayStatus(inv)} /></td>
-                              <td style={{ whiteSpace: "nowrap", position: "relative" }}>
-                                <button className="btn btn-icon" onClick={() => { setViewInvoice(inv); setDrawerTab("overview"); }}><Icon name="eye" size={13} /></button>
-                                <a href={`${API}/download-invoice/${inv.id}`} target="_blank" rel="noreferrer" className="btn btn-icon" style={{ textDecoration: "none" }}><Icon name="download" size={13} /></a>
-                                <button className="btn btn-icon" onClick={() => sendInvoiceEmail(inv.id)}><Icon name="send" size={13} /></button>
-                                <button className="btn btn-icon btn-dots" onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === inv.id ? null : inv.id); }}><DotsIcon size={15} /></button>
+                              <td style={{ whiteSpace: "nowrap" }}>
+                                <div className="row-actions">
+                                  <button className="btn btn-icon btn-action" onClick={() => { setViewInvoice(inv); setDrawerTab("overview"); }}><Icon name="eye" size={13} /> View</button>
+                                  <a href={`${API}/download-invoice/${inv.id}`} target="_blank" rel="noreferrer" className="btn btn-icon btn-action" style={{ textDecoration: "none" }}><Icon name="download" size={13} /> Download</a>
+                                  <button className="btn btn-icon btn-action" onClick={() => sendInvoiceEmail(inv.id)}><Icon name="send" size={13} /> Send Mail</button>
+                                  <button className="btn btn-icon btn-dots" title="More actions" onClick={(e) => toggleRowMenu(e, inv.id)}><DotsIcon size={15} /></button>
+                                </div>
                                 {openMenuId === inv.id && (
-                                  <div className="dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                                  <div className="dropdown-menu" style={menuPos || undefined} onClick={(e) => e.stopPropagation()}>
                                     <button onClick={() => editInvoice(inv)}><Icon name="edit" size={13} /> Edit Invoice</button>
                                     {inv.payment_status === "Pending" && <button onClick={() => markPaid(inv.id)}><Icon name="checkCircle" size={13} /> Mark as Paid</button>}
                                     <button className="dropdown-danger" onClick={() => deleteInvoiceRow(inv.id)}><Icon name="trash" size={13} /> Delete Invoice</button>
@@ -976,6 +1009,14 @@ export default function InvoiceGenerator() {
                   <StatusBadge status={displayStatus(viewInvoice)} />
                 </div>
                 <div className="muted" style={{ fontSize: "13px" }}>{viewInvoice.mentor_name} · {viewInvoice.batch_name}</div>
+              </div>
+
+              <div className="drawer-actions">
+                <a href={`${API}/download-invoice/${viewInvoice.id}`} target="_blank" rel="noreferrer" className="btn btn-ghost" style={{ textDecoration: "none" }}><Icon name="download" size={13} /> Download PDF</a>
+                <button className="btn btn-ghost" onClick={() => sendInvoiceEmail(viewInvoice.id)}><Icon name="send" size={13} /> Send to Mentor</button>
+                {viewInvoice.payment_status === "Pending" && (
+                  <button className="btn btn-mark-paid" onClick={() => markPaid(viewInvoice.id)}><Icon name="checkCircle" size={13} /> Mark as Paid</button>
+                )}
               </div>
 
               <div className="drawer-tabs">
@@ -1054,13 +1095,6 @@ export default function InvoiceGenerator() {
                 </div>
               )}
 
-              <div className="drawer-footer">
-                <a href={`${API}/download-invoice/${viewInvoice.id}`} target="_blank" rel="noreferrer" className="btn btn-ghost" style={{ textDecoration: "none" }}><Icon name="download" size={13} /> Download PDF</a>
-                <button className="btn btn-ghost" onClick={() => sendInvoiceEmail(viewInvoice.id)}><Icon name="send" size={13} /> Send to Mentor</button>
-                {viewInvoice.payment_status === "Pending" && (
-                  <button className="btn btn-primary" onClick={() => markPaid(viewInvoice.id)}>Mark as Paid</button>
-                )}
-              </div>
             </div>
           </div>
         )}
@@ -1087,7 +1121,7 @@ export default function InvoiceGenerator() {
           .date-range-popover { position: absolute; right: 0; top: calc(100% + 6px); background: #ffffff; border: 1px solid #eef2f7; border-radius: 12px; box-shadow: 0 12px 24px -8px rgba(15, 23, 42, 0.25); padding: 16px; z-index: 30; display: flex; flex-direction: column; gap: 12px; min-width: 200px; }
 
           .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px; }
-          .stat-card { border-radius: 14px; padding: 16px 18px; border: 1px solid #eef2f7; display: flex; gap: 12px; align-items: flex-start; }
+          .stat-card { border-radius: 14px; padding: 16px 18px; border: 1px solid #eef2f7; display: flex; gap: 12px; align-items: center; }
           .stat-card-icon { width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
           .stat-card-value { font-size: 19px; font-weight: 800; color: #1e293b; line-height: 1.15; }
           .stat-card-label { font-size: 12px; color: #475569; margin-top: 2px; font-weight: 600; }
@@ -1143,9 +1177,14 @@ export default function InvoiceGenerator() {
           .table-wrap { overflow-x: auto; }
           .styled-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
           .styled-table thead th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.03em; color: #94a3b8; font-weight: 700; padding: 10px 12px; border-bottom: 2px solid #f1f5f9; white-space: nowrap; }
-          .styled-table tbody tr { animation: fadeSlideUp 0.3s ease both; transition: background 0.12s ease; }
+          /* "backwards", not "both": a retained transform makes each row its own
+             stacking context, which painted later rows over the actions menu. */
+          .styled-table tbody tr { animation: fadeSlideUp 0.3s ease backwards; transition: background 0.12s ease; }
           .styled-table tbody tr:hover { background: #fafaf9; }
-          .styled-table td { padding: 11px 12px; border-bottom: 1px solid #f1f5f9; color: #1e293b; }
+          .styled-table td { padding: 11px 12px; border-bottom: 1px solid #f1f5f9; color: #1e293b; vertical-align: middle; white-space: nowrap; }
+          .styled-table th.num, .styled-table td.num { text-align: right; }
+          .row-actions { display: flex; align-items: center; gap: 4px; }
+          .btn-action { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
           .styled-table td.muted { color: #94a3b8; }
           .styled-table td.strong { font-weight: 600; }
 
@@ -1153,7 +1192,7 @@ export default function InvoiceGenerator() {
           .btn-icon:hover { background: #f1f5f9; }
           .btn-dots { padding: 6px 8px; }
 
-          .dropdown-menu { position: absolute; right: 0; top: 100%; margin-top: 4px; background: #ffffff; border: 1px solid #eef2f7; border-radius: 10px; box-shadow: 0 12px 24px -8px rgba(15, 23, 42, 0.25); z-index: 20; min-width: 180px; overflow: hidden; }
+          .dropdown-menu { position: fixed; background: #ffffff; border: 1px solid #eef2f7; border-radius: 10px; box-shadow: 0 12px 24px -8px rgba(15, 23, 42, 0.25); z-index: 1000; min-width: 180px; overflow: hidden; }
           .dropdown-menu button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 10px 14px; background: none; border: none; font-size: 13px; font-weight: 600; color: #334155; cursor: pointer; }
           .dropdown-menu button:hover { background: #f8fafc; }
           .dropdown-danger { color: #b91c1c !important; }
@@ -1190,7 +1229,7 @@ export default function InvoiceGenerator() {
           .drawer-sessions-list { display: flex; flex-direction: column; gap: 10px; }
           .drawer-session-row { display: grid; grid-template-columns: 90px 1fr; gap: 10px; padding: 10px; background: #f8fafc; border: 1px solid #eef2f7; border-radius: 10px; font-size: 13px; }
           .drawer-session-date { color: #64748b; font-size: 12px; }
-          .drawer-footer { display: flex; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: 1px solid #f1f5f9; flex-wrap: wrap; }
+          .drawer-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
 
           @keyframes fadeSlideUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 

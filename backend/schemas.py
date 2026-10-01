@@ -37,6 +37,14 @@ class AdminUserCreate(BaseModel):
     permissions: list[str] = []
 
 
+class AdminUserProfileUpdate(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    username: str | None = None
+    phone: str | None = None
+    password: str | None = None  # set to reset the user's password
+
+
 class AdminUserPermissionsUpdate(BaseModel):
     role: str | None = None
     permissions: list[str] | None = None

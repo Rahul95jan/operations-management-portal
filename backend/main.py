@@ -100,6 +100,7 @@ from schemas import (
     LoginRequest,
     AdminUserCreate,
     AdminUserPermissionsUpdate,
+    AdminUserProfileUpdate,
     ZoomAccountCreate,
     ZoomAccountUpdate,
     SessionCreate,
@@ -394,6 +395,65 @@ async def upload_user_photo_as_admin(user_id: int, file: UploadFile = File(...),
     db.refresh(target)
 
     _log_audit(db, "User Photo Updated", details=f"Target: {target.name}", user=current.name)
+    return user_public(target)
+
+
+@app.put("/admin/users/{user_id}")
+def update_user_profile_as_admin(user_id: int, payload: AdminUserProfileUpdate, current: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """Edits a user's details (name, email, username, phone, password).
+    Role, permissions and status stay on PUT /admin/users/{id}/access."""
+    from fastapi import HTTPException
+
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    changes = []
+
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Name can't be empty.")
+        if name != target.name:
+            changes.append("Name")
+            target.name = name
+
+    if payload.email is not None:
+        email = payload.email.strip()
+        if not email:
+            raise HTTPException(status_code=400, detail="Email can't be empty.")
+        if email != target.email:
+            if db.query(User).filter(User.email == email, User.id != target.id).first():
+                raise HTTPException(status_code=400, detail="That email is already registered.")
+            changes.append("Email")
+            target.email = email
+
+    if payload.username is not None:
+        username = payload.username.strip()
+        if not username:
+            raise HTTPException(status_code=400, detail="Username can't be empty.")
+        if username != target.username:
+            if db.query(User).filter(User.username == username, User.id != target.id).first():
+                raise HTTPException(status_code=400, detail="That username is already taken.")
+            changes.append("Username")
+            target.username = username
+
+    if payload.phone is not None and payload.phone.strip() != (target.phone or ""):
+        changes.append("Phone")
+        target.phone = payload.phone.strip() or None
+
+    if payload.password:
+        if len(payload.password) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+        changes.append("Password reset")
+        target.password_hash = hash_password(payload.password)
+
+    db.commit()
+    db.refresh(target)
+
+    if changes:
+        _log_audit(db, "User Updated", details=f"Target: {target.name} — {', '.join(changes)}", user=current.name)
+
     return user_public(target)
 
 

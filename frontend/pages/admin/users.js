@@ -4,7 +4,7 @@ import Sidebar from "../../components/Sidebar";
 import Header from "../../components/Header";
 import { usePhotoFallback } from "../../components/usePhotoFallback";
 import { getStoredUser } from "../../lib/auth";
-import { UserPlus, Shield, X, Check, AlertTriangle, Eye, Settings2 } from "lucide-react";
+import { UserPlus, Shield, X, Check, AlertTriangle, Eye, Settings2, Pencil } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -91,6 +91,7 @@ export default function UserManagement() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [manageTarget, setManageTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
   const [viewTarget, setViewTarget] = useState(null);
   const [confirmTarget, setConfirmTarget] = useState(null); // {user, action}
 
@@ -165,6 +166,7 @@ export default function UserManagement() {
                       <td><span className={`status-badge status-${u.is_active ? "active" : "inactive"}`}>{u.is_active ? "Active" : "Deactivated"}</span></td>
                       <td>
                         <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                          <button className="row-btn" onClick={() => setEditTarget(u)}><Pencil size={12} strokeWidth={2.3} /> Edit</button>
                           {u.role !== "SUPER_ADMIN" && (
                             <button className="row-btn" onClick={() => setManageTarget(u)}><Settings2 size={12} strokeWidth={2.3} /> Manage Access</button>
                           )}
@@ -189,6 +191,14 @@ export default function UserManagement() {
           catalog={catalog}
           onClose={() => setShowCreate(false)}
           onCreated={(u) => { setUsers((prev) => [...prev, u]); setShowCreate(false); showToast(`${u.name} was added as ${u.role === "SUPER_ADMIN" ? "Super Admin" : "Admin"}.`); }}
+        />
+      )}
+
+      {editTarget && (
+        <EditUserModal
+          user={editTarget}
+          onClose={() => setEditTarget(null)}
+          onSaved={(u) => { setUsers((prev) => prev.map((x) => (x.id === u.id ? u : x))); setEditTarget(null); showToast(`${u.name} was updated.`); }}
         />
       )}
 
@@ -323,17 +333,11 @@ function PermissionTree({ catalog, state, setState, disabledSections = [] }) {
   );
 }
 
-function CreateUserModal({ catalog, onClose, onCreated }) {
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [role, setRole] = useState("ADMIN");
-  const [permState, setPermState] = useState(() => emptyPermState(catalog));
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-  const [photo, setPhoto] = useState(null); // { file, url, width, height }
+// Photo field shared by Add / Edit User: preview, size guidance, the picked
+// image's pixel size, and warnings for small or non-square images.
+function PhotoPicker({ name, photo, setPhoto, currentSrc }) {
   const [photoError, setPhotoError] = useState("");
+  const [currentBroken, setCurrentBroken] = useState(false);
 
   useEffect(() => () => { if (photo?.url) URL.revokeObjectURL(photo.url); }, [photo]);
 
@@ -356,6 +360,161 @@ function CreateUserModal({ catalog, onClose, onCreated }) {
       ? `This image is ${photo.width} × ${photo.height} px — not square, so it will be cropped to a circle.`
       : ""
     : "";
+  const previewSrc = photo ? photo.url : currentSrc && !currentBroken ? currentSrc : null;
+
+  return (
+    <div className="pp">
+      <div className="pp-label">Profile Photo (optional)</div>
+      <div className="pp-row">
+        <div className="pp-preview">
+          {previewSrc ? <img src={previewSrc} alt="" onError={() => setCurrentBroken(true)} /> : name.trim() ? initials(name) : <UserPlus size={18} />}
+        </div>
+        <div className="pp-info">
+          <div className="pp-actions">
+            <label className="pp-btn">
+              {photo || previewSrc ? "Change Photo" : "Upload Photo"}
+              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { pickPhoto(e.target.files[0]); e.target.value = ""; }} />
+            </label>
+            {photo && <button type="button" className="pp-remove" onClick={() => setPhoto(null)}>{currentSrc ? "Keep Current" : "Remove"}</button>}
+          </div>
+          <div className="pp-hint">{PHOTO_GUIDANCE}</div>
+          {photo && <div className="pp-dims">Selected: {photo.width} × {photo.height} px · {(photo.file.size / 1024).toFixed(0)} KB</div>}
+          {photoWarning && <div className="pp-warn">{photoWarning}</div>}
+          {photoError && <div className="pp-err">{photoError}</div>}
+        </div>
+      </div>
+      <style jsx>{`
+        .pp { margin-bottom: 14px; }
+        .pp-label { font-size: 11px; font-weight: 700; color: var(--om-text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+        .pp-row { display: flex; align-items: center; gap: 14px; }
+        .pp-preview { width: 64px; height: 64px; border-radius: 50%; overflow: hidden; flex-shrink: 0; background: rgba(240,199,94,0.12); border: 1px solid rgba(240,199,94,0.3); color: #f0c75e; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; }
+        .pp-preview img { width: 100%; height: 100%; object-fit: cover; }
+        .pp-info { flex: 1; min-width: 0; }
+        .pp-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+        .pp-btn { display: inline-flex; font-size: 12.5px; font-weight: 700; color: #0f172a; background: linear-gradient(120deg, #f59e0b, #fbbf24); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+        .pp-btn input { display: none; }
+        .pp-remove { background: transparent; border: 1px solid var(--om-border-1); color: var(--om-text-muted); border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+        .pp-hint { font-size: 11.5px; color: var(--om-text-muted); line-height: 1.45; }
+        .pp-dims { font-size: 11.5px; color: #4ade80; font-weight: 600; margin-top: 4px; }
+        .pp-warn { font-size: 11.5px; color: #f0c75e; font-weight: 600; margin-top: 4px; }
+        .pp-err { font-size: 11.5px; color: #f87171; font-weight: 600; margin-top: 4px; }
+      `}</style>
+    </div>
+  );
+}
+
+// Edit a user's details and photo. Role / permissions / status stay in
+// Manage Access and the Activate/Deactivate button.
+function EditUserModal({ user, onClose, onSaved }) {
+  const [name, setName] = useState(user.name || "");
+  const [username, setUsername] = useState(user.username || "");
+  const [email, setEmail] = useState(user.email || "");
+  const [phone, setPhone] = useState(user.phone || "");
+  const [password, setPassword] = useState("");
+  const [photo, setPhoto] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const currentSrc = user.photo_path ? `${API}/users/${user.id}/photo?v=${encodeURIComponent(user.photo_path)}` : null;
+
+  const submit = async () => {
+    setError(null);
+    if (!name.trim() || !email.trim() || !username.trim()) { setError("Name, username and email are required."); return; }
+    if (password && password.length < 6) { setError("New password must be at least 6 characters."); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(`${API}/admin/users/${user.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, username, email, phone, ...(password ? { password } : {}) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to update user.");
+
+      let saved = data;
+      if (photo) {
+        const body = new FormData();
+        body.append("file", photo.file);
+        const photoRes = await fetch(`${API}/admin/users/${user.id}/photo`, { method: "POST", body });
+        const photoData = await photoRes.json().catch(() => ({}));
+        if (!photoRes.ok) throw new Error(`Details saved, but the photo couldn't be saved: ${photoData.detail || "please try again."}`);
+        saved = photoData;
+      }
+      onSaved(saved);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title"><Pencil size={16} strokeWidth={2.3} /> Edit User</div>
+          <button className="icon-btn" onClick={onClose}><X size={16} /></button>
+        </div>
+
+        <div className="modal-body">
+          {error && <div className="form-error"><AlertTriangle size={13} /> {error}</div>}
+
+          <PhotoPicker name={name} photo={photo} setPhoto={setPhoto} currentSrc={currentSrc} />
+
+          <div className="field-row">
+            <div className="field"><label>Full Name</label><input value={name} onChange={(e) => setName(e.target.value)} /></div>
+            <div className="field"><label>Username</label><input value={username} onChange={(e) => setUsername(e.target.value)} /></div>
+          </div>
+          <div className="field-row">
+            <div className="field"><label>Email Address</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+            <div className="field"><label>Phone</label><input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Optional" /></div>
+          </div>
+          <div className="field">
+            <label>Reset Password</label>
+            <input type="text" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Leave blank to keep the current password" />
+          </div>
+          <div className="edit-note">Role, portal access and status are changed from Manage Access and the Activate / Deactivate button.</div>
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</button>
+        </div>
+      </div>
+
+      <style jsx>{`
+        .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 20px; }
+        .modal { background: var(--om-bg-card); border: 1px solid var(--om-border-1); border-radius: 16px; width: 100%; max-width: 560px; max-height: 88vh; display: flex; flex-direction: column; }
+        .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--om-border-2); }
+        .modal-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: var(--om-text-primary); }
+        .icon-btn { background: transparent; border: none; color: var(--om-text-muted); cursor: pointer; }
+        .modal-body { padding: 18px 20px; overflow-y: auto; flex: 1; }
+        .form-error { display: flex; align-items: center; gap: 7px; background: rgba(248,113,113,0.1); color: #f87171; font-size: 12.5px; font-weight: 600; padding: 9px 12px; border-radius: 8px; margin-bottom: 14px; }
+        .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .field { margin-bottom: 14px; }
+        .field label { display: block; font-size: 11px; font-weight: 700; color: var(--om-text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+        .field input { width: 100%; box-sizing: border-box; background: var(--om-bg-page); border: 1px solid var(--om-border-1); border-radius: 8px; padding: 9px 11px; color: #f1f5f9; font-size: 13px; outline: none; }
+        .field input:focus { border-color: rgba(240,199,94,0.5); }
+        .edit-note { font-size: 12px; color: var(--om-text-muted); line-height: 1.5; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 20px; border-top: 1px solid var(--om-border-2); }
+        .btn-secondary { background: transparent; border: 1px solid var(--om-border-strong); color: var(--om-text-body); padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .btn-primary { background: linear-gradient(120deg, #f0c75e, #d4a72c); border: none; color: var(--om-bg-page); padding: 9px 18px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+      `}</style>
+    </div>
+  );
+}
+
+function CreateUserModal({ catalog, onClose, onCreated }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("ADMIN");
+  const [permState, setPermState] = useState(() => emptyPermState(catalog));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [photo, setPhoto] = useState(null); // { file, url, width, height }
 
   const applyOperational = () => {
     setPermState((prev) => {
@@ -417,27 +576,7 @@ function CreateUserModal({ catalog, onClose, onCreated }) {
         <div className="modal-body">
           {error && <div className="form-error"><AlertTriangle size={13} /> {error}</div>}
 
-          <div className="field">
-            <label>Profile Photo (optional)</label>
-            <div className="photo-picker">
-              <div className="photo-preview">
-                {photo ? <img src={photo.url} alt="" /> : name.trim() ? initials(name) : <UserPlus size={18} />}
-              </div>
-              <div className="photo-info">
-                <div className="photo-actions">
-                  <label className="photo-btn">
-                    {photo ? "Change Photo" : "Upload Photo"}
-                    <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { pickPhoto(e.target.files[0]); e.target.value = ""; }} />
-                  </label>
-                  {photo && <button type="button" className="photo-remove" onClick={() => setPhoto(null)}>Remove</button>}
-                </div>
-                <div className="photo-hint">{PHOTO_GUIDANCE}</div>
-                {photo && <div className="photo-dims">Selected: {photo.width} × {photo.height} px · {(photo.file.size / 1024).toFixed(0)} KB</div>}
-                {photoWarning && <div className="photo-warn">{photoWarning}</div>}
-                {photoError && <div className="photo-err">{photoError}</div>}
-              </div>
-            </div>
-          </div>
+          <PhotoPicker name={name} photo={photo} setPhoto={setPhoto} />
 
           <div className="field-row">
             <div className="field"><label>Full Name</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Amit Verma" /></div>
@@ -502,18 +641,6 @@ function CreateUserModal({ catalog, onClose, onCreated }) {
         .field label { display: block; font-size: 11px; font-weight: 700; color: var(--om-text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
         .field input { width: 100%; box-sizing: border-box; background: var(--om-bg-page); border: 1px solid var(--om-border-1); border-radius: 8px; padding: 9px 11px; color: #f1f5f9; font-size: 13px; outline: none; }
         .field input:focus { border-color: rgba(240,199,94,0.5); }
-        .photo-picker { display: flex; align-items: center; gap: 14px; }
-        .photo-preview { width: 64px; height: 64px; border-radius: 50%; overflow: hidden; flex-shrink: 0; background: rgba(240,199,94,0.12); border: 1px solid rgba(240,199,94,0.3); color: #f0c75e; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; }
-        .photo-preview img { width: 100%; height: 100%; object-fit: cover; }
-        .photo-info { flex: 1; min-width: 0; }
-        .photo-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-        .field .photo-btn { display: inline-flex; margin: 0; text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 700; color: #0f172a; background: linear-gradient(120deg, #f59e0b, #fbbf24); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
-        .field .photo-btn input { display: none; }
-        .photo-remove { background: transparent; border: 1px solid var(--om-border-1); color: var(--om-text-muted); border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
-        .photo-hint { font-size: 11.5px; color: var(--om-text-muted); line-height: 1.45; }
-        .photo-dims { font-size: 11.5px; color: #4ade80; font-weight: 600; margin-top: 4px; }
-        .photo-warn { font-size: 11.5px; color: #f0c75e; font-weight: 600; margin-top: 4px; }
-        .photo-err { font-size: 11.5px; color: #f87171; font-weight: 600; margin-top: 4px; }
         .role-radio-row { display: flex; gap: 10px; }
         .role-radio { display: flex; align-items: center; gap: 7px; border: 1px solid var(--om-border-1); border-radius: 8px; padding: 8px 14px; font-size: 12.5px; font-weight: 700; color: var(--om-text-muted); cursor: pointer; }
         .role-radio input { accent-color: #f0c75e; }

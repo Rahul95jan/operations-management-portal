@@ -1082,12 +1082,29 @@ def upcoming_sessions():
 
     return sessions
 
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _xlsx_response(rows, columns, file_name):
+    """Builds the workbook in memory. Writing a shared file on disk let two
+    overlapping exports clobber each other mid-download (500 on Render)."""
+    buffer = io.BytesIO()
+    pd.DataFrame(rows, columns=columns).to_excel(buffer, index=False)
+    return Response(
+        content=buffer.getvalue(),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
 @app.get("/export-sessions")
 def export_sessions():
 
     db = SessionLocal()
-
-    sessions = db.query(SessionModel).all()
+    try:
+        sessions = db.query(SessionModel).order_by(SessionModel.id).all()
+    finally:
+        db.close()
 
     data = []
 
@@ -1102,29 +1119,20 @@ def export_sessions():
             "Status": session.status
         })
 
-    df = pd.DataFrame(data)
-
-    file_name = "sessions.xlsx"
-
-    df.to_excel(
-        file_name,
-        index=False
-    )
-
-    db.close()
-
-    return FileResponse(
-        file_name,
-        filename=file_name,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return _xlsx_response(
+        data,
+        ["ID", "Topic", "Mentor", "Batch", "Date", "Time", "Status"],
+        "sessions.xlsx",
     )
 
 @app.get("/export-batches")
 def export_batches():
 
     db = SessionLocal()
-
-    batches = db.query(Batch).all()
+    try:
+        batches = db.query(Batch).order_by(Batch.id).all()
+    finally:
+        db.close()
 
     data = []
 
@@ -1138,21 +1146,10 @@ def export_batches():
             "Status": batch.status
         })
 
-    df = pd.DataFrame(data)
-
-    file_name = "batches.xlsx"
-
-    df.to_excel(
-        file_name,
-        index=False
-    )
-
-    db.close()
-
-    return FileResponse(
-        file_name,
-        filename=file_name,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return _xlsx_response(
+        data,
+        ["ID", "Batch", "Course", "Strength", "Mentor", "Status"],
+        "batches.xlsx",
     )
 
 @app.get("/export-invoices")

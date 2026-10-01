@@ -523,8 +523,21 @@ export default function Batches() {
   const upcomingBatches = batches.filter((b) => b.status !== "Inactive" && !statsFor(b).started && statsFor(b).nextSession).length;
   const atRiskBatches = batches.filter((b) => statsFor(b).health === "At Risk").length;
 
-  const courseOptions = useMemo(() => [...new Set(batches.map((b) => b.course_name).filter(Boolean))].sort(), [batches]);
-  const mentorOptions = useMemo(() => [...new Set(batches.map((b) => b.mentor_name).filter(Boolean))].sort(), [batches]);
+  // Batch names/courses/mentors are free text, so the same value can be saved
+  // with different casing or stray spaces — compare a normalized form so the
+  // filters don't silently miss rows.
+  const normalize = (value) => (value || "").trim().toLowerCase();
+  const uniqueOptions = (values) => {
+    const seen = new Map();
+    values.forEach((v) => {
+      const key = normalize(v);
+      if (key && !seen.has(key)) seen.set(key, v.trim());
+    });
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  };
+
+  const courseOptions = useMemo(() => uniqueOptions(batches.map((b) => b.course_name)), [batches]);
+  const mentorOptions = useMemo(() => uniqueOptions(batches.map((b) => b.mentor_name)), [batches]);
 
   // Create/Edit form's Mentor dropdown draws from the real Mentor Management
   // list (not free text) so batches always reference an actual mentor
@@ -693,33 +706,77 @@ export default function Batches() {
   const hasActiveFilters = search || courseFilter || mentorFilter || statusFilter || healthFilter || dateFrom || dateTo;
 
   const filteredBatches = useMemo(() => {
-    const q = search.toLowerCase();
+    const q = normalize(search);
+    // Accept the range in either order rather than returning nothing.
+    const [rangeFrom, rangeTo] = dateFrom && dateTo && dateFrom > dateTo ? [dateTo, dateFrom] : [dateFrom, dateTo];
+
     return batches.filter((batch) => {
       const matchesSearch =
         !q ||
-        (batch.batch_name || "").toLowerCase().includes(q) ||
-        (batch.course_name || "").toLowerCase().includes(q) ||
-        (batch.mentor_name || "").toLowerCase().includes(q);
+        normalize(batch.batch_name).includes(q) ||
+        normalize(batch.course_name).includes(q) ||
+        normalize(batch.mentor_name).includes(q);
       if (!matchesSearch) return false;
 
-      if (courseFilter && batch.course_name !== courseFilter) return false;
-      if (mentorFilter && batch.mentor_name !== mentorFilter) return false;
+      if (courseFilter && normalize(batch.course_name) !== normalize(courseFilter)) return false;
+      if (mentorFilter && normalize(batch.mentor_name) !== normalize(mentorFilter)) return false;
       if (statusFilter) {
-        const status = batch.status === "Inactive" ? "Inactive" : "Active";
+        const status = normalize(batch.status) === "inactive" ? "Inactive" : "Active";
         if (status !== statusFilter) return false;
       }
       if (healthFilter && statsFor(batch).health !== healthFilter) return false;
 
-      if (dateFrom || dateTo) {
-        const next = statsFor(batch).nextSession;
-        if (!next || !next.session_date) return false;
-        if (dateFrom && next.session_date < dateFrom) return false;
-        if (dateTo && next.session_date > dateTo) return false;
+      // Match batches that have any session (past or upcoming) in the range.
+      if (rangeFrom || rangeTo) {
+        const inRange = sessions.some(
+          (s) =>
+            s.session_date &&
+            normalize(s.batch_name) === normalize(batch.batch_name) &&
+            (!rangeFrom || s.session_date >= rangeFrom) &&
+            (!rangeTo || s.session_date <= rangeTo)
+        );
+        if (!inRange) return false;
       }
 
       return true;
     });
-  }, [batches, search, courseFilter, mentorFilter, statusFilter, healthFilter, dateFrom, dateTo, batchStats]);
+  }, [batches, sessions, search, courseFilter, mentorFilter, statusFilter, healthFilter, dateFrom, dateTo, batchStats]);
+
+  const dateRangeLabel = (() => {
+    if (!dateFrom && !dateTo) return "Date Range";
+    const fmt = (d) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+    if (dateFrom && dateTo) return `${fmt(dateFrom)} – ${fmt(dateTo)}`;
+    return dateFrom ? `From ${fmt(dateFrom)}` : `Until ${fmt(dateTo)}`;
+  })();
+
+  const [exporting, setExporting] = useState(false);
+
+  // Download through fetch instead of a bare link so a failure shows a toast
+  // on this page rather than a blank "Internal Server Error" tab.
+  const exportBatches = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch(`${API}/export-batches`);
+      if (!res.ok) throw new Error(await friendlyError(res, `Export failed (${res.status})`));
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `batches_${new Date().toLocaleDateString("en-CA")}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showToast(
+        err.message && err.message !== "Failed to fetch"
+          ? err.message
+          : "Export failed — the server may be waking up. Please try again in a moment."
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const totalPages = Math.max(1, Math.ceil(filteredBatches.length / ROWS_PER_PAGE));
   const pagedBatches = useMemo(() => {
@@ -897,7 +954,7 @@ export default function Batches() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="styled-input"
-                style={{ ...inputStyle, width: "280px", paddingLeft: "34px" }}
+                style={{ ...inputStyle, paddingLeft: "34px" }}
               />
             </div>
 
@@ -926,25 +983,30 @@ export default function Batches() {
 
             <div className="date-range-wrap" ref={dateRangeRef}>
               <button
-                className="btn btn-ghost"
+                className={`btn btn-ghost filter-btn ${dateFrom || dateTo ? "filter-btn-active" : ""}`}
                 onClick={(e) => { e.stopPropagation(); setDateRangeOpen((v) => !v); }}
               >
-                <Icon name="calendar" size={14} /> Date Range <Icon name="chevronDown" size={12} />
+                <Icon name="calendar" size={14} /> {dateRangeLabel} <Icon name="chevronDown" size={12} />
               </button>
               {dateRangeOpen && (
                 <div className="date-range-popover" onClick={(e) => e.stopPropagation()}>
-                  <Field label="Next session from">
+                  <Field label="Sessions from">
                     <input type="date" className="styled-input" style={inputStyle} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
                   </Field>
-                  <Field label="Next session to">
+                  <Field label="Sessions to">
                     <input type="date" className="styled-input" style={inputStyle} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
                   </Field>
+                  {(dateFrom || dateTo) && (
+                    <button className="btn btn-ghost" onClick={() => { setDateFrom(""); setDateTo(""); }}>
+                      Clear dates
+                    </button>
+                  )}
                 </div>
               )}
             </div>
 
             {hasActiveFilters && (
-              <button className="btn btn-ghost" onClick={resetFilters}>
+              <button className="btn btn-ghost filter-btn" onClick={resetFilters}>
                 <Icon name="refreshCcw" size={13} /> Reset
               </button>
             )}
@@ -954,15 +1016,17 @@ export default function Batches() {
         {/* Batch list */}
         <div className="card" style={{ marginTop: "24px" }}>
           <div className="list-toolbar">
-            <h2 className="card-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
-              <Icon name="graduation" size={17} color="#b45309" /> Batch List
-              <div className="hint-text" style={{ fontWeight: 400, marginTop: "2px" }}>View, manage and track all your batches.</div>
-            </h2>
+            <div>
+              <h2 className="card-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                <Icon name="graduation" size={17} color="#b45309" /> Batch List
+              </h2>
+              <div className="hint-text" style={{ marginTop: "4px" }}>View, manage and track all your batches.</div>
+            </div>
 
-            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-              <a href={`${API}/export-batches`} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
-                <button className="btn btn-ghost"><Icon name="download" size={13} /> Export</button>
-              </a>
+            <div className="list-toolbar-actions">
+              <button className="btn btn-ghost" onClick={exportBatches} disabled={exporting}>
+                <Icon name="download" size={13} /> {exporting ? "Exporting…" : "Export"}
+              </button>
               <div className="view-toggle">
                 <button className={`view-toggle-btn ${viewMode === "table" ? "view-toggle-btn-active" : ""}`} onClick={() => setViewMode("table")}>
                   <Icon name="table" size={13} /> Table View
@@ -1256,6 +1320,8 @@ export default function Batches() {
         .page-hero-content {
           position: relative;
           z-index: 1;
+          flex: 1 1 320px;
+          min-width: 0;
         }
 
         .page-hero-eyebrow {
@@ -1291,8 +1357,10 @@ export default function Batches() {
           z-index: 1;
           display: flex;
           align-items: center;
+          justify-content: flex-end;
           gap: 22px;
           flex-wrap: wrap;
+          margin-left: auto;
         }
 
         .page-hero-quote {
@@ -1309,6 +1377,11 @@ export default function Batches() {
         }
 
         .page-hero-stat {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          min-width: 130px;
           text-align: center;
           padding: 12px 20px;
           border-radius: 14px;
@@ -1456,11 +1529,18 @@ export default function Batches() {
 
         .list-toolbar {
           display: flex;
-          align-items: flex-start;
+          align-items: center;
           justify-content: space-between;
           flex-wrap: wrap;
           gap: 14px;
           margin-bottom: 18px;
+        }
+
+        .list-toolbar-actions {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          flex-wrap: wrap;
         }
 
         .filters-row {
@@ -1471,11 +1551,33 @@ export default function Batches() {
         }
 
         .filter-select {
-          min-width: 130px;
+          min-width: 140px;
+          height: 42px;
+          cursor: pointer;
         }
 
         .search-wrap {
           position: relative;
+          flex: 1 1 260px;
+          max-width: 340px;
+        }
+
+        .search-wrap .styled-input {
+          height: 42px;
+        }
+
+        .filter-btn {
+          height: 42px;
+          padding: 0 14px;
+          border: 1px solid #e2e8f0;
+          background: #f8fafc;
+          white-space: nowrap;
+        }
+
+        .filter-btn-active {
+          border-color: #f59e0b;
+          color: #b45309;
+          background: #fffbeb;
         }
 
         .search-icon {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Sidebar from "../../components/Sidebar";
 import Header from "../../components/Header";
+import { usePhotoFallback } from "../../components/usePhotoFallback";
 import { getStoredUser } from "../../lib/auth";
 import { UserPlus, Shield, X, Check, AlertTriangle, Eye, Settings2 } from "lucide-react";
 
@@ -10,6 +11,26 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 function initials(name) {
   if (!name) return "?";
   return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("");
+}
+
+// A user's uploaded photo, or their initials if there's none / it fails to load.
+function UserAvatar({ user }) {
+  const src = user.photo_path ? `${API}/users/${user.id}/photo?v=${encodeURIComponent(user.photo_path)}` : null;
+  const { showPhoto, onPhotoError } = usePhotoFallback(src);
+  return (
+    <>
+      {showPhoto ? (
+        <img src={src} alt="" onError={onPhotoError} className="ua ua-img" />
+      ) : (
+        <div className="ua ua-fallback">{initials(user.name)}</div>
+      )}
+      <style jsx>{`
+        .ua { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; }
+        .ua-img { object-fit: cover; border: 1px solid rgba(240, 199, 94, 0.3); }
+        .ua-fallback { background: rgba(240, 199, 94, 0.16); color: #f0c75e; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; }
+      `}</style>
+    </>
+  );
 }
 
 const OPERATIONAL_SECTIONS = ["dashboard", "sessions", "mentors", "batches"];
@@ -112,7 +133,7 @@ export default function UserManagement() {
                     <tr key={u.id}>
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                          <div className="avatar">{initials(u.name)}</div>
+                          <UserAvatar user={u} />
                           <span className="strong">{u.name}</span>
                         </div>
                       </td>

@@ -35,7 +35,20 @@ function isSameDay(a, b) {
   return a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-export default function Header({ notificationCount = 0, notifications = [] }) {
+function timeAgo(iso) {
+  if (!iso) return "";
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+// Pages can pass their own notifications (the dashboard does). Otherwise the
+// bell shows the portal's recent activity log, which only Super Admins can
+// read — everyone else gets the empty "all caught up" state.
+export default function Header({ notificationCount, notifications }) {
   const router = useRouter();
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -47,6 +60,8 @@ export default function Header({ notificationCount = 0, notifications = [] }) {
   const [viewDate, setViewDate] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
   const boxRef = useRef(null);
+  const [activity, setActivity] = useState(null);
+  const usesActivityFeed = notifications === undefined;
 
   useEffect(() => {
     fetch(`${API}/users/me`).then((r) => r.json()).then(setUser).catch(() => setUser(null));
@@ -57,6 +72,26 @@ export default function Header({ notificationCount = 0, notifications = [] }) {
     const id = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!usesActivityFeed) return;
+    fetch(`${API}/admin/activity-logs`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((logs) => setActivity(Array.isArray(logs) ? logs : []))
+      .catch(() => setActivity([]));
+  }, [usesActivityFeed]);
+
+  const feed = usesActivityFeed
+    ? (activity || []).map((l) => ({
+        text: `${l.action}${l.performed_by ? ` · ${l.performed_by}` : ""}`,
+        detail: l.details,
+        when: timeAgo(l.timestamp),
+        level: "yellow",
+      }))
+    : notifications;
+  const badgeCount = usesActivityFeed
+    ? (activity || []).filter((l) => l.timestamp && Date.now() - new Date(l.timestamp).getTime() < 24 * 60 * 60 * 1000).length
+    : notificationCount || 0;
 
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";
@@ -165,20 +200,29 @@ export default function Header({ notificationCount = 0, notifications = [] }) {
         <div className="header-item-wrap">
           <button className="icon-btn" onClick={() => { setNotifOpen((v) => !v); setProfileOpen(false); }} aria-label="Notifications">
             <Bell size={18} strokeWidth={2} />
-            {notificationCount > 0 && <span className="notif-badge">{notificationCount > 9 ? "9+" : notificationCount}</span>}
+            {badgeCount > 0 && <span className="notif-badge">{badgeCount > 9 ? "9+" : badgeCount}</span>}
           </button>
           {notifOpen && (
             <div className="dropdown notif-dropdown">
               <div className="dropdown-title">Notifications</div>
-              {notifications.length === 0 ? (
+              {usesActivityFeed && activity === null ? (
+                <div className="dropdown-empty">Loading…</div>
+              ) : feed.length === 0 ? (
                 <div className="dropdown-empty">You&apos;re all caught up.</div>
               ) : (
-                notifications.slice(0, 6).map((n, i) => (
+                feed.slice(0, 6).map((n, i) => (
                   <div key={i} className="notif-row">
                     <span className={`notif-dot notif-dot-${n.level || "orange"}`} />
-                    <span>{n.text}</span>
+                    <span className="notif-text">
+                      <span>{n.text}</span>
+                      {n.detail && <span className="notif-detail">{n.detail}</span>}
+                    </span>
+                    {n.when && <span className="notif-when">{n.when}</span>}
                   </div>
                 ))
+              )}
+              {usesActivityFeed && feed.length > 0 && (
+                <Link href="/admin/activity" className="notif-all">View all activity →</Link>
               )}
             </div>
           )}
@@ -553,6 +597,45 @@ export default function Header({ notificationCount = 0, notifications = [] }) {
           color: var(--om-text-strong);
           padding: 7px 8px;
           border-radius: 8px;
+        }
+
+        .notif-dropdown {
+          width: 320px;
+          max-width: calc(100vw - 32px);
+        }
+
+        .notif-text {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          flex: 1;
+          min-width: 0;
+        }
+
+        .notif-detail {
+          font-size: 11.5px;
+          color: var(--om-text-muted, #94a3b8);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .notif-when {
+          font-size: 11px;
+          color: var(--om-text-muted, #94a3b8);
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
+
+        .header :global(.notif-all) {
+          display: block;
+          margin-top: 6px;
+          padding: 8px 10px 2px;
+          border-top: 1px solid var(--om-border-1, #e2e8f0);
+          font-size: 12.5px;
+          font-weight: 700;
+          color: #f0c75e;
+          text-decoration: none;
         }
 
         .notif-row:hover {

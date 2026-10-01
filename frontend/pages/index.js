@@ -186,7 +186,7 @@ function useSessionReportsToday() {
   const [data, setData] = useState(null);
 
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/dashboard/session-reports-today")
+    fetch(`${API}/dashboard/session-reports-today`)
       .then((r) => r.json())
       .then(setData)
       .catch(() => setData(null));

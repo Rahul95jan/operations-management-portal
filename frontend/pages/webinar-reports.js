@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
 
@@ -199,6 +199,7 @@ export default function WebinarReports() {
   const [reports, setReports] = useState([]);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  const formRef = useRef(null);
   const [viewReport, setViewReport] = useState(null);
 
   const [registrations, setRegistrations] = useState([]);
@@ -235,7 +236,9 @@ export default function WebinarReports() {
     }
     const res = await fetch(`${API}/webinar-registrations/${sessionId}`);
     const data = await res.json();
-    setRegistrations(data);
+    const list = Array.isArray(data) ? data : [];
+    setRegistrations(list);
+    return list;
   };
 
   useEffect(() => {
@@ -283,23 +286,17 @@ export default function WebinarReports() {
 
       const res = await fetch(`${API}/webinar-registrations/${form.session_id}/import`, { method: "POST", body });
       const data = await res.json();
-      let statusMsg = data.message || "Import complete.";
+      if (!res.ok) throw new Error(data.detail || "bad status");
 
-      // Zoom's registration report carries its own authoritative approved
-      // count — use it to save re-typing "Registered Learners" by hand.
-      if (data.meeting_summary?.approved_registrants) {
-        setForm((f) => ({
-          ...f,
-          registered_learners: Number(data.meeting_summary.approved_registrants) || f.registered_learners,
-        }));
-        statusMsg += ` Registered Learners set to ${data.meeting_summary.approved_registrants} from Zoom's report.`;
-      }
-
-      setImportStatus(statusMsg);
+      // Registered Learners = Zoom's own approved count when the report has
+      // one, otherwise the number of learners imported for this webinar.
+      const list = await loadRegistrations(form.session_id);
+      const count = Number(data.meeting_summary?.approved_registrants) || list.length;
+      setForm((f) => ({ ...f, registered_learners: count }));
+      setImportStatus(`Imported — ${count} registered learner${count === 1 ? "" : "s"}.`);
       setImportFile(null);
-      loadRegistrations(form.session_id);
     } catch (err) {
-      setImportStatus("Import failed. Please check the file and try again.");
+      setImportStatus(err.message && err.message !== "bad status" ? `Import failed: ${err.message}` : "Import failed. Please check the file and try again.");
     } finally {
       setImporting(false);
     }
@@ -324,23 +321,17 @@ export default function WebinarReports() {
 
       const res = await fetch(`${API}/webinar-registrations/${form.session_id}/import`, { method: "POST", body });
       const data = await res.json();
-      let statusMsg = data.message || "Import complete.";
+      if (!res.ok) throw new Error(data.detail || "bad status");
 
-      // Zoom's attendance report carries its own authoritative attended
-      // (# Participants) count — use it to save re-typing by hand.
-      if (data.meeting_summary?.total_participants) {
-        setForm((f) => ({
-          ...f,
-          attended_learners: Number(data.meeting_summary.total_participants) || f.attended_learners,
-        }));
-        statusMsg += ` Attended Learners set to ${data.meeting_summary.total_participants} from Zoom's report.`;
-      }
-
-      setAttendanceImportStatus(statusMsg);
+      // Attended Learners = Zoom's own participant count when the report has
+      // one, otherwise the number of imported learners marked as attended.
+      const list = await loadRegistrations(form.session_id);
+      const count = Number(data.meeting_summary?.total_participants) || list.filter((r) => r.attended).length;
+      setForm((f) => ({ ...f, attended_learners: count }));
+      setAttendanceImportStatus(`Imported — ${count} learner${count === 1 ? "" : "s"} attended.`);
       setAttendanceFile(null);
-      loadRegistrations(form.session_id);
     } catch (err) {
-      setAttendanceImportStatus("Import failed. Please check the file and try again.");
+      setAttendanceImportStatus(err.message && err.message !== "bad status" ? `Import failed: ${err.message}` : "Import failed. Please check the file and try again.");
     } finally {
       setAttendanceImporting(false);
     }
@@ -363,11 +354,9 @@ export default function WebinarReports() {
       const body = new FormData();
       body.append("file", pollFile);
 
-      const res = await fetch(
-        `http://127.0.0.1:8000/webinar-registrations/${form.session_id}/import-polls`,
-        { method: "POST", body }
-      );
+      const res = await fetch(`${API}/webinar-registrations/${form.session_id}/import-polls`, { method: "POST", body });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "bad status");
       let statusMsg = data.message || "Import complete.";
 
       const patch = {
@@ -393,7 +382,7 @@ export default function WebinarReports() {
       setPollImportStatus(statusMsg);
       setPollFile(null);
     } catch (err) {
-      setPollImportStatus("Import failed. Please check the file and try again.");
+      setPollImportStatus(err.message && err.message !== "bad status" ? `Import failed: ${err.message}` : "Import failed. Please check the file is Zoom's Poll report and try again.");
     } finally {
       setPollImporting(false);
     }
@@ -413,12 +402,12 @@ export default function WebinarReports() {
     }
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/webinar-registrations/${form.session_id}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(`${API}/webinar-registrations/${form.session_id}`, { method: "DELETE" });
       const data = await res.json();
+      if (!res.ok) throw new Error("bad status");
       setImportStatus(data.message || "Deleted.");
       await loadRegistrations(form.session_id);
+      setForm((f) => ({ ...f, registered_learners: 0, attended_learners: 0 }));
     } catch (err) {
       setImportStatus("Delete failed. Please try again.");
     }
@@ -439,12 +428,12 @@ export default function WebinarReports() {
     }
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/webinar-registrations/${form.session_id}/attendance`, {
-        method: "DELETE",
-      });
+      const res = await fetch(`${API}/webinar-registrations/${form.session_id}/attendance`, { method: "DELETE" });
       const data = await res.json();
+      if (!res.ok) throw new Error("bad status");
       setAttendanceImportStatus(data.message || "Deleted.");
       await loadRegistrations(form.session_id);
+      setForm((f) => ({ ...f, attended_learners: 0 }));
     } catch (err) {
       setAttendanceImportStatus("Delete failed. Please try again.");
     }
@@ -506,18 +495,14 @@ export default function WebinarReports() {
 
     const payload = buildPayload();
 
-    if (editId) {
-      await fetch(`http://127.0.0.1:8000/zoom-analytics/${editId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    } else {
-      await fetch(`${API}/zoom-analytics`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+    const res = await fetch(editId ? `${API}/zoom-analytics/${editId}` : `${API}/zoom-analytics`, {
+      method: editId ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      alert(`Couldn't ${editId ? "update" : "save"} the report. Please try again.`);
+      return;
     }
 
     loadReports();
@@ -531,16 +516,28 @@ export default function WebinarReports() {
       ...report,
       session_id: report.session_id || "",
     });
+    // The form sits above the reports list — bring it into view so Edit
+    // visibly does something.
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const deleteReport = async (id) => {
     if (!window.confirm("Delete this webinar report?")) return;
-    await fetch(`http://127.0.0.1:8000/zoom-analytics/${id}`, { method: "DELETE" });
+    const res = await fetch(`${API}/zoom-analytics/${id}`, { method: "DELETE" }).catch(() => null);
+    if (!res || !res.ok) {
+      alert("Couldn't delete the report. Please try again.");
+      return;
+    }
+    if (editId === id) resetForm();
     loadReports();
   };
 
   const downloadReportPdf = (report) => {
-    window.open(`http://127.0.0.1:8000/export-webinar-pdf/${report.session_id}`, "_blank");
+    if (!report.session_id) {
+      alert("This report isn't linked to a webinar session, so a PDF can't be generated. Edit it and select the session first.");
+      return;
+    }
+    window.open(`${API}/export-webinar-pdf/${report.session_id}`, "_blank");
   };
 
   return (
@@ -570,7 +567,7 @@ export default function WebinarReports() {
             </div>
           </div>
 
-          <div className="card">
+          <div className="card" ref={formRef} style={{ scrollMarginTop: "16px" }}>
             <h2 className="card-title">{editId ? "✏️ Update Webinar Report" : "➕ Log Webinar Report"}</h2>
 
             <div className="form-grid">
@@ -643,32 +640,8 @@ export default function WebinarReports() {
             {importStatus && <div className="import-status">{importStatus}</div>}
 
             {form.session_id && (
-              <div className="table-scroll" style={{ marginTop: "12px" }}>
-                <table className="reg-table">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Email</th>
-                      <th>Phone</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {registrations.length === 0 && (
-                      <tr>
-                        <td colSpan={3} style={{ textAlign: "center", color: "#94a3b8", padding: "16px" }}>
-                          No learners imported for this webinar yet.
-                        </td>
-                      </tr>
-                    )}
-                    {registrations.map((learner) => (
-                      <tr key={learner.id}>
-                        <td>{learner.learner_name}</td>
-                        <td className="muted">{learner.learner_email}</td>
-                        <td className="muted">{learner.phone || "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="info-grid" style={{ marginTop: "12px" }}>
+                <div className="info-chip"><div className="info-chip-label">Registered Learners</div><div className="info-chip-value">{registrations.length}</div></div>
               </div>
             )}
 
@@ -713,39 +686,6 @@ export default function WebinarReports() {
                   <div className="info-chip"><div className="info-chip-label">Avg Duration (mins)</div><div className="info-chip-value">{avgDurationMinutes}</div></div>
                 </div>
 
-                <div className="table-scroll">
-                  <table className="reg-table">
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <th>Phone</th>
-                        <th>Join Time</th>
-                        <th>Leave Time</th>
-                        <th>Duration (mins)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {registrations.length === 0 && (
-                        <tr>
-                          <td colSpan={6} style={{ textAlign: "center", color: "#94a3b8", padding: "16px" }}>
-                            No learners imported for this webinar yet.
-                          </td>
-                        </tr>
-                      )}
-                      {registrations.map((learner) => (
-                        <tr key={learner.id}>
-                          <td>{learner.learner_name}</td>
-                          <td className="muted">{learner.learner_email}</td>
-                          <td className="muted">{learner.phone || "—"}</td>
-                          <td className="muted">{learner.join_time || "—"}</td>
-                          <td className="muted">{learner.leave_time || "—"}</td>
-                          <td className="muted">{learner.attendance_duration_minutes}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
               </>
             )}
 
@@ -893,7 +833,14 @@ export default function WebinarReports() {
                       <td><StatusBadge status={r.webinar_status} /></td>
                       <td style={{ whiteSpace: "nowrap" }}>
                         <button className="btn btn-icon" onClick={() => setViewReport(r)}>👁️ View</button>
-                        <button className="btn btn-icon" onClick={() => downloadReportPdf(r)}>📄 PDF</button>
+                        <button
+                          className="btn btn-icon"
+                          onClick={() => downloadReportPdf(r)}
+                          title={r.session_id ? "Download PDF" : "Not linked to a webinar session — edit the report to link one"}
+                          style={r.session_id ? undefined : { opacity: 0.5 }}
+                        >
+                          📄 PDF
+                        </button>
                         <button className="btn btn-icon" onClick={() => editReport(r)}>✏️ Edit</button>
                         <button className="btn btn-icon btn-danger" onClick={() => deleteReport(r.id)}>🗑️ Delete</button>
                       </td>

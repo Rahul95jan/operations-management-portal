@@ -9,7 +9,6 @@ import BreakdownDonutChart from "../../components/mentorPerformance/BreakdownDon
 import MentorDetailView from "../../components/mentorPerformance/MentorDetailView";
 import {
   Users,
-  Gauge,
   CheckCircle2,
   TrendingUp,
   AlertTriangle,
@@ -117,25 +116,32 @@ function CardHeader({ icon: Icon, title, tint = "rgba(245,166,35,0.12)", color =
 }
 
 export default function MentorPerformancePage() {
+  // `filters` drives the data; `draft` holds the filter bar's edits until
+  // "Apply Filter" is clicked.
   const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [draft, setDraft] = useState(EMPTY_FILTERS);
+  const [dateError, setDateError] = useState("");
   const [filterOptions, setFilterOptions] = useState({ course_name: [], batch_name: [], mentor_name: [] });
   const [kpis, setKpis] = useState(null);
   const [mentors, setMentors] = useState(null);
 
   const hasActiveFilter = Object.values(filters).some(Boolean);
+  const draftDirty = FILTER_KEYS.some((k) => draft[k] !== filters[k]);
 
   useEffect(() => {
-    fetch(`${API}/batches`)
-      .then((r) => r.json())
-      .then((data) => {
-        const all = Array.isArray(data) ? data : [];
-        setFilterOptions({
-          course_name: unique(all.map((b) => b.course_name)),
-          batch_name: unique(all.map((b) => b.batch_name)),
-          mentor_name: unique(all.map((b) => b.mentor_name)),
-        });
-      })
-      .catch(() => {});
+    // Mentor names come from Mentor Management; course/batch from Batches.
+    Promise.all([
+      fetch(`${API}/batches`).then((r) => r.json()).catch(() => []),
+      fetch(`${API}/mentors`).then((r) => r.json()).catch(() => []),
+    ]).then(([batchData, mentorData]) => {
+      const allBatches = Array.isArray(batchData) ? batchData : [];
+      const allMentors = Array.isArray(mentorData) ? mentorData : [];
+      setFilterOptions({
+        course_name: unique(allBatches.map((b) => b.course_name)),
+        batch_name: unique(allBatches.map((b) => b.batch_name)),
+        mentor_name: unique(allMentors.map((m) => (m.name || "").trim())),
+      });
+    });
   }, []);
 
   useEffect(() => {
@@ -152,8 +158,26 @@ export default function MentorPerformancePage() {
       });
   }, [filters]);
 
-  const handleFilterChange = (key, value) => setFilters((prev) => ({ ...prev, [key]: value }));
-  const clearFilters = () => setFilters(EMPTY_FILTERS);
+  const handleDraftChange = (key, value) => setDraft((prev) => ({ ...prev, [key]: value }));
+  // Applies immediately (chips, scorecard links, "All mentors") and keeps the
+  // filter bar in sync.
+  const handleFilterChange = (key, value) => {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+    setDraft((prev) => ({ ...prev, [key]: value }));
+  };
+  const applyFilters = () => {
+    if (draft.date_from && draft.date_to && draft.date_from > draft.date_to) {
+      setDateError("“Date From” must be on or before “Date To”.");
+      return;
+    }
+    setDateError("");
+    setFilters(draft);
+  };
+  const clearFilters = () => {
+    setFilters(EMPTY_FILTERS);
+    setDraft(EMPTY_FILTERS);
+    setDateError("");
+  };
 
   const matrixData = useMemo(
     () =>
@@ -236,11 +260,6 @@ export default function MentorPerformancePage() {
                 Monitor mentor delivery, learner experience, operational reliability and business performance.
               </p>
             </div>
-
-            <div className="relative z-[1] min-w-[176px] shrink-0 rounded-[14px] border border-white/[0.14] bg-white/5 px-[18px] py-4 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-              <div className="text-[30px] font-extrabold leading-none text-[#f5a623]">{kpis ? kpis.average_score : "—"}</div>
-              <div className="mt-1.5 text-[11px] uppercase tracking-[0.12em] text-slate-300">Avg Business Score</div>
-            </div>
           </div>
 
           {/* Filter bar */}
@@ -248,16 +267,24 @@ export default function MentorPerformancePage() {
             <CardHeader icon={SlidersHorizontal} title="Filters" className="mb-3.5" />
 
             <div className="flex flex-wrap items-end gap-3.5">
-              <FilterSelect label="Course" value={filters.course_name} options={filterOptions.course_name} onChange={(v) => handleFilterChange("course_name", v)} />
-              <FilterSelect label="Batch" value={filters.batch_name} options={filterOptions.batch_name} onChange={(v) => handleFilterChange("batch_name", v)} />
-              <FilterSelect label="Mentor" value={filters.mentor_name} options={filterOptions.mentor_name} onChange={(v) => handleFilterChange("mentor_name", v)} />
-              <FilterSelect label="Performance" value={filters.classification} options={CLASSIFICATIONS} onChange={(v) => handleFilterChange("classification", v)} />
-              <FilterSelect label="Risk" value={filters.risk} options={RISK_LEVELS} onChange={(v) => handleFilterChange("risk", v)} />
+              <FilterSelect label="Course" value={draft.course_name} options={filterOptions.course_name} onChange={(v) => handleDraftChange("course_name", v)} />
+              <FilterSelect label="Batch" value={draft.batch_name} options={filterOptions.batch_name} onChange={(v) => handleDraftChange("batch_name", v)} />
+              <FilterSelect label="Mentor" value={draft.mentor_name} options={filterOptions.mentor_name} onChange={(v) => handleDraftChange("mentor_name", v)} />
+              <FilterSelect label="Performance" value={draft.classification} options={CLASSIFICATIONS} onChange={(v) => handleDraftChange("classification", v)} />
+              <FilterSelect label="Risk" value={draft.risk} options={RISK_LEVELS} onChange={(v) => handleDraftChange("risk", v)} />
 
-              <DateField label="Date From" value={filters.date_from} onChange={(v) => handleFilterChange("date_from", v)} />
-              <DateField label="Date To" value={filters.date_to} onChange={(v) => handleFilterChange("date_to", v)} />
+              <DateField label="Date From" value={draft.date_from} onChange={(v) => handleDraftChange("date_from", v)} />
+              <DateField label="Date To" value={draft.date_to} onChange={(v) => handleDraftChange("date_to", v)} />
 
-              {hasActiveFilter && (
+              <button
+                onClick={applyFilters}
+                disabled={!draftDirty}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] border-none bg-[linear-gradient(120deg,#f59e0b,#fbbf24)] px-4 py-[9px] text-[12.5px] font-bold text-slate-900 shadow-[0_8px_16px_-10px_rgba(245,158,11,0.8)] transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Apply Filter
+              </button>
+
+              {(hasActiveFilter || draftDirty) && (
                 <button
                   onClick={clearFilters}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] border-[1.5px] border-[#dfe7f0] bg-slate-50 px-3.5 py-[9px] text-[12.5px] font-bold text-slate-700 transition-colors hover:border-[#d5deea] hover:bg-[#eef2f7]"
@@ -277,20 +304,13 @@ export default function MentorPerformancePage() {
                     >
                       ⬇ Export Excel
                     </a>
-                    <a
-                      href={`${API}/mentor-360/export-pdf${exportQs}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center justify-center rounded-[10px] border border-[rgba(250,204,21,0.2)] bg-[linear-gradient(120deg,#0f172a,#1e293b)] px-3.5 py-[9px] text-[12.5px] font-bold text-[#facc15] no-underline shadow-[0_12px_18px_-12px_rgba(15,23,42,0.8)] transition-transform hover:-translate-y-px"
-                    >
-                      ⬇ Export PDF
-                    </a>
                   </>
                 ) : (
                   <span className="text-[12.5px] text-slate-400">No data available for the selected filters.</span>
                 )}
               </div>
             </div>
+            {dateError && <div className="mt-2.5 text-[12.5px] font-semibold text-red-600">{dateError}</div>}
           </div>
 
           {/* Active filter chips */}
@@ -334,7 +354,6 @@ export default function MentorPerformancePage() {
           {/* KPI row */}
           <div className="mb-3.5 grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
             <OperationsKPI icon={Users} title="Total Mentors" value={kpis ? kpis.total_mentors : "—"} color="#0f172a" />
-            <OperationsKPI icon={Gauge} title="Avg Business Score" value={kpis ? kpis.average_score : "—"} color="#f59e0b" />
             <OperationsKPI icon={CheckCircle2} title="Excellent" value={kpis ? kpis.excellent : "—"} color="#16a34a" />
             <OperationsKPI icon={TrendingUp} title="Strong Performers" value={kpis ? kpis.strong_performer : "—"} color="#2563eb" />
             <OperationsKPI icon={AlertTriangle} title="At Risk" value={kpis ? kpis.at_risk : "—"} color="#ea580c" />

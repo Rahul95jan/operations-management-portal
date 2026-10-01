@@ -386,6 +386,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
 
   const [drawerSession, setDrawerSession] = useState(null);
   const [rowMenu, setRowMenu] = useState(null);
+  const [csvState, setCsvState] = useState({ loading: false, message: "" });
 
   const [currentUser, setCurrentUser] = useState(null);
   const [now, setNow] = useState(null);
@@ -741,7 +742,33 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
 
   const mentorReportExportUrl = `${API}/mentor-360/export-pdf${buildQuery({ ...filters, mentor_name: mentorName || "" }, ["course_name", "batch_name", "date_from", "date_to", "mentor_name"])}`;
   const sessionsCsvUrl = `${API}/session-reports/export?${toQuery({ ...filters, mentor_name: mentorName })}`;
-  const sessionsPdfUrl = `${API}/session-reports/export/pdf?${toQuery({ ...filters, mentor_name: mentorName })}`;
+
+  // Fetch first so an export with no matching sessions explains itself
+  // instead of downloading a CSV that only has a header row.
+  const exportSessionsCsv = async () => {
+    setCsvState({ loading: true, message: "" });
+    try {
+      const res = await fetch(sessionsCsvUrl);
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      const text = await res.text();
+      const rowCount = text.trim().split("\n").length - 1;
+      if (rowCount <= 0) {
+        setCsvState({ loading: false, message: `No sessions found for ${mentorName} with the current filters, so there is nothing to export.` });
+        return;
+      }
+      const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${(mentorName || "mentor").replace(/\s+/g, "_")}_sessions.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setCsvState({ loading: false, message: "" });
+    } catch (err) {
+      setCsvState({ loading: false, message: "Couldn't export sessions — the server may be waking up. Please try again." });
+    }
+  };
 
   const Guard = embedded ? Fragment : ProtectedRoute;
 
@@ -1587,9 +1614,11 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
 
                   <div className="filters-actions">
                     <a className="btn btn-primary" href={mentorReportExportUrl} target="_blank" rel="noreferrer"><Download size={14} /> Export Mentor Report</a>
-                    <a className="btn btn-ghost" href={sessionsCsvUrl}><Check size={14} /> Export Sessions CSV</a>
-                    <a className="btn btn-ghost" href={sessionsPdfUrl} target="_blank" rel="noreferrer"><FileText size={14} /> Export Sessions PDF</a>
+                    <button className="btn btn-ghost" onClick={exportSessionsCsv} disabled={csvState.loading}>
+                      <Check size={14} /> {csvState.loading ? "Exporting…" : "Export Sessions CSV"}
+                    </button>
                   </div>
+                  {csvState.message && <div className="export-note">{csvState.message}</div>}
                 </div>
               )}
             </>
@@ -1842,6 +1871,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
           .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
           .filters-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+          .export-note { margin-top: 10px; font-size: 12.5px; font-weight: 600; color: #b45309; }
           .report-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 20px; }
 
           .dim-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 20px; }

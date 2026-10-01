@@ -11,6 +11,8 @@ import csv
 import io
 from datetime import datetime
 
+from sqlalchemy import func
+
 from models.session import Session as SessionModel
 from models.session_analytics import SessionAnalytics
 from models.session_report import SessionReport
@@ -24,6 +26,13 @@ from models.nps import NPSFeedback
 # Filtering
 # =========================================================
 
+def _name_matches(column, value):
+    # Names are free text across modules ("RAHUL KUMAR SINGH" on a session vs
+    # "Rahul Kumar Singh" in Mentor Management), so compare case- and
+    # whitespace-insensitively instead of returning an empty result.
+    return func.lower(func.trim(column)) == value.strip().lower()
+
+
 def _apply_base_filters(query, date_from=None, date_to=None, status=None,
                          mentor_name=None, batch_name=None, course_name=None,
                          session_type=None):
@@ -34,11 +43,11 @@ def _apply_base_filters(query, date_from=None, date_to=None, status=None,
     if status:
         query = query.filter(SessionModel.status == status)
     if mentor_name:
-        query = query.filter(SessionModel.mentor_name == mentor_name)
+        query = query.filter(_name_matches(SessionModel.mentor_name, mentor_name))
     if batch_name:
-        query = query.filter(SessionModel.batch_name == batch_name)
+        query = query.filter(_name_matches(SessionModel.batch_name, batch_name))
     if course_name:
-        query = query.filter(SessionModel.course_name == course_name)
+        query = query.filter(_name_matches(SessionModel.course_name, course_name))
     if session_type:
         query = query.filter(SessionModel.category == session_type)
     return query

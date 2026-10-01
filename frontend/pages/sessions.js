@@ -393,9 +393,11 @@ export default function Sessions() {
   const [rescheduleForm, setRescheduleForm] = useState({ session_date: "", session_time: "", reason: "" });
   const [rescheduling, setRescheduling] = useState(false);
 
-  const [calendarMonth, setCalendarMonth] = useState(() => {
+  // calendarDate is the anchor day; month/week/day views are all derived from it.
+  const [calendarView, setCalendarView] = useState("month");
+  const [calendarDate, setCalendarDate] = useState(() => {
     const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   });
 
   const [rowsPerPage, setRowsPerPage] = useState(5);
@@ -776,30 +778,96 @@ export default function Sessions() {
     return withEllipses;
   }, [totalPages, currentPage]);
 
-  // ---- Calendar grid (month view, read-only) ----
+  // ---- Calendar (month / week / day views, read-only) ----
+  const sessionsByDate = useMemo(() => {
+    const map = {};
+    filteredSessions.forEach((s) => {
+      if (!s.session_date) return;
+      (map[s.session_date] = map[s.session_date] || []).push(s);
+    });
+    Object.values(map).forEach((list) =>
+      list.sort((a, b) => (a.session_time || "").localeCompare(b.session_time || ""))
+    );
+    return map;
+  }, [filteredSessions]);
+
+  const toCalendarCell = (date) => {
+    const dateStr = date.toLocaleDateString("en-CA");
+    return { date, day: date.getDate(), dateStr, sessions: sessionsByDate[dateStr] || [] };
+  };
+
   const calendarDays = useMemo(() => {
-    const year = calendarMonth.getFullYear();
-    const month = calendarMonth.getMonth();
-    const firstOfMonth = new Date(year, month, 1);
-    const startOffset = firstOfMonth.getDay(); // 0 = Sunday
+    const year = calendarDate.getFullYear();
+    const month = calendarDate.getMonth();
+    const startOffset = new Date(year, month, 1).getDay(); // 0 = Sunday
     const daysInMonth = new Date(year, month + 1, 0).getDate();
 
     const cells = [];
     for (let i = 0; i < startOffset; i++) cells.push(null);
-    for (let day = 1; day <= daysInMonth; day++) cells.push(day);
+    for (let day = 1; day <= daysInMonth; day++) cells.push(toCalendarCell(new Date(year, month, day)));
     while (cells.length % 7 !== 0) cells.push(null);
+    return cells;
+  }, [calendarDate, sessionsByDate]);
 
-    return cells.map((day) => {
-      if (!day) return null;
-      const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      const daySessions = filteredSessions.filter((s) => s.session_date === dateStr);
-      return { day, dateStr, sessions: daySessions };
+  const calendarWeekDays = useMemo(() => {
+    const start = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), calendarDate.getDate() - calendarDate.getDay());
+    return Array.from({ length: 7 }, (_, i) =>
+      toCalendarCell(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i))
+    );
+  }, [calendarDate, sessionsByDate]);
+
+  const calendarDayCell = toCalendarCell(calendarDate);
+
+  const calendarLabel = (() => {
+    if (calendarView === "month") {
+      return calendarDate.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    }
+    if (calendarView === "week") {
+      const first = calendarWeekDays[0].date;
+      const last = calendarWeekDays[6].date;
+      const fmt = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      return `${fmt(first)} – ${fmt(last)}, ${last.getFullYear()}`;
+    }
+    return calendarDate.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  })();
+
+  const shiftCalendar = (direction) => {
+    setCalendarDate((prev) => {
+      if (calendarView === "month") return new Date(prev.getFullYear(), prev.getMonth() + direction, 1);
+      const step = calendarView === "week" ? 7 : 1;
+      return new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() + direction * step);
     });
-  }, [calendarMonth, filteredSessions]);
-
-  const goToMonth = (offset) => {
-    setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + offset, 1));
   };
+
+  const goToCalendarToday = () => {
+    const d = new Date();
+    setCalendarDate(new Date(d.getFullYear(), d.getMonth(), d.getDate()));
+  };
+
+  const openCalendarDay = (date) => {
+    setCalendarDate(date);
+    setCalendarView("day");
+  };
+
+  const calendarSessionColor = (s) =>
+    s.status === "Cancelled"
+      ? "#ef4444"
+      : s.status === "Completed"
+      ? "#22c55e"
+      : (SESSION_TYPE_STYLES[s.session_type] || SESSION_TYPE_STYLES["Live Session"]).dot;
+
+  const renderCalendarSession = (s) => (
+    <div
+      key={s.id}
+      className="calendar-session calendar-session-clickable"
+      title={`${s.topic} — ${s.mentor_name || "Not Assigned"} (click for calendar block details)`}
+      onClick={() => setViewSession(s)}
+    >
+      <span className="legend-dot" style={{ background: calendarSessionColor(s) }} />
+      <span className="calendar-session-time">{s.session_time}</span>
+      <span className="calendar-session-topic">{s.topic}</span>
+    </div>
+  );
 
   return (
     <ProtectedRoute permission={["sessions", "view"]}>
@@ -1421,33 +1489,28 @@ export default function Sessions() {
             </h2>
             <div className="calendar-toolbar-right">
               <div className="calendar-nav">
-                <button className="btn btn-icon" onClick={() => goToMonth(-1)}>‹ Prev</button>
-                <div className="calendar-month-label">
-                  {calendarMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
-                </div>
-                <button className="btn btn-icon" onClick={() => goToMonth(1)}>Next ›</button>
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => setCalendarMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}
-                >
+                <button className="btn btn-icon" onClick={() => shiftCalendar(-1)}>‹ Prev</button>
+                <div className="calendar-month-label">{calendarLabel}</div>
+                <button className="btn btn-icon" onClick={() => shiftCalendar(1)}>Next ›</button>
+                <button className="btn btn-ghost" onClick={goToCalendarToday}>
                   Today
                 </button>
               </div>
 
               <div className="calendar-view-toggle">
-                <button className="calendar-view-btn calendar-view-btn-active">Month</button>
-                <button
-                  className="calendar-view-btn"
-                  onClick={() => showToast("Week view is coming soon.", "success")}
-                >
-                  Week
-                </button>
-                <button
-                  className="calendar-view-btn"
-                  onClick={() => showToast("Day view is coming soon.", "success")}
-                >
-                  Day
-                </button>
+                {[
+                  ["month", "Month"],
+                  ["week", "Week"],
+                  ["day", "Day"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    className={`calendar-view-btn ${calendarView === value ? "calendar-view-btn-active" : ""}`}
+                    onClick={() => setCalendarView(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
@@ -1459,45 +1522,96 @@ export default function Sessions() {
             <span><span className="legend-dot" style={{ background: "#ef4444" }} /> Cancelled</span>
           </div>
 
-          <div className="calendar-grid calendar-grid-header">
-            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-              <div key={d} className="calendar-weekday">{d}</div>
-            ))}
-          </div>
+          {calendarView !== "day" && (
+            <div className="calendar-grid calendar-grid-header">
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+                <div key={d} className="calendar-weekday">{d}</div>
+              ))}
+            </div>
+          )}
 
-          <div className="calendar-grid">
-            {calendarDays.map((cell, i) => (
-              <div key={i} className={`calendar-cell ${cell && cell.dateStr === todayStr() ? "calendar-cell-today" : ""}`}>
-                {cell && (
-                  <>
-                    <div className="calendar-day-number">{cell.day}</div>
-                    {cell.sessions.slice(0, 3).map((s) => {
-                      const typeColor = s.status === "Cancelled"
-                        ? "#ef4444"
-                        : s.status === "Completed"
-                        ? "#22c55e"
-                        : (SESSION_TYPE_STYLES[s.session_type] || SESSION_TYPE_STYLES["Live Session"]).dot;
-                      return (
+          {calendarView === "month" && (
+            <div className="calendar-grid">
+              {calendarDays.map((cell, i) => (
+                <div key={i} className={`calendar-cell ${cell && cell.dateStr === todayStr() ? "calendar-cell-today" : ""}`}>
+                  {cell && (
+                    <>
+                      <div
+                        className="calendar-day-number calendar-day-link"
+                        title="Open day view"
+                        onClick={() => openCalendarDay(cell.date)}
+                      >
+                        {cell.day}
+                      </div>
+                      {cell.sessions.slice(0, 3).map(renderCalendarSession)}
+                      {cell.sessions.length > 3 && (
                         <div
-                          key={s.id}
-                          className="calendar-session calendar-session-clickable"
-                          title={`${s.topic} — ${s.mentor_name || "Not Assigned"} (click for calendar block details)`}
-                          onClick={() => setViewSession(s)}
+                          className="calendar-more calendar-day-link"
+                          onClick={() => openCalendarDay(cell.date)}
                         >
-                          <span className="legend-dot" style={{ background: typeColor }} />
-                          <span className="calendar-session-time">{s.session_time}</span>
-                          <span className="calendar-session-topic">{s.topic}</span>
+                          +{cell.sessions.length - 3} more
                         </div>
-                      );
-                    })}
-                    {cell.sessions.length > 3 && (
-                      <div className="calendar-more">+{cell.sessions.length - 3} more</div>
-                    )}
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {calendarView === "week" && (
+            <div className="calendar-grid">
+              {calendarWeekDays.map((cell) => (
+                <div
+                  key={cell.dateStr}
+                  className={`calendar-cell calendar-cell-week ${cell.dateStr === todayStr() ? "calendar-cell-today" : ""}`}
+                >
+                  <div
+                    className="calendar-day-number calendar-day-link"
+                    title="Open day view"
+                    onClick={() => openCalendarDay(cell.date)}
+                  >
+                    {cell.date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                  </div>
+                  {cell.sessions.length === 0 ? (
+                    <div className="calendar-more">No sessions</div>
+                  ) : (
+                    cell.sessions.map(renderCalendarSession)
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {calendarView === "day" && (
+            <div className={`calendar-day-view ${calendarDayCell.dateStr === todayStr() ? "calendar-cell-today" : ""}`}>
+              {calendarDayCell.sessions.length === 0 ? (
+                <div className="calendar-day-empty">No sessions scheduled for this day.</div>
+              ) : (
+                calendarDayCell.sessions.map((s) => (
+                  <div
+                    key={s.id}
+                    className="calendar-day-row calendar-session-clickable"
+                    title="Click for session details"
+                    onClick={() => setViewSession(s)}
+                  >
+                    <div className="calendar-day-row-time">
+                      <span className="legend-dot" style={{ background: calendarSessionColor(s) }} />
+                      {s.session_time || "—"}
+                    </div>
+                    <div className="calendar-day-row-main">
+                      <div className="calendar-day-row-topic">{s.topic}</div>
+                      <div className="calendar-day-row-meta">
+                        {s.mentor_name || "Not Assigned"} · {s.batch_name || "No batch"}
+                      </div>
+                    </div>
+                    <SessionTypeBadge type={s.session_type} />
+                    <StatusBadge status={s.status} />
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -2234,6 +2348,79 @@ export default function Sessions() {
           font-size: 10px;
           color: #94a3b8;
           font-weight: 600;
+        }
+
+        .calendar-day-link {
+          cursor: pointer;
+        }
+
+        .calendar-day-link:hover {
+          color: #b45309;
+        }
+
+        .calendar-cell-week {
+          min-height: 260px;
+        }
+
+        .calendar-cell-week .calendar-session {
+          white-space: normal;
+          align-items: flex-start;
+          margin-bottom: 6px;
+        }
+
+        .calendar-day-view {
+          background: #f8fafc;
+          border: 1px solid #eef2f7;
+          border-radius: 10px;
+          padding: 8px;
+          min-height: 160px;
+        }
+
+        .calendar-day-empty {
+          padding: 48px 0;
+          text-align: center;
+          font-size: 13px;
+          color: #94a3b8;
+        }
+
+        .calendar-day-row {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 10px 12px;
+          margin: 0;
+          border-bottom: 1px solid #eef2f7;
+        }
+
+        .calendar-day-row:last-child {
+          border-bottom: none;
+        }
+
+        .calendar-day-row-time {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 70px;
+          font-size: 13px;
+          font-weight: 700;
+          color: #64748b;
+        }
+
+        .calendar-day-row-main {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .calendar-day-row-topic {
+          font-size: 13.5px;
+          font-weight: 700;
+          color: #1e293b;
+        }
+
+        .calendar-day-row-meta {
+          font-size: 12px;
+          color: #64748b;
+          margin-top: 2px;
         }
 
         .modal-overlay {

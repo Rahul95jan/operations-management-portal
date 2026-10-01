@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
+import { usePhotoFallback } from "../components/usePhotoFallback";
 import KpiTile from "../components/webinarAnalytics/KpiTile";
 import AttendanceTrendCard from "../components/webinarAnalytics/AttendanceTrendCard";
 import PollAnalyticsCard from "../components/webinarAnalytics/PollAnalyticsCard";
@@ -94,6 +95,10 @@ export default function WebinarAnalytics() {
   const [attentionExpanded, setAttentionExpanded] = useState(false);
 
   const [currentUser, setCurrentUser] = useState(null);
+  const { showPhoto, onPhotoError } = usePhotoFallback(userPhotoUrl(currentUser));
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const reportRef = useRef(null);
 
   const selectedWebinar = selectedKey !== "" ? webinars[Number(selectedKey)] : null;
   const selectedTitle = selectedWebinar ? selectedWebinar.title : "";
@@ -154,9 +159,27 @@ export default function WebinarAnalytics() {
   const generateReport = () => {
     const id = requireReportableWebinar();
     if (!id) return;
-    fetch(`${API}/webinar-report/${id}`).then((r) => r.json()).then(setReport).catch(() => setNotice("Couldn't generate the report."));
-    fetch(`${API}/webinar-registrations/${id}`).then((r) => r.json()).then((d) => setRegistrations(Array.isArray(d) ? d : [])).catch(() => setRegistrations([]));
+    setGenerating(true);
+    Promise.all([
+      fetch(`${API}/webinar-report/${id}`).then((r) => {
+        if (!r.ok) throw new Error("bad status");
+        return r.json();
+      }),
+      fetch(`${API}/webinar-registrations/${id}`).then((r) => r.json()).catch(() => []),
+    ])
+      .then(([reportData, regs]) => {
+        setReport(reportData);
+        setRegistrations(Array.isArray(regs) ? regs : []);
+      })
+      .catch(() => setNotice("Couldn't generate the report. Please try again."))
+      .finally(() => setGenerating(false));
   };
+
+  // The report renders at the bottom of the page — bring it into view so
+  // clicking "Generate Report" visibly does something.
+  useEffect(() => {
+    if (report && reportRef.current) reportRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [report]);
 
   const exportPdf = () => {
     const id = requireReportableWebinar();
@@ -180,7 +203,7 @@ export default function WebinarAnalytics() {
         <div className="page">
           {/* Hero */}
           <div className="hero">
-            <div className="hero-glow" />
+            <div className="hero-bg"><div className="hero-glow" /></div>
             <div className="hero-left">
               <div className="hero-eyebrow">Learner Engagement</div>
               <h1>Webinar Analytics Dashboard</h1>
@@ -191,11 +214,29 @@ export default function WebinarAnalytics() {
               <span>Better Webinars<br />Build Brighter Careers”</span>
             </div>
             <div className="hero-user">
-              <span className="hero-bell"><Bell size={16} strokeWidth={2.1} /></span>
+              <div className="hero-notif-wrap">
+                <button
+                  className={`hero-bell ${notifOpen ? "hero-bell-active" : ""}`}
+                  onClick={() => setNotifOpen((v) => !v)}
+                  aria-label="Notifications"
+                  title="Notifications"
+                >
+                  <Bell size={16} strokeWidth={2.1} />
+                </button>
+                {notifOpen && (
+                  <>
+                    <div className="dismiss-backdrop" onClick={() => setNotifOpen(false)} />
+                    <div className="hero-notif-dropdown">
+                      <div className="hero-notif-title">Notifications</div>
+                      <div className="hero-notif-empty">You&apos;re all caught up.</div>
+                    </div>
+                  </>
+                )}
+              </div>
               {currentUser && (
                 <>
-                  {userPhotoUrl(currentUser) ? (
-                    <img src={userPhotoUrl(currentUser)} alt={currentUser.name} className="hero-avatar" />
+                  {showPhoto ? (
+                    <img src={userPhotoUrl(currentUser)} alt="" onError={onPhotoError} className="hero-avatar" />
                   ) : (
                     <span className="hero-avatar hero-avatar-fallback">{initials(currentUser.name)}</span>
                   )}
@@ -225,7 +266,14 @@ export default function WebinarAnalytics() {
               ))}
             </FilterField>
 
-            <button className="btn-generate" onClick={generateReport}>Generate Report</button>
+            <button
+              className="btn-generate"
+              onClick={generateReport}
+              disabled={!selectedWebinar || generating}
+              title={selectedWebinar ? "" : "Select a webinar to generate its report"}
+            >
+              {generating ? "Generating…" : "Generate Report"}
+            </button>
             <div className="export-group">
               <button className="btn-pdf" onClick={exportPdf}><FileText size={14} /> Export PDF</button>
               <button className="btn-excel" onClick={exportExcel}><FileSpreadsheet size={14} /> Export Excel</button>
@@ -276,7 +324,7 @@ export default function WebinarAnalytics() {
           )}
 
           {report && (
-            <div className="row-single">
+            <div className="row-single" ref={reportRef}>
               <WebinarReportPanel report={report} registrations={registrations} />
             </div>
           )}
@@ -290,7 +338,9 @@ export default function WebinarAnalytics() {
         <style jsx>{`
           .page { margin-left: var(--om-sidebar-width, 280px); transition: margin-left 0.25s ease; padding: 0 22px 24px; background: #f1f5f9; min-height: 100vh; }
 
-          .hero { position: relative; overflow: hidden; display: flex; align-items: center; gap: 24px; margin: 0 -22px 14px; padding: 18px 30px 20px; background: linear-gradient(115deg, #0b1220 0%, #101b33 55%, #0b1220 100%); border-radius: 0 0 16px 16px; box-shadow: 0 10px 28px -16px rgba(11, 18, 32, 0.8); }
+          /* overflow stays visible so the notifications dropdown isn't clipped;
+             the glow is clipped by .hero-bg instead. */
+          .hero { position: relative; z-index: 5; overflow: visible; display: flex; align-items: center; gap: 24px; margin: 0 -22px 14px; padding: 18px 30px 20px; background: linear-gradient(115deg, #0b1220 0%, #101b33 55%, #0b1220 100%); border-radius: 0 0 16px 16px; box-shadow: 0 10px 28px -16px rgba(11, 18, 32, 0.8); }
           .hero-glow { position: absolute; width: 320px; height: 220px; right: 22%; top: -110px; background: rgba(245, 166, 35, 0.16); filter: blur(70px); pointer-events: none; }
           .hero-left { position: relative; z-index: 1; flex: 1; min-width: 0; }
           .hero-eyebrow { display: inline-block; font-size: 9.5px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: #f5a623; border: 1px solid rgba(245, 166, 35, 0.6); border-radius: 999px; padding: 3px 9px; margin-bottom: 8px; }
@@ -298,7 +348,14 @@ export default function WebinarAnalytics() {
           .hero-left p { margin: 0; font-size: 11.5px; color: #94a3b8; }
           .hero-tagline { position: relative; z-index: 1; display: flex; align-items: flex-start; gap: 6px; font-family: "Playfair Display", Georgia, serif; font-style: italic; font-size: 13px; color: #94a3b8; text-align: left; line-height: 1.5; }
           .hero-user { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; }
-          .hero-bell { color: #e2e8f0; display: flex; }
+          .hero-bg { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }
+          .hero-notif-wrap { position: relative; z-index: 40; }
+          .hero-bell { width: 34px; height: 34px; border-radius: 9px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); color: #e2e8f0; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+          .hero-bell:hover, .hero-bell-active { background: rgba(251,191,36,0.16); border-color: rgba(251,191,36,0.4); color: #fbbf24; }
+          .dismiss-backdrop { position: fixed; inset: 0; z-index: 30; }
+          .hero-notif-dropdown { position: absolute; top: calc(100% + 10px); right: 0; min-width: 240px; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 16px 30px -14px rgba(0,0,0,0.35); padding: 12px; z-index: 50; }
+          .hero-notif-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; padding: 2px 4px 8px; }
+          .hero-notif-empty { font-size: 12.5px; color: #64748b; padding: 4px; }
           .hero-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
           .hero-avatar-fallback { background: linear-gradient(135deg, #7c3aed, #6366f1); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; }
           .hero-user-name { font-size: 12px; font-weight: 700; color: #f8fafc; }
@@ -306,7 +363,8 @@ export default function WebinarAnalytics() {
 
           .filters { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; background: #fff; border: 1px solid #e8edf5; border-radius: 12px; padding: 14px 18px; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); margin-bottom: 14px; }
           .btn-generate { flex: 1.2 1 130px; border: none; border-radius: 8px; padding: 11px 18px; font-size: 13px; font-weight: 700; color: #0f172a; cursor: pointer; background: linear-gradient(90deg, #f59e0b, #fbbf24); box-shadow: 0 6px 14px -8px rgba(245, 158, 11, 0.8); transition: transform 0.15s ease; }
-          .btn-generate:hover { transform: translateY(-1px); }
+          .btn-generate:hover:not(:disabled) { transform: translateY(-1px); }
+          .btn-generate:disabled { opacity: 0.55; cursor: not-allowed; box-shadow: none; }
           .export-group { display: flex; gap: 8px; padding-left: 14px; border-left: 1px solid #e8edf5; flex-shrink: 0; }
           .btn-pdf, .btn-excel { display: inline-flex; align-items: center; gap: 6px; border: none; border-radius: 6px; padding: 10px 13px; font-size: 12px; font-weight: 700; color: #fff; cursor: pointer; white-space: nowrap; transition: transform 0.15s ease; }
           .btn-pdf { background: #dc2626; }

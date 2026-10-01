@@ -1,5 +1,3 @@
-import AnalyticsCard from "../AnalyticsCard";
-
 const HEALTH_STYLES = {
   Excellent: { bg: "#dcfce7", color: "#15803d" },
   Good: { bg: "#dbeafe", color: "#1d4ed8" },
@@ -39,8 +37,6 @@ export default function WebinarReportPanel({ report, registrations }) {
         <h3 className="subsection-title">Webinar Information</h3>
         <div className="info-grid">
           <InfoChip label="Title" value={report.title} />
-          <InfoChip label="Course" value={report.course} />
-          <InfoChip label="Batch" value={report.batch} />
           <InfoChip label="Mentor" value={report.mentor} />
           <InfoChip label="Mentor Email" value={report.mentor_email} />
           <InfoChip label="Date" value={report.date} />
@@ -48,18 +44,6 @@ export default function WebinarReportPanel({ report, registrations }) {
           <InfoChip label="Duration" value={`${report.duration} mins`} />
           <InfoChip label="Platform" value={report.platform} />
           <InfoChip label="Status" value={report.status} />
-        </div>
-
-        <h3 className="subsection-title">📊 Webinar Performance</h3>
-        <div className="kpi-grid">
-          <AnalyticsCard title="Registered Learners" value={report.registered_learners} color="#2563eb" />
-          <AnalyticsCard title="Attended Learners" value={report.attended_learners} color="#16a34a" />
-          <AnalyticsCard title="Attendance %" value={`${report.attendance_rate}%`} color="#0891b2" />
-          <AnalyticsCard title="No Shows" value={report.no_show_learners} color="#dc2626" />
-          <AnalyticsCard title="Polls Conducted" value={report.polls_conducted} color="#9333ea" />
-          <AnalyticsCard title="Poll Responses" value={report.poll_responses} color="#7c3aed" />
-          <AnalyticsCard title="Poll Response %" value={`${report.poll_response_rate}%`} color="#f59e0b" />
-          <AnalyticsCard title="Engagement Score" value={report.engagement_score} color="#ea580c" />
         </div>
 
         <h3 className="subsection-title">🩺 Webinar Health</h3>
@@ -131,7 +115,6 @@ export default function WebinarReportPanel({ report, registrations }) {
         .subsection-title { font-size: 14px; color: #475569; margin: 26px 0 14px; padding-top: 18px; border-top: 1px solid #f1f5f9; }
         .subsection-title:first-of-type { border-top: none; padding-top: 0; margin-top: 8px; }
         .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
-        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
         .health-row { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; padding: 16px; background: #f8fafc; border: 1px solid #eef2f7; border-radius: 12px; }
         .health-score { text-align: center; flex-shrink: 0; }
         .health-score-value { font-size: 30px; font-weight: 800; color: #1e293b; }

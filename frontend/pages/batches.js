@@ -421,7 +421,7 @@ export default function Batches() {
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
-    const MENU_HEIGHT = 130;
+    const MENU_HEIGHT = 90;
     const openUp = rect.bottom + MENU_HEIGHT + 8 > window.innerHeight;
     setMenuPos({
       right: window.innerWidth - rect.right,
@@ -1171,7 +1171,6 @@ export default function Batches() {
                                 ) : (
                                   <button onClick={() => setBatchStatus(batch, "Inactive")}><Icon name="power" size={13} /> Deactivate Batch</button>
                                 )}
-                                <button className="dropdown-danger" onClick={() => deleteBatch(batch)}><Icon name="trash" size={13} /> Delete Batch</button>
                               </div>
                             )}
                           </td>
@@ -1819,10 +1818,6 @@ export default function Batches() {
 
         .dropdown-menu button:hover {
           background: #f8fafc;
-        }
-
-        .dropdown-danger {
-          color: #b91c1c !important;
         }
 
         .empty-state {

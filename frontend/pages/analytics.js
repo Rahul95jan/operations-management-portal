@@ -465,9 +465,6 @@ export default function Analytics() {
                 onChange={(e) => setDraftDates({ ...draftDates, date_to: e.target.value })}
               />
             </div>
-            <button className="btn-apply" onClick={applyDateFilter} disabled={!datesDirty}>
-              Apply Filter
-            </button>
             <select className="filter-input" value={filters.batch_name} onChange={(e) => setFilters({ ...filters, batch_name: e.target.value })}>
               <option value="">All Batches</option>
               {batchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
@@ -481,6 +478,9 @@ export default function Analytics() {
               <option value="Live Session">Live Session</option>
               <option value="Webinar Session">Webinar Session</option>
             </select>
+            <button className="btn-apply" onClick={applyDateFilter} disabled={!datesDirty}>
+              Apply Filter
+            </button>
             {(hasActiveFilter || draftDates.date_from || draftDates.date_to) && (
               <button className="btn-reset" onClick={clearFilters}>↺ Reset Filters</button>
             )}

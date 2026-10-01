@@ -149,17 +149,17 @@ export default function Analytics() {
   }, []);
 
   const batchOptions = useMemo(() => unique(batches.map((b) => b.batch_name)), [batches]);
-  // Mentors can appear in sessions/feedback without an exact Mentor
-  // Management record (or with different casing), so build the list from
-  // every source and de-duplicate on a normalized name.
+  // Only mentors registered in Mentor Management are shown. Sessions and
+  // feedback are matched to them by normalized name so casing/spacing
+  // differences in those records don't hide a mentor's data.
   const mentorNames = useMemo(() => {
     const seen = new Map();
-    [...mentors.map((m) => m.name), ...sessions.map((s) => s.mentor_name), ...npsResponses.map((n) => n.mentor_name)].forEach((name) => {
-      const key = normName(name);
-      if (key && !seen.has(key)) seen.set(key, name.trim());
+    mentors.forEach((m) => {
+      const key = normName(m.name);
+      if (key && !seen.has(key)) seen.set(key, m.name.trim());
     });
     return [...seen.values()].sort((a, b) => a.localeCompare(b));
-  }, [mentors, sessions, npsResponses]);
+  }, [mentors]);
   const mentorOptions = mentorNames;
   const hasActiveFilter = Object.values(filters).some(Boolean);
   const datesDirty = draftDates.date_from !== filters.date_from || draftDates.date_to !== filters.date_to;

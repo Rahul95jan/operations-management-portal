@@ -33,6 +33,26 @@ function UserAvatar({ user }) {
   );
 }
 
+// Profile photo guidance shown wherever a photo is picked. Avatars render as
+// small circles, so a square image looks best.
+const PHOTO_GUIDANCE = "Recommended 400 × 400 px (square, 1:1) · minimum 200 × 200 px · JPG, PNG or WEBP · max 2 MB";
+const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const PHOTO_MAX_BYTES = 2 * 1024 * 1024;
+const PHOTO_MIN_PX = 200;
+
+// Validates a picked photo and reads its pixel size for display.
+function readPhoto(file) {
+  return new Promise((resolve) => {
+    if (!PHOTO_TYPES.includes(file.type)) return resolve({ error: "Only JPG, PNG or WEBP images are allowed." });
+    if (file.size > PHOTO_MAX_BYTES) return resolve({ error: "Image must be 2 MB or smaller." });
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => resolve({ url, width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => { URL.revokeObjectURL(url); resolve({ error: "That file couldn't be read as an image." }); };
+    img.src = url;
+  });
+}
+
 const OPERATIONAL_SECTIONS = ["dashboard", "sessions", "mentors", "batches"];
 
 function emptyPermState(catalog) {
@@ -312,6 +332,30 @@ function CreateUserModal({ catalog, onClose, onCreated }) {
   const [permState, setPermState] = useState(() => emptyPermState(catalog));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [photo, setPhoto] = useState(null); // { file, url, width, height }
+  const [photoError, setPhotoError] = useState("");
+
+  useEffect(() => () => { if (photo?.url) URL.revokeObjectURL(photo.url); }, [photo]);
+
+  const pickPhoto = async (file) => {
+    setPhotoError("");
+    if (!file) return;
+    const info = await readPhoto(file);
+    if (info.error) {
+      setPhoto(null);
+      setPhotoError(info.error);
+      return;
+    }
+    setPhoto({ file, ...info });
+  };
+
+  const photoWarning = photo
+    ? photo.width < PHOTO_MIN_PX || photo.height < PHOTO_MIN_PX
+      ? `This image is ${photo.width} × ${photo.height} px — below the 200 × 200 px minimum, so it may look blurry.`
+      : photo.width !== photo.height
+      ? `This image is ${photo.width} × ${photo.height} px — not square, so it will be cropped to a circle.`
+      : ""
+    : "";
 
   const applyOperational = () => {
     setPermState((prev) => {
@@ -344,7 +388,17 @@ function CreateUserModal({ catalog, onClose, onCreated }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed to create user.");
-      onCreated(data);
+
+      let created = data;
+      if (photo) {
+        const body = new FormData();
+        body.append("file", photo.file);
+        const photoRes = await fetch(`${API}/admin/users/${data.id}/photo`, { method: "POST", body });
+        const photoData = await photoRes.json().catch(() => ({}));
+        if (photoRes.ok) created = photoData;
+        else alert(`User created, but the photo couldn't be saved: ${photoData.detail || "please try again."}`);
+      }
+      onCreated(created);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -362,6 +416,28 @@ function CreateUserModal({ catalog, onClose, onCreated }) {
 
         <div className="modal-body">
           {error && <div className="form-error"><AlertTriangle size={13} /> {error}</div>}
+
+          <div className="field">
+            <label>Profile Photo (optional)</label>
+            <div className="photo-picker">
+              <div className="photo-preview">
+                {photo ? <img src={photo.url} alt="" /> : name.trim() ? initials(name) : <UserPlus size={18} />}
+              </div>
+              <div className="photo-info">
+                <div className="photo-actions">
+                  <label className="photo-btn">
+                    {photo ? "Change Photo" : "Upload Photo"}
+                    <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { pickPhoto(e.target.files[0]); e.target.value = ""; }} />
+                  </label>
+                  {photo && <button type="button" className="photo-remove" onClick={() => setPhoto(null)}>Remove</button>}
+                </div>
+                <div className="photo-hint">{PHOTO_GUIDANCE}</div>
+                {photo && <div className="photo-dims">Selected: {photo.width} × {photo.height} px · {(photo.file.size / 1024).toFixed(0)} KB</div>}
+                {photoWarning && <div className="photo-warn">{photoWarning}</div>}
+                {photoError && <div className="photo-err">{photoError}</div>}
+              </div>
+            </div>
+          </div>
 
           <div className="field-row">
             <div className="field"><label>Full Name</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Amit Verma" /></div>
@@ -426,6 +502,18 @@ function CreateUserModal({ catalog, onClose, onCreated }) {
         .field label { display: block; font-size: 11px; font-weight: 700; color: var(--om-text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
         .field input { width: 100%; box-sizing: border-box; background: var(--om-bg-page); border: 1px solid var(--om-border-1); border-radius: 8px; padding: 9px 11px; color: #f1f5f9; font-size: 13px; outline: none; }
         .field input:focus { border-color: rgba(240,199,94,0.5); }
+        .photo-picker { display: flex; align-items: center; gap: 14px; }
+        .photo-preview { width: 64px; height: 64px; border-radius: 50%; overflow: hidden; flex-shrink: 0; background: rgba(240,199,94,0.12); border: 1px solid rgba(240,199,94,0.3); color: #f0c75e; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; }
+        .photo-preview img { width: 100%; height: 100%; object-fit: cover; }
+        .photo-info { flex: 1; min-width: 0; }
+        .photo-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+        .field .photo-btn { display: inline-flex; margin: 0; text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 700; color: #0f172a; background: linear-gradient(120deg, #f59e0b, #fbbf24); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+        .field .photo-btn input { display: none; }
+        .photo-remove { background: transparent; border: 1px solid var(--om-border-1); color: var(--om-text-muted); border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+        .photo-hint { font-size: 11.5px; color: var(--om-text-muted); line-height: 1.45; }
+        .photo-dims { font-size: 11.5px; color: #4ade80; font-weight: 600; margin-top: 4px; }
+        .photo-warn { font-size: 11.5px; color: #f0c75e; font-weight: 600; margin-top: 4px; }
+        .photo-err { font-size: 11.5px; color: #f87171; font-weight: 600; margin-top: 4px; }
         .role-radio-row { display: flex; gap: 10px; }
         .role-radio { display: flex; align-items: center; gap: 7px; border: 1px solid var(--om-border-1); border-radius: 8px; padding: 8px 14px; font-size: 12.5px; font-weight: 700; color: var(--om-text-muted); cursor: pointer; }
         .role-radio input { accent-color: #f0c75e; }

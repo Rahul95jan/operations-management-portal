@@ -805,7 +805,7 @@ export default function Mentors() {
               <button className="btn btn-ghost btn-sm" type="button" onClick={() => photoInputRef.current?.click()}>
                 Upload Photo
               </button>
-              <div className="hint-text" style={{ textAlign: "center" }}>JPG, PNG (Max 2MB)</div>
+              <div className="hint-text" style={{ textAlign: "center" }}>Recommended 400 × 400 px (square) · min 200 × 200 px · JPG, PNG or WEBP · max 2 MB</div>
               <div className="hint-text" style={{ textAlign: "center", maxWidth: "140px" }}>
                 Recommended: square, 400×400px, face centered &amp; filling the frame
               </div>

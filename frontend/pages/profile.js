@@ -187,9 +187,9 @@ export default function Profile() {
                         )}
                         <div className="avatar-upload-badge"><Camera size={13} strokeWidth={2.3} /></div>
                       </div>
-                      <input ref={photoInputRef} type="file" accept="image/*" onChange={handlePhotoChange} style={{ display: "none" }} />
-                      <div className="photo-hint">JPG, PNG (Max 2MB)</div>
-                      <div className="photo-hint photo-hint-dim">Recommended: square, 400×400px, face centered &amp; filling the frame</div>
+                      <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handlePhotoChange} style={{ display: "none" }} />
+                      <div className="photo-hint">JPG, PNG or WEBP (Max 2MB)</div>
+                      <div className="photo-hint photo-hint-dim">Recommended: 400 × 400 px square (min 200 × 200 px), face centered &amp; filling the frame</div>
                       {photoError && <div className="photo-hint photo-hint-error">{photoError}</div>}
                     </div>
                     <div>

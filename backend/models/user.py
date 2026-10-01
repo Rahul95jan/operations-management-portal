@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, LargeBinary
+from sqlalchemy.orm import deferred
 from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime
 from database import Base
@@ -12,6 +13,10 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     role = Column(String)
     photo_path = Column(String)
+    # Photo bytes live in the DB because the server disk is wiped on every
+    # deploy. Deferred so ordinary user queries never load (or serialize) them.
+    photo_data = deferred(Column(LargeBinary))
+    photo_mime = deferred(Column(String))
     phone = Column(String)
 
     username = Column(String, unique=True, index=True, nullable=True)

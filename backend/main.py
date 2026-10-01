@@ -2,6 +2,7 @@ import json
 import io
 import re
 import csv
+import uuid
 import pandas as pd
 from datetime import datetime, timedelta
 from dateutil import parser as date_parser
@@ -127,6 +128,28 @@ from auth import (
 app = FastAPI()
 
 
+# Additive, idempotent columns for DB-stored photos. Run at startup because
+# Base.metadata.create_all never adds columns to existing tables.
+PHOTO_STORAGE_MIGRATIONS = [
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_data BYTEA",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime VARCHAR",
+    "ALTER TABLE mentors ADD COLUMN IF NOT EXISTS photo_data BYTEA",
+    "ALTER TABLE mentors ADD COLUMN IF NOT EXISTS photo_mime VARCHAR",
+]
+
+
+@app.on_event("startup")
+def _ensure_photo_columns():
+    from sqlalchemy import text
+
+    try:
+        with engine.begin() as conn:
+            for stmt in PHOTO_STORAGE_MIGRATIONS:
+                conn.execute(text(stmt))
+    except Exception as exc:  # never block startup; photo uploads will report the error
+        print(f"Photo column migration failed: {exc}")
+
+
 @app.on_event("startup")
 def _start_resource_scheduler():
     start_scheduler()
@@ -250,20 +273,52 @@ def update_my_profile(payload: UserUpdate, user: User = Depends(get_current_user
     return user_public(user)
 
 
-@app.post("/users/me/photo")
-async def upload_my_photo(file: UploadFile = File(...), user: User = Depends(get_current_user), db: Session = Depends(get_auth_db)):
+PHOTO_MAX_BYTES = 2 * 1024 * 1024
+PHOTO_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+
+async def _read_photo_upload(file: UploadFile):
+    """Validates an uploaded profile photo and returns (bytes, mime)."""
     from fastapi import HTTPException
 
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Only image files (JPG, PNG, WEBP) are allowed.")
-
+    if file.content_type not in PHOTO_ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail="Only JPG, PNG or WEBP images are allowed.")
     contents = await file.read()
-    if len(contents) > 2 * 1024 * 1024:
+    if not contents:
+        raise HTTPException(status_code=400, detail="The image file is empty.")
+    if len(contents) > PHOTO_MAX_BYTES:
         raise HTTPException(status_code=400, detail="Image must be 2MB or smaller.")
-    file.file.seek(0)
+    return contents, file.content_type
 
-    file_meta = save_file(file)
-    user.photo_path = file_meta["file_path"]
+
+def _store_photo(record, contents: bytes, mime: str):
+    record.photo_data = contents
+    record.photo_mime = mime
+    # photo_path doubles as the cache-busting version the frontend appends (?v=...).
+    record.photo_path = f"db:{uuid.uuid4().hex}"
+
+
+def _photo_response(record, not_found_detail: str):
+    """Serves a DB-stored photo, falling back to a legacy on-disk file."""
+    from fastapi import HTTPException
+
+    if record is not None and record.photo_data:
+        return Response(
+            content=record.photo_data,
+            media_type=record.photo_mime or "image/jpeg",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    path = record.photo_path if record is not None else None
+    resolved = resolve_path(path) if path and not path.startswith("db:") else None
+    if resolved and os.path.exists(resolved):
+        return FileResponse(resolved)
+    raise HTTPException(status_code=404, detail=not_found_detail)
+
+
+@app.post("/users/me/photo")
+async def upload_my_photo(file: UploadFile = File(...), user: User = Depends(get_current_user), db: Session = Depends(get_auth_db)):
+    contents, mime = await _read_photo_upload(file)
+    _store_photo(user, contents, mime)
     db.commit()
 
     return {"message": "Photo uploaded successfully", "has_photo": True}
@@ -271,29 +326,16 @@ async def upload_my_photo(file: UploadFile = File(...), user: User = Depends(get
 
 @app.get("/users/me/photo")
 def get_my_photo(user: User = Depends(get_current_user)):
-    from fastapi import HTTPException
-
-    resolved = resolve_path(user.photo_path) if user.photo_path else None
-    if not resolved or not os.path.exists(resolved):
-        raise HTTPException(status_code=404, detail="No photo found for this account.")
-
-    return FileResponse(resolved)
+    return _photo_response(user, "No photo found for this account.")
 
 
 @app.get("/users/{user_id}/photo")
 def get_user_photo(user_id: int, db: Session = Depends(get_auth_db)):
     # Deliberately unauthenticated, same as /mentors/{id}/photo — a plain <img src> can never
     # send a Bearer token (browsers don't support custom headers on image loads), so this is
-    # the URL every <img> tag in the app actually points at; POST /users/me/photo (uploading)
-    # still requires being logged in as that account.
-    from fastapi import HTTPException
-
+    # the URL every <img> tag in the app actually points at; uploading still requires auth.
     user = db.query(User).filter(User.id == user_id).first()
-    resolved = resolve_path(user.photo_path) if user and user.photo_path else None
-    if not user or not resolved or not os.path.exists(resolved):
-        raise HTTPException(status_code=404, detail="No photo found for this user.")
-
-    return FileResponse(resolved)
+    return _photo_response(user, "No photo found for this user.")
 
 
 # ==========================
@@ -336,6 +378,23 @@ def create_admin_user(payload: AdminUserCreate, current: User = Depends(require_
     _log_audit(db, "User Created", details=f"Role: {payload.role}, Permissions: {len(perms)} section action(s)", user=current.name)
 
     return user_public(new_user)
+
+
+@app.post("/admin/users/{user_id}/photo")
+async def upload_user_photo_as_admin(user_id: int, file: UploadFile = File(...), current: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    from fastapi import HTTPException
+
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    contents, mime = await _read_photo_upload(file)
+    _store_photo(target, contents, mime)
+    db.commit()
+    db.refresh(target)
+
+    _log_audit(db, "User Photo Updated", details=f"Target: {target.name}", user=current.name)
+    return user_public(target)
 
 
 @app.put("/admin/users/{user_id}/access")
@@ -859,16 +918,8 @@ async def upload_mentor_photo(mentor_id: int, file: UploadFile = File(...), db: 
     if not mentor:
         raise HTTPException(status_code=404, detail="Mentor not found.")
 
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Only image files (JPG, PNG, WEBP) are allowed.")
-
-    contents = await file.read()
-    if len(contents) > 2 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Image must be 2MB or smaller.")
-    file.file.seek(0)
-
-    file_meta = save_file(file)
-    mentor.photo_path = file_meta["file_path"]
+    contents, mime = await _read_photo_upload(file)
+    _store_photo(mentor, contents, mime)
     db.commit()
 
     return {"message": "Photo uploaded successfully", "has_photo": True}
@@ -876,14 +927,8 @@ async def upload_mentor_photo(mentor_id: int, file: UploadFile = File(...), db: 
 
 @app.get("/mentors/{mentor_id}/photo")
 def get_mentor_photo(mentor_id: int, db: Session = Depends(get_db)):
-    from fastapi import HTTPException
-
     mentor = db.query(Mentor).filter(Mentor.id == mentor_id).first()
-    resolved = resolve_path(mentor.photo_path) if mentor and mentor.photo_path else None
-    if not mentor or not resolved or not os.path.exists(resolved):
-        raise HTTPException(status_code=404, detail="No photo found for this mentor.")
-
-    return FileResponse(resolved)
+    return _photo_response(mentor, "No photo found for this mentor.")
 
 # ==========================
 # BATCHES

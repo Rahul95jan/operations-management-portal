@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Bell, ChevronDown, ChevronLeft, ChevronRight, LogOut, User as UserIcon, Settings as SettingsIcon, Sun, Moon, CalendarDays } from "lucide-react";
 import { clearSession } from "../lib/auth";
 import { setTheme, useTheme } from "../lib/theme";
+import { usePhotoFallback } from "./usePhotoFallback";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -39,6 +40,7 @@ export default function Header({ notificationCount = 0, notifications = [] }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [user, setUser] = useState(null);
+  const { showPhoto, onPhotoError } = usePhotoFallback(userPhotoUrl(user));
   const theme = useTheme();
   const [now, setNow] = useState(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -184,8 +186,8 @@ export default function Header({ notificationCount = 0, notifications = [] }) {
 
         <div className="header-item-wrap">
           <button className="profile-btn" onClick={() => { setProfileOpen((v) => !v); setNotifOpen(false); }}>
-            {userPhotoUrl(user) ? (
-              <img src={userPhotoUrl(user)} alt={user?.name} className="profile-avatar profile-avatar-img" />
+            {showPhoto ? (
+              <img src={userPhotoUrl(user)} alt="" onError={onPhotoError} className="profile-avatar profile-avatar-img" />
             ) : (
               <div className="profile-avatar">{initials(user?.name)}</div>
             )}

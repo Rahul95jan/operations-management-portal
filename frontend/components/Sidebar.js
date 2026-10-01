@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { hasPermission, isSuperAdmin, clearSession } from "../lib/auth";
 import { setTheme, useTheme } from "../lib/theme";
+import { usePhotoFallback } from "./usePhotoFallback";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -45,6 +46,7 @@ export default function Sidebar() {
   const router = useRouter();
   const [user, setUser] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
+  const { showPhoto, onPhotoError } = usePhotoFallback(userPhotoUrl(user));
 
   useEffect(() => {
     fetch(`${API}/users/me`).then((r) => r.json()).then(setUser).catch(() => setUser(null));
@@ -158,8 +160,8 @@ export default function Sidebar() {
       <div className="sidebar-footer">
         <Link href="/profile" className="profile-row">
           <div className="profile-avatar-wrap">
-            {userPhotoUrl(user) ? (
-              <img src={userPhotoUrl(user)} alt={user?.name} className="profile-avatar profile-avatar-img" />
+            {showPhoto ? (
+              <img src={userPhotoUrl(user)} alt="" onError={onPhotoError} className="profile-avatar profile-avatar-img" />
             ) : (
               <div className="profile-avatar">{initials(user?.name)}</div>
             )}

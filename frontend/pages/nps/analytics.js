@@ -40,6 +40,7 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
+import { usePhotoFallback } from "../../components/usePhotoFallback";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -259,6 +260,8 @@ function MiniSegmentRow({ label, pct, color }) {
 
 export default function NPSAnalyticsPage() {
   const [currentUser, setCurrentUser] = useState(null);
+  const currentUserPhoto = currentUser?.photo_path ? `${API}/users/${currentUser.id}/photo?v=${encodeURIComponent(currentUser.photo_path)}` : null;
+  const { showPhoto, onPhotoError } = usePhotoFallback(currentUserPhoto);
   const [now, setNow] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [exportMenu, setExportMenu] = useState(null);
@@ -270,6 +273,19 @@ export default function NPSAnalyticsPage() {
   const [filters, setFilters] = useState({ course_name: "", batch_name: "", mentor_name: "" });
   const [dateRangeDays, setDateRangeDays] = useState(90);
   const [segment, setSegment] = useState("");
+  // Filter bar edits are staged here and only take effect on "Apply Filter".
+  const [draft, setDraft] = useState({ course_name: "", batch_name: "", mentor_name: "", dateRangeDays: 90, segment: "" });
+  const draftDirty =
+    draft.course_name !== filters.course_name ||
+    draft.batch_name !== filters.batch_name ||
+    draft.mentor_name !== filters.mentor_name ||
+    draft.dateRangeDays !== dateRangeDays ||
+    draft.segment !== segment;
+  const applyFilters = () => {
+    setFilters({ course_name: draft.course_name, batch_name: draft.batch_name, mentor_name: draft.mentor_name });
+    setDateRangeDays(draft.dateRangeDays);
+    setSegment(draft.segment);
+  };
   const [trendRangeDays, setTrendRangeDays] = useState(90);
   const [expTrendRangeDays, setExpTrendRangeDays] = useState(90);
 
@@ -310,6 +326,7 @@ export default function NPSAnalyticsPage() {
     setFilters({ course_name: "", batch_name: "", mentor_name: "" });
     setDateRangeDays(90);
     setSegment("");
+    setDraft({ course_name: "", batch_name: "", mentor_name: "", dateRangeDays: 90, segment: "" });
   };
 
   // ---- Date-range + segment filtering (client-side; course/batch/mentor already server-filtered) ----
@@ -557,7 +574,7 @@ export default function NPSAnalyticsPage() {
 
         <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
           <div className="page-hero">
-            <div className="page-hero-blob" />
+            <div className="page-hero-bg"><div className="page-hero-blob" /></div>
             <div className="page-hero-content">
               <div className="page-hero-eyebrow">Learner Feedback</div>
               <h1 className="page-hero-title">NPS Analytics</h1>
@@ -571,7 +588,7 @@ export default function NPSAnalyticsPage() {
                 </div>
               )}
               <div className="header-item-wrap">
-                <button className="hero-icon-btn" onClick={() => setNotifOpen((v) => !v)} aria-label="Notifications"><Bell size={16} strokeWidth={2.1} /></button>
+                <button className={`hero-icon-btn ${notifOpen ? "hero-icon-btn-active" : ""}`} onClick={() => setNotifOpen((v) => !v)} aria-label="Notifications" title="Notifications"><Bell size={16} strokeWidth={2.1} /></button>
                 {notifOpen && (
                   <>
                     <div className="dismiss-backdrop" onClick={() => setNotifOpen(false)} />
@@ -583,10 +600,10 @@ export default function NPSAnalyticsPage() {
                 )}
               </div>
               {currentUser && (
-                currentUser.photo_path ? (
-                  <img src={`${API}/users/${currentUser.id}/photo?v=${encodeURIComponent(currentUser.photo_path)}`} alt={currentUser.name} className="hero-avatar-img" />
+                showPhoto ? (
+                  <img src={currentUserPhoto} alt="" onError={onPhotoError} className="hero-avatar-img" title={currentUser.name} />
                 ) : (
-                  <div className="hero-avatar">{(currentUser.name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("")}</div>
+                  <div className="hero-avatar" title={currentUser.name}>{(currentUser.name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("")}</div>
                 )
               )}
             </div>
@@ -597,40 +614,41 @@ export default function NPSAnalyticsPage() {
             <div className="filter-grid">
               <div className="filter-field">
                 <label>Date Range</label>
-                <select value={dateRangeDays} onChange={(e) => setDateRangeDays(Number(e.target.value))}>
+                <select value={draft.dateRangeDays} onChange={(e) => setDraft((p) => ({ ...p, dateRangeDays: Number(e.target.value) }))}>
                   {Object.entries(DATE_RANGE_LABELS).map(([d, label]) => <option key={d} value={d}>{label}</option>)}
                 </select>
               </div>
               <div className="filter-field">
                 <label>Course</label>
-                <select value={filters.course_name} onChange={(e) => setFilters((p) => ({ ...p, course_name: e.target.value }))}>
+                <select value={draft.course_name} onChange={(e) => setDraft((p) => ({ ...p, course_name: e.target.value }))}>
                   <option value="">All Courses</option>
                   {filterOptions.course_name.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div className="filter-field">
                 <label>Batch</label>
-                <select value={filters.batch_name} onChange={(e) => setFilters((p) => ({ ...p, batch_name: e.target.value }))}>
+                <select value={draft.batch_name} onChange={(e) => setDraft((p) => ({ ...p, batch_name: e.target.value }))}>
                   <option value="">All Batches</option>
                   {filterOptions.batch_name.map((b) => <option key={b} value={b}>{b}</option>)}
                 </select>
               </div>
               <div className="filter-field">
                 <label>Mentor</label>
-                <select value={filters.mentor_name} onChange={(e) => setFilters((p) => ({ ...p, mentor_name: e.target.value }))}>
+                <select value={draft.mentor_name} onChange={(e) => setDraft((p) => ({ ...p, mentor_name: e.target.value }))}>
                   <option value="">All Mentors</option>
                   {filterOptions.mentor_name.map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
               <div className="filter-field">
                 <label>NPS Segment</label>
-                <select value={segment} onChange={(e) => setSegment(e.target.value)}>
+                <select value={draft.segment} onChange={(e) => setDraft((p) => ({ ...p, segment: e.target.value }))}>
                   <option value="">All</option>
                   <option value="promoter">Promoters</option>
                   <option value="passive">Passives</option>
                   <option value="detractor">Detractors</option>
                 </select>
               </div>
+              <button className="btn-apply" onClick={applyFilters} disabled={!draftDirty}>Apply Filter</button>
               <button className="btn-reset" onClick={resetFilters}><RefreshCw size={13} strokeWidth={2.3} /> Reset Filters</button>
               <div className="export-wrap">
                 <button
@@ -1136,7 +1154,9 @@ export default function NPSAnalyticsPage() {
 
         <style jsx>{`
           .page-hero {
-            position: relative; overflow: hidden; border-radius: 18px; padding: 26px 32px; margin-bottom: 14px;
+            /* overflow stays visible so the notifications dropdown isn't clipped;
+               the decorative blob is clipped by .page-hero-bg instead. */
+            position: relative; overflow: visible; border-radius: 18px; padding: 26px 32px; margin-bottom: 14px; z-index: 5;
             background: linear-gradient(120deg, #0f172a 0%, #1e293b 60%, #0f172a 100%);
             display: flex; align-items: center; justify-content: space-between; gap: 20px;
             box-shadow: 0 16px 32px -18px rgba(15, 23, 42, 0.55);
@@ -1153,10 +1173,12 @@ export default function NPSAnalyticsPage() {
           .page-hero-right { position: relative; z-index: 2; display: flex; align-items: center; gap: 12px; flex-shrink: 0; margin-left: auto; }
           .hero-clock { color: #cbd5e1; font-size: 11.5px; font-weight: 600; text-align: right; white-space: nowrap; }
           .hero-clock-time { display: block; color: #fbbf24; font-weight: 800; font-size: 13px; margin-top: 1px; }
-          .header-item-wrap { position: relative; }
+          .page-hero-bg { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }
+          .header-item-wrap { position: relative; z-index: 40; }
           .hero-icon-btn { width: 34px; height: 34px; border-radius: 9px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); color: #cbd5e1; display: flex; align-items: center; justify-content: center; cursor: pointer; }
           .hero-icon-btn:hover { background: rgba(255,255,255,0.14); color: #fbbf24; }
-          .hero-notif-dropdown { position: absolute; top: calc(100% + 10px); right: 0; min-width: 210px; background: #fff; border-radius: 12px; box-shadow: 0 16px 30px -14px rgba(0,0,0,0.35); padding: 10px; z-index: 30; }
+          .hero-notif-dropdown { position: absolute; top: calc(100% + 10px); right: 0; min-width: 240px; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 16px 30px -14px rgba(0,0,0,0.35); padding: 12px; z-index: 50; }
+          .hero-icon-btn-active { background: rgba(251,191,36,0.16); border-color: rgba(251,191,36,0.4); color: #fbbf24; }
           .hero-notif-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; padding: 2px 4px 8px; }
           .hero-notif-empty { font-size: 12.5px; color: #94a3b8; padding: 4px; }
           .hero-avatar-img { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
@@ -1174,6 +1196,8 @@ export default function NPSAnalyticsPage() {
           .filter-field label { font-size: 10.5px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.02em; }
           .filter-field select { border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 10px; font-size: 12.5px; background: #f8fafc; outline: none; min-width: 140px; }
           .btn-reset { display: inline-flex; align-items: center; gap: 6px; background: #f1f5f9; border: 1px solid #e2e8f0; color: #334155; border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 700; cursor: pointer; }
+          .btn-apply { display: inline-flex; align-items: center; background: linear-gradient(120deg, #f59e0b, #fbbf24); border: none; color: #0f172a; border-radius: 8px; padding: 8px 14px; font-size: 12px; font-weight: 800; cursor: pointer; }
+          .btn-apply:disabled { opacity: 0.5; cursor: not-allowed; }
           .btn-reset:hover { background: #e2e8f0; }
           .export-wrap { position: relative; margin-left: auto; }
           .btn-export-main { background: linear-gradient(120deg, #f59e0b, #fbbf24); color: #0f172a; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 800; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }

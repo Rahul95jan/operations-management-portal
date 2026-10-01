@@ -890,10 +890,6 @@ export default function Sessions() {
               Schedule new sessions, track status, and keep mentors &amp; batches in sync.
             </p>
           </div>
-          <div className="page-hero-stat">
-            <div className="page-hero-stat-value">{sessions.length}</div>
-            <div className="page-hero-stat-label">Total Sessions</div>
-          </div>
         </div>
 
         {/* Stat summary row */}
@@ -1771,31 +1767,6 @@ export default function Sessions() {
           color: #94a3b8;
           font-size: 14px;
           margin: 0;
-        }
-
-        .page-hero-stat {
-          position: relative;
-          z-index: 1;
-          text-align: center;
-          padding: 14px 26px;
-          border-radius: 14px;
-          background: rgba(255, 255, 255, 0.06);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          flex-shrink: 0;
-        }
-
-        .page-hero-stat-value {
-          font-size: 26px;
-          font-weight: 800;
-          color: #fbbf24;
-        }
-
-        .page-hero-stat-label {
-          font-size: 11px;
-          color: #94a3b8;
-          margin-top: 2px;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
         }
 
         .stat-row {

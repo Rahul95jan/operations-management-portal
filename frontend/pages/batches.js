@@ -410,6 +410,37 @@ export default function Batches() {
   const [viewMode, setViewMode] = useState("table");
 
   const [openMenuId, setOpenMenuId] = useState(null);
+  // Screen position for the row actions menu. It's position: fixed so the
+  // table's scroll container can't clip it.
+  const [menuPos, setMenuPos] = useState(null);
+
+  const toggleRowMenu = (e, batchId) => {
+    e.stopPropagation();
+    if (openMenuId === batchId) {
+      setOpenMenuId(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const MENU_HEIGHT = 130;
+    const openUp = rect.bottom + MENU_HEIGHT + 8 > window.innerHeight;
+    setMenuPos({
+      right: window.innerWidth - rect.right,
+      ...(openUp ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
+    });
+    setOpenMenuId(batchId);
+  };
+
+  // A fixed menu would drift away from its row on scroll/resize, so close it.
+  useEffect(() => {
+    if (!openMenuId) return undefined;
+    const close = () => setOpenMenuId(null);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [openMenuId]);
   const [viewBatch, setViewBatch] = useState(null);
 
   const dateRangeRef = useRef(null);
@@ -870,7 +901,7 @@ export default function Batches() {
           <h2 className="card-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
             <span className="icon-badge"><Icon name="plus" size={14} color="#ffffff" /></span> {editId ? "Update Batch" : "Create New Batch"}
           </h2>
-          <p className="hint-text" style={{ margin: "4px 0 18px" }}>
+          <p className="hint-text" style={{ margin: "8px 0 20px", lineHeight: 1.4 }}>
             {editId ? "Update the details for this batch." : "Add a new batch with course, mentor and strength details."}
           </p>
 
@@ -943,7 +974,7 @@ export default function Batches() {
           <h2 className="card-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
             <Icon name="filter" size={16} color="#b45309" /> Filters &amp; Search
           </h2>
-          <p className="hint-text" style={{ margin: "4px 0 18px" }}>Find and manage batches easily.</p>
+          <p className="hint-text" style={{ margin: "8px 0 20px", lineHeight: 1.4 }}>Find and manage batches easily.</p>
 
           <div className="filters-row">
             <div className="search-wrap">
@@ -1067,7 +1098,10 @@ export default function Batches() {
                     {pagedBatches.map((batch, i) => {
                       const stat = statsFor(batch);
                       return (
-                        <tr key={batch.id} style={{ animationDelay: `${i * 0.03}s` }}>
+                        <tr
+                          key={batch.id}
+                          style={{ animationDelay: `${i * 0.03}s` }}
+                        >
                           <td>
                             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                               <div className="batch-icon"><Icon name="graduation" size={16} color="#b45309" /></div>
@@ -1121,12 +1155,16 @@ export default function Batches() {
                             </button>
                             <button
                               className="btn btn-icon btn-dots"
-                              onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === batch.id ? null : batch.id); }}
+                              onClick={(e) => toggleRowMenu(e, batch.id)}
                             >
                               <DotsIcon size={15} />
                             </button>
                             {openMenuId === batch.id && (
-                              <div className="dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                              <div
+                                className="dropdown-menu"
+                                style={menuPos || undefined}
+                                onClick={(e) => e.stopPropagation()}
+                              >
                                 <button onClick={() => editBatch(batch)}><Icon name="edit" size={13} /> Edit Batch</button>
                                 {batch.status === "Inactive" ? (
                                   <button onClick={() => setBatchStatus(batch, "Active")}><Icon name="power" size={13} /> Activate Batch</button>
@@ -1660,7 +1698,9 @@ export default function Batches() {
         }
 
         .styled-table tbody tr {
-          animation: fadeSlideUp 0.3s ease both;
+          /* "backwards", not "both": a retained transform makes every row its
+             own stacking context, so later rows painted over the open menu. */
+          animation: fadeSlideUp 0.3s ease backwards;
           transition: background 0.12s ease;
         }
 
@@ -1752,15 +1792,12 @@ export default function Batches() {
         }
 
         .dropdown-menu {
-          position: absolute;
-          right: 0;
-          top: 100%;
-          margin-top: 4px;
+          position: fixed;
           background: #ffffff;
           border: 1px solid #eef2f7;
           border-radius: 10px;
           box-shadow: 0 12px 24px -8px rgba(15, 23, 42, 0.25);
-          z-index: 20;
+          z-index: 1000;
           min-width: 190px;
           overflow: hidden;
         }

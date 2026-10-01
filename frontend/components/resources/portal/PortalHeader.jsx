@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { Bell } from "lucide-react";
 import { API, initials, userPhotoUrl } from "./portalUtils";
+import { usePhotoFallback } from "../../usePhotoFallback";
 
 // Shared page header for the two Resource Portal pages: title + subtitle on
 // the left, signed-in user chip and tagline on the right.
 export default function PortalHeader({ title = "Resource Portal", subtitle, tagline }) {
   const [user, setUser] = useState(null);
+  const { showPhoto, onPhotoError } = usePhotoFallback(userPhotoUrl(user));
 
   useEffect(() => {
     fetch(`${API}/users/me`).then((r) => r.json()).then(setUser).catch(() => setUser(null));
@@ -22,8 +24,8 @@ export default function PortalHeader({ title = "Resource Portal", subtitle, tagl
           <span className="bell"><Bell size={17} strokeWidth={2} /></span>
           {user && (
             <>
-              {userPhotoUrl(user) ? (
-                <img src={userPhotoUrl(user)} alt={user.name} className="avatar" />
+              {showPhoto ? (
+                <img src={userPhotoUrl(user)} alt="" onError={onPhotoError} className="avatar" />
               ) : (
                 <span className="avatar avatar-fallback">{initials(user.name)}</span>
               )}

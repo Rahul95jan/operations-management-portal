@@ -1,15 +1,17 @@
 import { initials, mentorPhotoUrl } from "./portalUtils";
+import { usePhotoFallback } from "../../usePhotoFallback";
 
 // Round mentor photo (as uploaded in the Mentors section) with an initials fallback.
 export default function MentorAvatar({ mentor, name, size = 32 }) {
   const url = mentorPhotoUrl(mentor);
+  const { showPhoto, onPhotoError } = usePhotoFallback(url);
   const label = mentor?.name || name || "";
   const box = { width: size, height: size, fontSize: Math.max(10, Math.round(size * 0.36)) };
 
   return (
     <>
-      {url ? (
-        <img src={url} alt={label} className="ma ma-img" style={box} loading="lazy" />
+      {showPhoto ? (
+        <img src={url} alt="" title={label} className="ma ma-img" style={box} loading="lazy" onError={onPhotoError} />
       ) : (
         <span className="ma ma-fallback" style={box} aria-label={label}>{initials(label)}</span>
       )}

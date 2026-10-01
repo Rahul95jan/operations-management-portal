@@ -169,6 +169,8 @@ export default function ResourceTrackerPage() {
   const [mentors, setMentors] = useState([]);
   const [error, setError] = useState("");
   const [filters, setFilters] = useState(EMPTY_FILTERS);
+  // Filter bar edits (including Status) are staged until "Apply Filter".
+  const [draft, setDraft] = useState({ ...EMPTY_FILTERS, status: "All" });
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState("All"); // also drives the Status select
   const [sort, setSort] = useState({ field: null, dir: "asc" });
@@ -308,8 +310,24 @@ export default function ResourceTrackerPage() {
   }, [filtered, tab, sort]);
 
   const hasFilters = Object.values(filters).some(Boolean) || !!search;
-  const setFilter = (key, value) => setFilters((prev) => ({ ...prev, [key]: value }));
-  const clearAll = () => { setFilters(EMPTY_FILTERS); setSearch(""); setTab("All"); };
+  const setDraftField = (key, value) => setDraft((prev) => ({ ...prev, [key]: value }));
+  const draftDirty = Object.keys(EMPTY_FILTERS).some((k) => draft[k] !== filters[k]) || draft.status !== tab;
+  const applyFilters = () => {
+    const { status, ...rest } = draft;
+    setFilters(rest);
+    setTab(status);
+  };
+  const clearAll = () => {
+    setFilters(EMPTY_FILTERS);
+    setDraft({ ...EMPTY_FILTERS, status: "All" });
+    setSearch("");
+    setTab("All");
+  };
+  // Tabs apply immediately; keep the Status select in the bar in step.
+  const selectTab = (key) => {
+    setTab(key);
+    setDraft((prev) => ({ ...prev, status: key }));
+  };
   const toggleSort = (field) => setSort((prev) => (prev.field === field ? { field, dir: prev.dir === "asc" ? "desc" : "asc" } : { field, dir: "asc" }));
 
   // What the status cell says beyond the pill itself.
@@ -337,36 +355,36 @@ export default function ResourceTrackerPage() {
           {/* Filters */}
           <div className="filters">
             <FilterField icon={CalendarDays} label="Date Range">
-              <select value={filters.range} onChange={(e) => setFilter("range", e.target.value)}>
+              <select value={draft.range} onChange={(e) => setDraftField("range", e.target.value)}>
                 {DATE_RANGES.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
               </select>
             </FilterField>
             <FilterField icon={Layers} label="Batch">
-              <select value={filters.batch_name} onChange={(e) => setFilter("batch_name", e.target.value)}>
+              <select value={draft.batch_name} onChange={(e) => setDraftField("batch_name", e.target.value)}>
                 <option value="">All Batches</option>
                 {options.batch_name.map((b) => <option key={b} value={b}>{b}</option>)}
               </select>
             </FilterField>
             <FilterField icon={Users} label="Mentor">
-              <select value={filters.mentor_name} onChange={(e) => setFilter("mentor_name", e.target.value)}>
+              <select value={draft.mentor_name} onChange={(e) => setDraftField("mentor_name", e.target.value)}>
                 <option value="">All Mentors</option>
                 {options.mentor_name.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </FilterField>
             <FilterField icon={Video} label="Session Type">
-              <select value={filters.session_type} onChange={(e) => setFilter("session_type", e.target.value)}>
+              <select value={draft.session_type} onChange={(e) => setDraftField("session_type", e.target.value)}>
                 <option value="">All Types</option>
                 {SESSION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </FilterField>
             <FilterField icon={PlayCircle} label="Session">
-              <select value={filters.session_id} onChange={(e) => setFilter("session_id", e.target.value)}>
+              <select value={draft.session_id} onChange={(e) => setDraftField("session_id", e.target.value)}>
                 <option value="">All Sessions</option>
                 {options.sessions.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
             </FilterField>
             <FilterField icon={Circle} label="Status">
-              <select value={tab} onChange={(e) => setTab(e.target.value)}>
+              <select value={draft.status} onChange={(e) => setDraftField("status", e.target.value)}>
                 <option value="All">All Status</option>
                 {TABS.filter((t) => t.key !== "All").map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
               </select>
@@ -378,13 +396,19 @@ export default function ResourceTrackerPage() {
                 <span className="search-btn"><Search size={15} /></span>
               </div>
             </div>
+            <div className="filter-actions">
+              <button className="btn-apply" onClick={applyFilters} disabled={!draftDirty}>Apply Filter</button>
+              <button className="btn-clear-bar" onClick={clearAll} disabled={!hasFilters && tab === "All" && !draftDirty}>
+                <X size={13} /> Clear Filters
+              </button>
+            </div>
           </div>
 
           {/* Tabs + export */}
           <div className="tabs-row">
             <div className="tabs" role="tablist">
               {TABS.map(({ key, label, icon: Icon }) => (
-                <button key={key} role="tab" aria-selected={tab === key} className={`tab ${tab === key ? "tab-active" : ""} tab-${key.toLowerCase()}`} onClick={() => setTab(key)}>
+                <button key={key} role="tab" aria-selected={tab === key} className={`tab ${tab === key ? "tab-active" : ""} tab-${key.toLowerCase()}`} onClick={() => selectTab(key)}>
                   <Icon size={14} strokeWidth={2.2} /> {label} ({counts[key]})
                 </button>
               ))}
@@ -544,6 +568,10 @@ export default function ResourceTrackerPage() {
           .search label { display: block; font-size: 11.5px; font-weight: 700; color: #334155; margin-bottom: 4px; }
           .search-box { display: flex; }
           .search-box input { border-radius: 8px 0 0 8px; border-right: none; }
+          .filter-actions { display: flex; align-items: center; gap: 8px; }
+          .btn-apply { border: none; border-radius: 8px; padding: 9px 16px; font-size: 12.5px; font-weight: 700; color: #0f172a; cursor: pointer; background: linear-gradient(90deg, #f59e0b, #fbbf24); white-space: nowrap; }
+          .btn-clear-bar { display: inline-flex; align-items: center; gap: 6px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 12px; font-size: 12.5px; font-weight: 700; color: #334155; cursor: pointer; white-space: nowrap; }
+          .btn-apply:disabled, .btn-clear-bar:disabled { opacity: 0.5; cursor: not-allowed; }
           .search-btn { display: flex; align-items: center; justify-content: center; width: 40px; border: 1px solid #d8e1ee; border-radius: 0 8px 8px 0; background: #f8fafc; color: #334155; }
 
           .tabs-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fff; border: 1px solid #e3eaf4; border-top: none; padding: 10px 18px 0; }

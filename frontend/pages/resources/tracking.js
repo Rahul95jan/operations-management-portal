@@ -73,6 +73,11 @@ const STATUS_PILL = {
 
 const STATUS_ORDER = { Overdue: 0, "Partially Submitted": 1, Pending: 2, Late: 3, Submitted: 4, "Not Required": 5 };
 
+// Mentor names are free text across modules, so compare them normalized.
+function normName(value) {
+  return (value || "").trim().toLowerCase();
+}
+
 function unique(list) {
   return [...new Set(list.filter(Boolean))].sort();
 }
@@ -212,7 +217,7 @@ export default function ResourceTrackerPage() {
     return () => clearInterval(id);
   }, []);
 
-  const mentorsByName = useMemo(() => Object.fromEntries(mentors.map((m) => [m.name, m])), [mentors]);
+  const mentorsByName = useMemo(() => Object.fromEntries(mentors.map((m) => [normName(m.name), m])), [mentors]);
 
   const resourcesBySession = useMemo(() => {
     const map = {};
@@ -226,10 +231,12 @@ export default function ResourceTrackerPage() {
   const options = useMemo(
     () => ({
       batch_name: unique((rows || []).map((r) => r.batch_name)),
-      mentor_name: unique((rows || []).map((r) => r.mentor_name)),
+      // Mentor names come from Mentor Management (falls back to the rows'
+      // names if the Mentors list couldn't be loaded).
+      mentor_name: mentors.length ? unique(mentors.map((m) => (m.name || "").trim())) : unique((rows || []).map((r) => r.mentor_name)),
       sessions: (rows || []).map((r) => ({ id: r.session_id, label: `${r.session_topic || "Untitled"} — ${r.session_date || "no date"}` })),
     }),
-    [rows]
+    [rows, mentors]
   );
 
   // The date a row is measured by: its deadline, or the session date when no deadline is set.
@@ -264,7 +271,7 @@ export default function ResourceTrackerPage() {
     const term = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (filters.batch_name && r.batch_name !== filters.batch_name) return false;
-      if (filters.mentor_name && r.mentor_name !== filters.mentor_name) return false;
+      if (filters.mentor_name && normName(r.mentor_name) !== normName(filters.mentor_name)) return false;
       if (filters.session_type && (r.session_type || "Live Session") !== filters.session_type) return false;
       if (filters.session_id && String(r.session_id) !== filters.session_id) return false;
       if (!inRange(r, filters.range)) return false;
@@ -477,7 +484,7 @@ export default function ResourceTrackerPage() {
                               {sessionTypeLabel(r.session_type)}
                             </span>
                             <div className="mentor">
-                              <MentorAvatar mentor={mentorsByName[r.mentor_name]} name={r.mentor_name} size={22} />
+                              <MentorAvatar mentor={mentorsByName[normName(r.mentor_name)]} name={r.mentor_name} size={22} />
                               <span className="mentor-name">{r.mentor_name || "—"}</span>
                               <span className="sub">· {r.session_date ? formatDate(`${r.session_date}T00:00:00`) : "—"}</span>
                             </div>

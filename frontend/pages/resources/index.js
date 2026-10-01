@@ -25,6 +25,11 @@ import {
 
 const NOTES_LIMIT = 500;
 
+// Mentor names are free text across modules, so compare them normalized.
+function normName(value) {
+  return (value || "").trim().toLowerCase();
+}
+
 function unique(list) {
   return [...new Set(list.filter(Boolean))].sort();
 }
@@ -86,11 +91,12 @@ export default function UploadResourcePage() {
     const match = sessions.find((s) => String(s.id) === String(wanted));
     if (match) {
       setBatchName(match.batch_name || NO_BATCH);
-      setMentorName(match.mentor_name || "");
+      const known = mentors.find((m) => normName(m.name) === normName(match.mentor_name));
+      setMentorName(known ? known.name : match.mentor_name || "");
       setSessionType(sessionTypeOf(match));
       setSessionId(String(match.id));
     }
-  }, [router.query.session_id, sessions]);
+  }, [router.query.session_id, sessions, mentors]);
 
   const loadSessionState = (id) => {
     if (!id) {
@@ -119,9 +125,19 @@ export default function UploadResourcePage() {
     () => sessions.filter((s) => !batchName || (batchName === NO_BATCH ? !s.batch_name : s.batch_name === batchName)),
     [sessions, batchName]
   );
-  const mentorOptions = useMemo(() => unique(batchSessions.map((s) => s.mentor_name)), [batchSessions]);
-  const selectedMentor = useMemo(() => mentors.find((m) => m.name === mentorName) || null, [mentors, mentorName]);
-  const mentorSessions = useMemo(() => batchSessions.filter((s) => !mentorName || s.mentor_name === mentorName), [batchSessions, mentorName]);
+  // Mentors come from Mentor Management: those with a session in the chosen
+  // batch, listed under their Mentor Management name. Falls back to the
+  // sessions' names if the Mentors list couldn't be loaded.
+  const mentorOptions = useMemo(() => {
+    const inBatch = new Set(batchSessions.map((s) => normName(s.mentor_name)).filter(Boolean));
+    if (mentors.length === 0) return unique(batchSessions.map((s) => s.mentor_name));
+    return unique(mentors.filter((m) => inBatch.has(normName(m.name))).map((m) => m.name.trim()));
+  }, [batchSessions, mentors]);
+  const selectedMentor = useMemo(() => mentors.find((m) => normName(m.name) === normName(mentorName)) || null, [mentors, mentorName]);
+  const mentorSessions = useMemo(
+    () => batchSessions.filter((s) => !mentorName || normName(s.mentor_name) === normName(mentorName)),
+    [batchSessions, mentorName]
+  );
   const sessionOptions = useMemo(
     () =>
       mentorSessions
@@ -222,7 +238,7 @@ export default function UploadResourcePage() {
     setFormError("");
     setSubmitting(true);
 
-    const mentor = mentors.find((m) => m.name === selectedSession.mentor_name);
+    const mentor = mentors.find((m) => normName(m.name) === normName(selectedSession.mentor_name));
     const matchingRequirement = requirements.find((r) => r.resource_type === resourceType && r.resource_category);
 
     const items = [

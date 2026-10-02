@@ -2085,3 +2085,73 @@ def generate_session_report_pdf(bundle, attendance, feedback):
 
     return filename
 
+
+
+# =====================================================
+# Activity Log PDF
+# =====================================================
+
+def generate_activity_log_pdf(logs):
+    """Builds the Activity Log export in memory and returns the PDF bytes.
+    `logs` are dicts with timestamp / performed_by / action / details."""
+    import io
+    from reportlab.lib.pagesizes import landscape
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        topMargin=14 * mm, bottomMargin=14 * mm, leftMargin=14 * mm, rightMargin=14 * mm,
+        title="Activity Log",
+    )
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("AlTitle", parent=styles["Normal"], textColor=NAVY, fontSize=18, fontName="Helvetica-Bold", leading=22)
+    meta_style = ParagraphStyle("AlMeta", parent=styles["Normal"], textColor=colors.HexColor("#64748b"), fontSize=9, leading=12)
+    cell_style = ParagraphStyle("AlCell", parent=styles["Normal"], textColor=SLATE, fontSize=8.5, leading=11)
+    head_style = ParagraphStyle("AlHead", parent=styles["Normal"], textColor=colors.white, fontSize=9, fontName="Helvetica-Bold")
+
+    def esc(value):
+        return str(value or "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def fmt_time(iso):
+        if not iso:
+            return "—"
+        try:
+            return datetime.fromisoformat(iso).strftime("%d %b %Y, %I:%M %p")
+        except ValueError:
+            return iso
+
+    story = [
+        Paragraph("Activity Log", title_style),
+        Spacer(1, 3),
+        Paragraph(f"Generated {datetime.now().strftime('%d %b %Y, %I:%M %p')} &nbsp;·&nbsp; {len(logs)} entr{'y' if len(logs) == 1 else 'ies'}", meta_style),
+        Spacer(1, 4),
+        HRFlowable(width="100%", thickness=2, color=YELLOW),
+        Spacer(1, 10),
+    ]
+
+    if not logs:
+        story.append(Paragraph("No activity recorded yet.", cell_style))
+    else:
+        rows = [[Paragraph(h, head_style) for h in ("Date & Time", "Performed By", "Action", "Details")]]
+        for log in logs:
+            rows.append([
+                Paragraph(esc(fmt_time(log.get("timestamp"))), cell_style),
+                Paragraph(esc(log.get("performed_by") or "System"), cell_style),
+                Paragraph(esc(log.get("action")), cell_style),
+                Paragraph(esc(log.get("details")), cell_style),
+            ])
+        table = Table(rows, colWidths=[40 * mm, 38 * mm, 45 * mm, 146 * mm], repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_ALT]),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.4, BORDER),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(table)
+
+    doc.build(story)
+    return buffer.getvalue()

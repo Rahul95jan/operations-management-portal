@@ -506,9 +506,8 @@ def update_user_access(user_id: int, payload: AdminUserPermissionsUpdate, curren
     return user_public(target)
 
 
-@app.get("/admin/activity-logs")
-def get_activity_logs(current: User = Depends(require_super_admin), db: Session = Depends(get_db)):
-    logs = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(200).all()
+def _activity_log_rows(db, limit=200):
+    logs = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit).all()
     return [
         {
             "id": l.id,
@@ -519,6 +518,42 @@ def get_activity_logs(current: User = Depends(require_super_admin), db: Session 
         }
         for l in logs
     ]
+
+
+@app.get("/admin/activity-logs")
+def get_activity_logs(current: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    return _activity_log_rows(db)
+
+
+@app.get("/admin/activity-logs/export")
+def export_activity_logs(format: str = "csv", current: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """Full activity log (not just the 200 shown on screen) as CSV or PDF."""
+    from fastapi import HTTPException
+    from pdf_generator import generate_activity_log_pdf
+
+    rows = _activity_log_rows(db, limit=None)
+    stamp = datetime.now().strftime("%Y-%m-%d")
+
+    if format == "pdf":
+        return Response(
+            content=generate_activity_log_pdf(rows),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="activity_log_{stamp}.pdf"'},
+        )
+    if format != "csv":
+        raise HTTPException(status_code=400, detail="format must be csv or pdf.")
+
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["Date & Time", "Performed By", "Action", "Details"])
+    for r in rows:
+        writer.writerow([r["timestamp"] or "", r["performed_by"] or "System", r["action"] or "", r["details"] or ""])
+    # BOM so Excel opens UTF-8 (names, arrows like "→") correctly.
+    return Response(
+        content="\ufeff" + out.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="activity_log_{stamp}.csv"'},
+    )
 
 
 # ==========================

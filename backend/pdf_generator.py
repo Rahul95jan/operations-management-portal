@@ -2091,46 +2091,129 @@ def generate_session_report_pdf(bundle, attendance, feedback):
 # Activity Log PDF
 # =====================================================
 
+def _activity_log_footer(canvas_obj, doc_obj):
+    canvas_obj.saveState()
+    canvas_obj.setStrokeColor(BORDER)
+    canvas_obj.setLineWidth(0.5)
+    canvas_obj.line(16 * mm, 14 * mm, 194 * mm, 14 * mm)
+    canvas_obj.setFont("Helvetica", 8)
+    canvas_obj.setFillColor(colors.HexColor("#94a3b8"))
+    canvas_obj.drawCentredString(105 * mm, 10 * mm, f"Krish Naik Academy  ·  Activity Log  ·  Page {doc_obj.page}")
+    canvas_obj.restoreState()
+
+
 def generate_activity_log_pdf(logs):
-    """Builds the Activity Log export in memory and returns the PDF bytes.
-    `logs` are dicts with timestamp / performed_by / action / details."""
+    """Activity Log export in the same branded layout as the other reports
+    (navy header with logo, gold rule, summary tiles, data table, footer).
+    Built in memory; returns the PDF bytes. `logs` are dicts with
+    timestamp / performed_by / action / details, most recent first."""
     import io
-    from reportlab.lib.pagesizes import landscape
+    from datetime import timedelta
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+
+    from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, NextPageTemplate
 
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=landscape(A4),
-        topMargin=14 * mm, bottomMargin=14 * mm, leftMargin=14 * mm, rightMargin=14 * mm,
-        title="Activity Log",
-    )
+    page_w, page_h = A4
+    left, right, bottom = 16 * mm, 16 * mm, 22 * mm
+    # Page 1 starts flush with the top for the navy header band; later pages
+    # get a normal top margin so the table doesn't touch the page edge.
+    doc = BaseDocTemplate(buffer, pagesize=A4, title="Activity Log", leftMargin=left, rightMargin=right, bottomMargin=bottom)
+    first_frame = Frame(left, bottom, page_w - left - right, page_h - bottom, id="first", leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
+    later_frame = Frame(left, bottom, page_w - left - right, page_h - bottom - 16 * mm, id="later", leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
+    doc.addPageTemplates([
+        PageTemplate(id="First", frames=[first_frame], onPage=_activity_log_footer),
+        PageTemplate(id="Later", frames=[later_frame], onPage=_activity_log_footer),
+    ])
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("AlTitle", parent=styles["Normal"], textColor=NAVY, fontSize=18, fontName="Helvetica-Bold", leading=22)
-    meta_style = ParagraphStyle("AlMeta", parent=styles["Normal"], textColor=colors.HexColor("#64748b"), fontSize=9, leading=12)
+
+    title_style = ParagraphStyle("AlTitleWhite", parent=styles["Normal"], textColor=colors.white, fontSize=18, fontName="Helvetica-Bold", leading=22)
+    subtitle_style = ParagraphStyle("AlSubtitleWhite", parent=styles["Normal"], textColor=YELLOW, fontSize=10, leading=13)
+    section_style = ParagraphStyle("AlSection", parent=styles["Heading2"], textColor=NAVY, fontSize=13, spaceBefore=16, spaceAfter=8)
+    body_style = ParagraphStyle("AlBody", parent=styles["Normal"], textColor=SLATE, fontSize=10, leading=14)
     cell_style = ParagraphStyle("AlCell", parent=styles["Normal"], textColor=SLATE, fontSize=8.5, leading=11)
-    head_style = ParagraphStyle("AlHead", parent=styles["Normal"], textColor=colors.white, fontSize=9, fontName="Helvetica-Bold")
+    head_style = ParagraphStyle("AlTH", parent=styles["Normal"], textColor=colors.white, fontSize=9, fontName="Helvetica-Bold")
+    kpi_label_style = ParagraphStyle("AlKpiLabel", parent=styles["Normal"], textColor=colors.HexColor("#94a3b8"), fontSize=7.5, fontName="Helvetica-Bold", alignment=1, leading=10)
+    kpi_value_style = ParagraphStyle("AlKpiValue", parent=styles["Normal"], textColor=NAVY, fontSize=14, fontName="Helvetica-Bold", alignment=1)
 
     def esc(value):
-        return str(value or "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return str(value if value not in (None, "") else "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def parse(iso):
+        try:
+            return datetime.fromisoformat(iso) if iso else None
+        except ValueError:
+            return None
 
     def fmt_time(iso):
-        if not iso:
-            return "—"
-        try:
-            return datetime.fromisoformat(iso).strftime("%d %b %Y, %I:%M %p")
-        except ValueError:
-            return iso
+        dt = parse(iso)
+        return dt.strftime("%d %b %Y, %I:%M %p") if dt else (iso or "—")
 
-    story = [
-        Paragraph("Activity Log", title_style),
-        Spacer(1, 3),
-        Paragraph(f"Generated {datetime.now().strftime('%d %b %Y, %I:%M %p')} &nbsp;·&nbsp; {len(logs)} entr{'y' if len(logs) == 1 else 'ies'}", meta_style),
-        Spacer(1, 4),
-        HRFlowable(width="100%", thickness=2, color=YELLOW),
-        Spacer(1, 10),
-    ]
+    def bullet(title):
+        return Paragraph(f"<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;{title}", section_style)
 
+    def kpi_grid(pairs, per_row=4):
+        labels = [Paragraph(lbl.upper(), kpi_label_style) for lbl, _ in pairs]
+        values = [Paragraph(str(val), kpi_value_style) for _, val in pairs]
+        col_w = (178 / per_row) * mm
+        table = Table([labels, values], colWidths=[col_w] * per_row)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), BG_ALT),
+            ("BOX", (0, 0), (-1, -1), 0.75, BORDER),
+            ("ROUNDEDCORNERS", [8, 8, 8, 8]),
+            ("TOPPADDING", (0, 0), (-1, 0), 10),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+            ("TOPPADDING", (0, 1), (-1, 1), 2),
+            ("BOTTOMPADDING", (0, 1), (-1, 1), 12),
+        ]))
+        return table
+
+    elements = [NextPageTemplate("Later")]
+
+    # ---- Branded header ----
+    logo_cell = Image(LOGO_PATH, width=30 * mm, height=11.5 * mm) if os.path.exists(LOGO_PATH) else ""
+    header_text = Table(
+        [[Paragraph("Krish Naik Academy", title_style)],
+         [Paragraph(f"Activity Log &nbsp;&bull;&nbsp; Generated {datetime.now().strftime('%d %b %Y')}", subtitle_style)],
+         [Paragraph("Scope: Full activity history", subtitle_style)]],
+        colWidths=[130 * mm],
+    )
+    header_text.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+    header = Table([[logo_cell, header_text]], colWidths=[38 * mm, 140 * mm])
+    header.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, 0), 6 * mm),
+        ("RIGHTPADDING", (0, 0), (0, 0), 2 * mm),
+        ("LEFTPADDING", (1, 0), (1, 0), 4 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 16),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+    ]))
+    elements.append(header)
+    elements.append(HRFlowable(width="100%", thickness=3, color=GOLD_LIGHT, spaceBefore=0, spaceAfter=18))
+
+    # ---- Summary ----
+    now = datetime.now()
+    times = [parse(l.get("timestamp")) for l in logs]
+    last_24h = sum(1 for t in times if t and now - t <= timedelta(hours=24))
+    last_7d = sum(1 for t in times if t and now - t <= timedelta(days=7))
+    people = len({l.get("performed_by") or "System" for l in logs})
+
+    elements.append(bullet("Summary"))
+    elements.append(kpi_grid([
+        ("Total Entries", len(logs)),
+        ("Last 24 Hours", last_24h),
+        ("Last 7 Days", last_7d),
+        ("Performed By", f"{people} {'person' if people == 1 else 'people'}"),
+    ]))
+    elements.append(Spacer(1, 10))
+
+    # ---- Activity table ----
+    elements.append(bullet("Activity"))
     if not logs:
-        story.append(Paragraph("No activity recorded yet.", cell_style))
+        elements.append(Paragraph("No activity recorded yet.", body_style))
     else:
         rows = [[Paragraph(h, head_style) for h in ("Date & Time", "Performed By", "Action", "Details")]]
         for log in logs:
@@ -2140,18 +2223,17 @@ def generate_activity_log_pdf(logs):
                 Paragraph(esc(log.get("action")), cell_style),
                 Paragraph(esc(log.get("details")), cell_style),
             ])
-        table = Table(rows, colWidths=[40 * mm, 38 * mm, 45 * mm, 146 * mm], repeatRows=1)
+        table = Table(rows, colWidths=[40 * mm, 30 * mm, 34 * mm, 74 * mm], repeatRows=1)
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), NAVY),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, BG_ALT]),
-            ("LINEBELOW", (0, 0), (-1, -1), 0.4, BORDER),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
             ("TOPPADDING", (0, 0), (-1, -1), 6),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]))
-        story.append(table)
+        elements.append(table)
 
-    doc.build(story)
+    doc.build(elements)
     return buffer.getvalue()

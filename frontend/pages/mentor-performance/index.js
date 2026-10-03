@@ -23,7 +23,6 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const EMPTY_FILTERS = {
   course_name: "",
-  batch_name: "",
   mentor_name: "",
   date_from: "",
   date_to: "",
@@ -34,7 +33,7 @@ const EMPTY_FILTERS = {
 const CLASSIFICATIONS = ["Excellent", "Strong Performer", "Needs Attention", "At Risk", "Critical"];
 const RISK_LEVELS = ["Low", "Medium", "High", "Critical"];
 
-const FILTER_KEYS = ["course_name", "batch_name", "mentor_name", "date_from", "date_to", "classification", "risk"];
+const FILTER_KEYS = ["course_name", "mentor_name", "date_from", "date_to", "classification", "risk"];
 
 const SCORECARD_COLUMNS = [
   "Mentor",
@@ -121,7 +120,7 @@ export default function MentorPerformancePage() {
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [draft, setDraft] = useState(EMPTY_FILTERS);
   const [dateError, setDateError] = useState("");
-  const [filterOptions, setFilterOptions] = useState({ course_name: [], batch_name: [], mentor_name: [] });
+  const [filterOptions, setFilterOptions] = useState({ course_name: [], mentor_name: [] });
   const [kpis, setKpis] = useState(null);
   const [mentors, setMentors] = useState(null);
 
@@ -129,7 +128,7 @@ export default function MentorPerformancePage() {
   const draftDirty = FILTER_KEYS.some((k) => draft[k] !== filters[k]);
 
   useEffect(() => {
-    // Mentor names come from Mentor Management; course/batch from Batches.
+    // Mentor names come from Mentor Management; courses from the Courses list.
     Promise.all([
       fetch(`${API}/batches`).then((r) => r.json()).catch(() => []),
       fetch(`${API}/mentors`).then((r) => r.json()).catch(() => []),
@@ -138,7 +137,6 @@ export default function MentorPerformancePage() {
       const allMentors = Array.isArray(mentorData) ? mentorData : [];
       setFilterOptions({
         course_name: unique(allBatches.map((b) => b.course_name)),
-        batch_name: unique(allBatches.map((b) => b.batch_name)),
         mentor_name: unique(allMentors.map((m) => (m.name || "").trim())),
       });
     });
@@ -268,7 +266,6 @@ export default function MentorPerformancePage() {
 
             <div className="flex flex-wrap items-end gap-3.5">
               <FilterSelect label="Course" value={draft.course_name} options={filterOptions.course_name} onChange={(v) => handleDraftChange("course_name", v)} />
-              <FilterSelect label="Batch" value={draft.batch_name} options={filterOptions.batch_name} onChange={(v) => handleDraftChange("batch_name", v)} />
               <FilterSelect label="Mentor" value={draft.mentor_name} options={filterOptions.mentor_name} onChange={(v) => handleDraftChange("mentor_name", v)} />
               <FilterSelect label="Performance" value={draft.classification} options={CLASSIFICATIONS} onChange={(v) => handleDraftChange("classification", v)} />
               <FilterSelect label="Risk" value={draft.risk} options={RISK_LEVELS} onChange={(v) => handleDraftChange("risk", v)} />
@@ -343,7 +340,6 @@ export default function MentorPerformancePage() {
                 embedded
                 filters={{
                   course_name: filters.course_name,
-                  batch_name: filters.batch_name,
                   date_from: filters.date_from,
                   date_to: filters.date_to,
                 }}

@@ -277,7 +277,7 @@ def compute_nps_insights(records):
     automated_insights_table = _automated_insights_table(overall, rating_breakdown, score_distribution)
 
     recommendations = _recommendations(
-        overall, by_mentor, by_course, by_batch, concern_keywords, rating_breakdown
+        overall, by_mentor, by_course, [], concern_keywords, rating_breakdown  # courses only — no batch recommendations
     )
 
     return {

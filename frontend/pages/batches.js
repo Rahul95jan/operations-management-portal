@@ -467,7 +467,7 @@ export default function Batches() {
       const data = await res.json();
       setBatches(data);
     } catch (err) {
-      showToast("Failed to load batches. Please refresh and try again.");
+      showToast("Failed to load courses. Please refresh and try again.");
     } finally {
       setLoadingBatches(false);
     }
@@ -598,7 +598,6 @@ export default function Batches() {
 
   const validate = () => {
     const errors = {};
-    if (!form.batch_name.trim()) errors.batch_name = "Batch name is required.";
     if (!form.course_name.trim()) errors.course_name = "Course name is required.";
     if (form.strength && (isNaN(Number(form.strength)) || Number(form.strength) < 0)) {
       errors.strength = "Strength must be a non-negative number.";
@@ -614,17 +613,19 @@ export default function Batches() {
       const res = await fetch(`${API}/batches`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, strength: Number(form.strength) || 0, status: "Active" }),
+        // Courses are what the portal shows; the underlying record's batch_name
+        // (which sessions/resources link by) is set to the course name.
+        body: JSON.stringify({ ...form, batch_name: form.course_name.trim(), course_name: form.course_name.trim(), strength: Number(form.strength) || 0, status: "Active" }),
       });
       if (!res.ok) {
-        showToast(await friendlyError(res, "Failed to create batch. Please try again."));
+        showToast(await friendlyError(res, "Failed to create course. Please try again."));
         return;
       }
-      showToast("Batch created successfully.", "success");
+      showToast("Course created successfully.", "success");
       await loadBatches();
       resetForm();
     } catch (err) {
-      showToast("Failed to create batch. Please try again.");
+      showToast("Failed to create course. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -638,17 +639,18 @@ export default function Batches() {
       const res = await fetch(`${API}/batches/${editId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, strength: Number(form.strength) || 0, status: current?.status || "Active" }),
+        // Keep the record's existing batch_name so sessions linked to it stay linked.
+        body: JSON.stringify({ ...form, batch_name: current?.batch_name || form.course_name.trim(), course_name: form.course_name.trim(), strength: Number(form.strength) || 0, status: current?.status || "Active" }),
       });
       if (!res.ok) {
-        showToast(await friendlyError(res, "Failed to update batch. Please try again."));
+        showToast(await friendlyError(res, "Failed to update course. Please try again."));
         return;
       }
-      showToast("Batch updated successfully.", "success");
+      showToast("Course updated successfully.", "success");
       await loadBatches();
       resetForm();
     } catch (err) {
-      showToast("Failed to update batch. Please try again.");
+      showToast("Failed to update course. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -672,8 +674,8 @@ export default function Batches() {
     if (nextStatus === "Inactive") {
       const stat = statsFor(batch);
       const warn = stat.sessionCount > 0
-        ? `${batch.batch_name || "This batch"} has ${stat.sessionCount} session${stat.sessionCount === 1 ? "" : "s"} on record. Deactivating keeps all history intact. Continue?`
-        : `Deactivate ${batch.batch_name || "this batch"}?`;
+        ? `${batch.course_name || batch.batch_name || "This course"} has ${stat.sessionCount} session${stat.sessionCount === 1 ? "" : "s"} on record. Deactivating keeps all history intact. Continue?`
+        : `Deactivate ${batch.course_name || batch.batch_name || "this course"}?`;
       if (!window.confirm(warn)) return;
     }
     try {
@@ -689,14 +691,14 @@ export default function Batches() {
         }),
       });
       if (!res.ok) {
-        showToast(await friendlyError(res, "Failed to update batch status."));
+        showToast(await friendlyError(res, "Failed to update course status."));
         return;
       }
-      showToast(nextStatus === "Inactive" ? "Batch deactivated successfully." : "Batch activated successfully.", "success");
+      showToast(nextStatus === "Inactive" ? "Course deactivated successfully." : "Course activated successfully.", "success");
       await loadBatches();
       if (viewBatch?.id === batch.id) setViewBatch({ ...batch, status: nextStatus });
     } catch (err) {
-      showToast("Failed to update batch status.");
+      showToast("Failed to update course status.");
     }
   };
 
@@ -704,8 +706,8 @@ export default function Batches() {
     setOpenMenuId(null);
     const stat = statsFor(batch);
     const warning = stat.sessionCount > 0
-      ? `${batch.batch_name || "This batch"} has ${stat.sessionCount} session${stat.sessionCount === 1 ? "" : "s"} on record. Deleting removes the batch permanently. Consider deactivating instead. Delete anyway?`
-      : `Delete ${batch.batch_name || "this batch"}? This cannot be undone.`;
+      ? `${batch.course_name || batch.batch_name || "This course"} has ${stat.sessionCount} session${stat.sessionCount === 1 ? "" : "s"} on record. Deleting removes the course permanently. Consider deactivating instead. Delete anyway?`
+      : `Delete ${batch.course_name || batch.batch_name || "this course"}? This cannot be undone.`;
     if (!window.confirm(warning)) return;
 
     try {
@@ -714,7 +716,7 @@ export default function Batches() {
         showToast(await friendlyError(res, "Failed to delete batch."));
         return;
       }
-      showToast("Batch deleted.", "success");
+      showToast("Course deleted.", "success");
       if (editId === batch.id) resetForm();
       if (viewBatch?.id === batch.id) setViewBatch(null);
       await loadBatches();
@@ -744,7 +746,6 @@ export default function Batches() {
     return batches.filter((batch) => {
       const matchesSearch =
         !q ||
-        normalize(batch.batch_name).includes(q) ||
         normalize(batch.course_name).includes(q) ||
         normalize(batch.mentor_name).includes(q);
       if (!matchesSearch) return false;
@@ -793,7 +794,7 @@ export default function Batches() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `batches_${new Date().toLocaleDateString("en-CA")}.xlsx`;
+      link.download = `courses_${new Date().toLocaleDateString("en-CA")}.xlsx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -842,21 +843,21 @@ export default function Batches() {
         <div className="page-hero">
           <div className="page-hero-blob" />
           <div className="page-hero-content">
-            <h1 className="page-hero-title">Batch Management</h1>
+            <h1 className="page-hero-title">Course Management</h1>
             <p className="page-hero-subtitle">
-              Create batches, assign mentors, track progress and ensure learner success.
+              Create courses, assign mentors, track progress and ensure learner success.
             </p>
           </div>
 
           <div className="page-hero-right">
             <div className="page-hero-quote">
-              “ Better Batches<br />Build Brighter Careers ”
+              “ Better Courses<br />Build Brighter Careers ”
             </div>
             <div className="page-hero-stats">
               <div className="page-hero-stat">
                 <Icon name="graduation" size={20} color="#fbbf24" />
                 <div className="page-hero-stat-value">{totalBatches}</div>
-                <div className="page-hero-stat-label">Total Batches</div>
+                <div className="page-hero-stat-label">Total Courses</div>
               </div>
               <div className="page-hero-stat">
                 <Icon name="users" size={20} color="#fbbf24" />
@@ -872,7 +873,7 @@ export default function Batches() {
           <div className="stat-card" style={{ background: "#eff6ff" }}>
             <div className="stat-card-icon" style={{ background: "#dbeafe", color: "#1d4ed8" }}><Icon name="layers" size={18} /></div>
             <div className="stat-card-value">{totalBatches}</div>
-            <div className="stat-card-label">Total Batches</div>
+            <div className="stat-card-label">Total Courses</div>
           </div>
           <div className="stat-card" style={{ background: "#f0fdf4" }}>
             <div className="stat-card-icon" style={{ background: "#dcfce7", color: "#15803d" }}><Icon name="users" size={18} /></div>
@@ -882,40 +883,30 @@ export default function Batches() {
           <div className="stat-card" style={{ background: "#f0fdf4" }}>
             <div className="stat-card-icon" style={{ background: "#dcfce7", color: "#15803d" }}><Icon name="checkCircle" size={18} /></div>
             <div className="stat-card-value">{activeBatches}</div>
-            <div className="stat-card-label">Active Batches</div>
+            <div className="stat-card-label">Active Courses</div>
           </div>
           <div className="stat-card" style={{ background: "#fffbeb" }}>
             <div className="stat-card-icon" style={{ background: "#fef3c7", color: "#b45309" }}><Icon name="clock" size={18} /></div>
             <div className="stat-card-value">{upcomingBatches}</div>
-            <div className="stat-card-label">Upcoming Batches</div>
+            <div className="stat-card-label">Upcoming Courses</div>
           </div>
           <div className="stat-card" style={{ background: "#fef2f2" }}>
             <div className="stat-card-icon" style={{ background: "#fee2e2", color: "#b91c1c" }}><Icon name="alertTriangle" size={18} /></div>
             <div className="stat-card-value">{atRiskBatches}</div>
-            <div className="stat-card-label">At Risk Batches</div>
+            <div className="stat-card-label">At Risk Courses</div>
           </div>
         </div>
 
         {/* Create / Update form — fields unchanged from the existing Batch Management flow */}
         <div className="card form-card">
           <h2 className="card-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
-            <span className="icon-badge"><Icon name="plus" size={14} color="#ffffff" /></span> {editId ? "Update Batch" : "Create New Batch"}
+            <span className="icon-badge"><Icon name="plus" size={14} color="#ffffff" /></span> {editId ? "Update Course" : "Create New Course"}
           </h2>
           <p className="hint-text" style={{ margin: "8px 0 20px", lineHeight: 1.4 }}>
-            {editId ? "Update the details for this batch." : "Add a new batch with course, mentor and strength details."}
+            {editId ? "Update the details for this course." : "Add a new course with mentor and strength details."}
           </p>
 
           <div className="form-grid">
-            <Field label="Batch Name" required error={formErrors.batch_name}>
-              <input
-                className="styled-input"
-                style={inputStyle}
-                placeholder="e.g. GenAI Batch 1"
-                value={form.batch_name}
-                onChange={(e) => setForm({ ...form, batch_name: e.target.value })}
-              />
-            </Field>
-
             <Field label="Course Name" required error={formErrors.course_name}>
               <input
                 className="styled-input"
@@ -957,13 +948,13 @@ export default function Batches() {
             {editId ? (
               <>
                 <button className="btn btn-primary" onClick={updateBatch} disabled={saving}>
-                  {saving ? "Saving…" : "Update Batch"}
+                  {saving ? "Saving…" : "Update Course"}
                 </button>
                 <button className="btn btn-ghost" onClick={resetForm}>Cancel</button>
               </>
             ) : (
               <button className="btn btn-primary" onClick={createBatch} disabled={saving}>
-                <Icon name="plus" size={14} /> {saving ? "Saving…" : "Create Batch"}
+                <Icon name="plus" size={14} /> {saving ? "Saving…" : "Create Course"}
               </button>
             )}
           </div>
@@ -974,14 +965,14 @@ export default function Batches() {
           <h2 className="card-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
             <Icon name="filter" size={16} color="#b45309" /> Filters &amp; Search
           </h2>
-          <p className="hint-text" style={{ margin: "8px 0 20px", lineHeight: 1.4 }}>Find and manage batches easily.</p>
+          <p className="hint-text" style={{ margin: "8px 0 20px", lineHeight: 1.4 }}>Find and manage courses easily.</p>
 
           <div className="filters-row">
             <div className="search-wrap">
               <span className="search-icon"><Icon name="search" size={13} color="#94a3b8" /></span>
               <input
                 type="text"
-                placeholder="Search batches, courses, or mentors..."
+                placeholder="Search courses or mentors..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="styled-input"
@@ -1049,9 +1040,9 @@ export default function Batches() {
           <div className="list-toolbar">
             <div>
               <h2 className="card-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
-                <Icon name="graduation" size={17} color="#b45309" /> Batch List
+                <Icon name="graduation" size={17} color="#b45309" /> Course List
               </h2>
-              <div className="hint-text" style={{ marginTop: "4px" }}>View, manage and track all your batches.</div>
+              <div className="hint-text" style={{ marginTop: "4px" }}>View, manage and track all your courses.</div>
             </div>
 
             <div className="list-toolbar-actions">
@@ -1070,11 +1061,11 @@ export default function Batches() {
           </div>
 
           {loadingBatches ? (
-            <div className="empty-state">Loading batches…</div>
+            <div className="empty-state">Loading courses…</div>
           ) : filteredBatches.length === 0 ? (
             <div className="empty-state">
               <div style={{ fontSize: "32px", marginBottom: "8px" }}>🎓</div>
-              {batches.length === 0 ? "No batches yet — create your first one above." : "No batches match your filters."}
+              {batches.length === 0 ? "No courses yet — create your first one above." : "No courses match your filters."}
             </div>
           ) : viewMode === "table" ? (
             <>
@@ -1082,7 +1073,6 @@ export default function Batches() {
                 <table className="styled-table">
                   <thead>
                     <tr>
-                      <th>Batch</th>
                       <th>Course</th>
                       <th>Mentor</th>
                       <th>Learners</th>
@@ -1106,12 +1096,11 @@ export default function Batches() {
                             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                               <div className="batch-icon"><Icon name="graduation" size={16} color="#b45309" /></div>
                               <div>
-                                <div className="strong">{batch.batch_name}</div>
+                                <div className="strong">{batch.course_name || batch.batch_name}</div>
                                 <div className="muted" style={{ fontSize: "12px" }}>ID #{batch.id}</div>
                               </div>
                             </div>
                           </td>
-                          <td>{batch.course_name ? <span className="tag">{batch.course_name}</span> : <span className="muted">N/A</span>}</td>
                           <td>
                             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                               <Avatar mentor={mentorByName(batch.mentor_name)} name={batch.mentor_name} />
@@ -1165,11 +1154,11 @@ export default function Batches() {
                                 style={menuPos || undefined}
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <button onClick={() => editBatch(batch)}><Icon name="edit" size={13} /> Edit Batch</button>
+                                <button onClick={() => editBatch(batch)}><Icon name="edit" size={13} /> Edit Course</button>
                                 {batch.status === "Inactive" ? (
-                                  <button onClick={() => setBatchStatus(batch, "Active")}><Icon name="power" size={13} /> Activate Batch</button>
+                                  <button onClick={() => setBatchStatus(batch, "Active")}><Icon name="power" size={13} /> Activate Course</button>
                                 ) : (
-                                  <button onClick={() => setBatchStatus(batch, "Inactive")}><Icon name="power" size={13} /> Deactivate Batch</button>
+                                  <button onClick={() => setBatchStatus(batch, "Inactive")}><Icon name="power" size={13} /> Deactivate Course</button>
                                 )}
                               </div>
                             )}
@@ -1183,7 +1172,7 @@ export default function Batches() {
 
               <div className="pagination-row">
                 <div className="pagination-info">
-                  Showing {(currentPage - 1) * ROWS_PER_PAGE + 1} to {Math.min(currentPage * ROWS_PER_PAGE, filteredBatches.length)} of {filteredBatches.length} batches
+                  Showing {(currentPage - 1) * ROWS_PER_PAGE + 1} to {Math.min(currentPage * ROWS_PER_PAGE, filteredBatches.length)} of {filteredBatches.length} courses
                 </div>
                 <div className="pagination-controls">
                   <button className="pagination-arrow-btn" disabled={currentPage === 1} onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}>‹</button>
@@ -1205,13 +1194,10 @@ export default function Batches() {
                     <div className="batch-card-header">
                       <div className="batch-icon"><Icon name="graduation" size={18} color="#b45309" /></div>
                       <div style={{ flex: 1 }}>
-                        <div className="strong">{batch.batch_name || <span className="muted">Untitled</span>}</div>
+                        <div className="strong">{batch.course_name || batch.batch_name || <span className="muted">Untitled</span>}</div>
                         <div className="muted" style={{ fontSize: "12px" }}>ID #{batch.id}</div>
                       </div>
                       <StatusBadge status={batch.status} />
-                    </div>
-                    <div style={{ margin: "10px 0" }}>
-                      {batch.course_name ? <span className="tag">{batch.course_name}</span> : <span className="muted">N/A</span>}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
                       <Avatar mentor={mentorByName(batch.mentor_name)} name={batch.mentor_name} />
@@ -1250,21 +1236,20 @@ export default function Batches() {
         <div className="drawer-overlay" onClick={() => setViewBatch(null)}>
           <div className="drawer-panel" onClick={(e) => e.stopPropagation()}>
             <div className="drawer-header">
-              <h2 className="card-title" style={{ margin: 0 }}>Batch Details</h2>
+              <h2 className="card-title" style={{ margin: 0 }}>Course Details</h2>
               <button className="btn btn-ghost" onClick={() => setViewBatch(null)}><Icon name="x" size={16} /></button>
             </div>
 
             <div className="drawer-profile">
               <div className="batch-icon" style={{ width: "56px", height: "56px" }}><Icon name="graduation" size={26} color="#b45309" /></div>
               <div className="drawer-profile-name-row">
-                <h3 style={{ margin: 0 }}>{viewBatch.batch_name || "Untitled Batch"}</h3>
+                <h3 style={{ margin: 0 }}>{viewBatch.course_name || viewBatch.batch_name || "Untitled Course"}</h3>
                 <StatusBadge status={viewBatch.status} />
               </div>
-              {viewBatch.course_name && <span className="tag">{viewBatch.course_name}</span>}
             </div>
 
             <div className="drawer-section">
-              <div className="drawer-section-title">Batch Information</div>
+              <div className="drawer-section-title">Course Information</div>
               <div className="info-grid">
                 <div className="info-chip"><div className="info-chip-label">Mentor</div><div className="info-chip-value">{viewBatch.mentor_name || "Not Assigned"}</div></div>
                 <div className="info-chip"><div className="info-chip-label">Strength</div><div className="info-chip-value">{viewBatch.strength || 0}</div></div>
@@ -1310,9 +1295,9 @@ export default function Batches() {
             </a>
 
             <div className="drawer-footer">
-              <button className="btn btn-ghost" onClick={() => { setViewBatch(null); editBatch(viewBatch); }}><Icon name="edit" size={13} /> Edit Batch</button>
+              <button className="btn btn-ghost" onClick={() => { setViewBatch(null); editBatch(viewBatch); }}><Icon name="edit" size={13} /> Edit Course</button>
               {viewBatch.status === "Inactive" ? (
-                <button className="btn btn-activate" onClick={() => setBatchStatus(viewBatch, "Active")}><Icon name="power" size={13} /> Activate Batch</button>
+                <button className="btn btn-activate" onClick={() => setBatchStatus(viewBatch, "Active")}><Icon name="power" size={13} /> Activate Course</button>
               ) : (
                 <button className="btn btn-deactivate" onClick={() => setBatchStatus(viewBatch, "Inactive")}><Icon name="power" size={13} /> Deactivate</button>
               )}

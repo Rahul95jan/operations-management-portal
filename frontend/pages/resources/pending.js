@@ -7,7 +7,9 @@ import { categoryConfig } from "../../components/resources/resourceCategories";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-const EMPTY_FILTERS = { mentor_name: "", batch_name: "" };
+const EMPTY_FILTERS = { mentor_name: "", course_name: "" };
+// Rows carry the session's course; older sessions only have a batch link.
+const rowCourse = (r) => (r.course_name || r.batch_name || "").trim();
 
 function unique(list) {
   return [...new Set(list.filter(Boolean))].sort();
@@ -42,10 +44,10 @@ export default function PendingResourcesPage() {
   useEffect(load, [filters]);
 
   const filterOptions = useMemo(() => {
-    if (!rows) return { mentor_name: [], batch_name: [] };
+    if (!rows) return { mentor_name: [], course_name: [] };
     return {
       mentor_name: unique(rows.map((r) => r.mentor_name)),
-      batch_name: unique(rows.map((r) => r.batch_name)),
+      course_name: unique(rows.map((r) => rowCourse(r))),
     };
   }, [rows]);
 
@@ -106,10 +108,10 @@ export default function PendingResourcesPage() {
               onChange={(v) => setFilters((prev) => ({ ...prev, mentor_name: v }))}
             />
             <FilterSelect
-              label="Batch"
-              value={filters.batch_name}
-              options={filterOptions.batch_name}
-              onChange={(v) => setFilters((prev) => ({ ...prev, batch_name: v }))}
+              label="Course"
+              value={filters.course_name}
+              options={filterOptions.course_name}
+              onChange={(v) => setFilters((prev) => ({ ...prev, course_name: v }))}
             />
           </div>
 
@@ -124,7 +126,7 @@ export default function PendingResourcesPage() {
                 <table className="styled-table" style={{ minWidth: "1000px" }}>
                   <thead>
                     <tr>
-                      {["Mentor", "Session", "Batch", "Category", "Resource", "Status", "Due Date", "Delay", "Reminders", "Last Reminder", "Actions"].map((h) => (
+                      {["Mentor", "Session", "Course", "Category", "Resource", "Status", "Due Date", "Delay", "Reminders", "Last Reminder", "Actions"].map((h) => (
                         <th key={h}>{h}</th>
                       ))}
                     </tr>
@@ -134,7 +136,7 @@ export default function PendingResourcesPage() {
                       <tr key={r.requirement_id} style={{ animationDelay: `${i * 0.03}s` }}>
                         <td className="strong">{r.mentor_name}</td>
                         <td>{r.session_topic}</td>
-                        <td>{r.batch_name}</td>
+                        <td>{rowCourse(r)}</td>
                         <td className="muted">{categoryConfig(r.resource_category)?.label || "—"}</td>
                         <td>{r.resource_name}</td>
                         <td>

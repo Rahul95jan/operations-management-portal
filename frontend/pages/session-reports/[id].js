@@ -403,8 +403,7 @@ export default function SessionReportDetail() {
               <Field label="Duration" value={session_info.duration ? `${session_info.duration} min` : null} />
               <Field label="Session Type" value={session_info.session_type} />
               <Field label="Status" value={session_info.status} />
-              <Field label="Course" value={session_info.course_name} />
-              <Field label="Batch" value={session_info.batch_name} />
+              <Field label="Course" value={session_info.course_name || session_info.batch_name} />
               <Field label="Mentor" value={session_info.mentor_name} />
               <Field label="Mentor Email" value={session_info.mentor_email} />
             </div>

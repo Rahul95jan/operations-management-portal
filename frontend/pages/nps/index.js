@@ -3,6 +3,7 @@ import Head from "next/head";
 import axios from "axios";
 import LearnerDetails from "../../components/nps/LearnerDetails";
 import CourseBatchMentor from "../../components/nps/CourseBatchMentor";
+import { batchForCourse, courseOptionsFromBatches } from "../../lib/courses";
 import RatingQuestion from "../../components/nps/RatingQuestion";
 import NPSScoreSelector from "../../components/nps/NPSScoreSelector";
 import BrandPanel from "../../components/nps/wizard/BrandPanel";
@@ -53,8 +54,7 @@ export default function NPSPage() {
       .finally(() => setOptionsLoading(false));
   }, []);
 
-  const batchNames = useMemo(() => unique(batches.map((b) => b.batch_name)), [batches]);
-  const courseNames = useMemo(() => unique(batches.map((b) => b.course_name)), [batches]);
+  const courseNames = useMemo(() => courseOptionsFromBatches(batches), [batches]);
   const mentorNames = useMemo(() => unique(mentors.map((m) => m.name)), [mentors]);
 
   const handleChange = (e) => {
@@ -64,14 +64,16 @@ export default function NPSPage() {
     }));
   };
 
-  const handleBatchChange = (e) => {
-    const batchName = e.target.value;
-    const matched = batches.find((b) => b.batch_name === batchName);
+  // Picking a course links the response to that course's record (batch_name)
+  // and pre-fills its mentor.
+  const handleCourseChange = (e) => {
+    const courseName = e.target.value;
+    const matched = batchForCourse(courseName, batches);
 
     setFormData((prev) => ({
       ...prev,
-      batch_name: batchName,
-      course_name: matched?.course_name || prev.course_name,
+      course_name: courseName,
+      batch_name: matched?.batch_name || courseName,
       mentor_name: matched?.mentor_name || prev.mentor_name,
     }));
   };
@@ -93,8 +95,8 @@ export default function NPSPage() {
     if (!formData.learner_name.trim()) return "Please enter your full name.";
     if (!/^\S+@\S+\.\S+$/.test(formData.learner_email)) return "Please enter a valid email address.";
     if (!/^[6-9]\d{9}$/.test(formData.mobile_number)) return "Please enter a valid 10-digit mobile number.";
-    if (!formData.batch_name || !formData.course_name || !formData.mentor_name) {
-      return "Please select your batch, course, and mentor.";
+    if (!formData.course_name || !formData.mentor_name) {
+      return "Please select your course and mentor.";
     }
     if (!formData.instructor_rating) return "Please rate the instructor.";
     if (!formData.doubt_rating) return "Please rate doubt resolution.";
@@ -183,12 +185,11 @@ export default function NPSPage() {
                     </section>
 
                     <section className="section">
-                      <div className="eyebrow">Batch &amp; Mentor</div>
+                      <div className="eyebrow">Course &amp; Mentor</div>
                       <CourseBatchMentor
                         formData={formData}
                         handleChange={handleChange}
-                        handleBatchChange={handleBatchChange}
-                        batchNames={batchNames}
+                        handleCourseChange={handleCourseChange}
                         courseNames={courseNames}
                         mentorNames={mentorNames}
                         loading={optionsLoading}

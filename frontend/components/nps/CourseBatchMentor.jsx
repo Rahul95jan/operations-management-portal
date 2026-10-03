@@ -1,5 +1,5 @@
+// Learners pick their Course (batch_name is linked automatically) and mentor.
 const selectFields = [
-  { name: "batch_name", label: "Batch Name", icon: "🎓", key: "batch" },
   { name: "course_name", label: "Course Name", icon: "📚", key: "course" },
   { name: "mentor_name", label: "Mentor Name", icon: "🧑‍🏫", key: "mentor" },
 ];
@@ -7,14 +7,12 @@ const selectFields = [
 export default function CourseBatchMentor({
   formData,
   handleChange,
-  handleBatchChange,
-  batchNames,
+  handleCourseChange,
   courseNames,
   mentorNames,
   loading,
 }) {
   const optionsFor = (key) => {
-    if (key === "batch") return batchNames;
     if (key === "course") return courseNames;
     return mentorNames;
   };
@@ -33,7 +31,7 @@ export default function CourseBatchMentor({
               <select
                 name={field.name}
                 value={formData[field.name]}
-                onChange={field.key === "batch" ? handleBatchChange : handleChange}
+                onChange={field.key === "course" ? handleCourseChange : handleChange}
                 className="select"
                 required
                 disabled={loading}
@@ -53,9 +51,9 @@ export default function CourseBatchMentor({
         );
       })}
 
-      {!loading && batchNames.length === 0 && (
+      {!loading && courseNames.length === 0 && (
         <p className="hint">
-          No batches found yet — ask your program admin to add batches before sharing this form.
+          No courses found yet — ask your program admin to add courses before sharing this form.
         </p>
       )}
 

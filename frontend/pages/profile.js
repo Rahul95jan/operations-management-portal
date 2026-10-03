@@ -40,7 +40,7 @@ const PORTAL_MODULES = [
     items: [
       { icon: Calendar, label: "Sessions" },
       { icon: Users, label: "Mentors" },
-      { icon: GraduationCap, label: "Batches" },
+      { icon: GraduationCap, label: "Courses" },
       { icon: BarChart3, label: "Analytics" },
       { icon: Receipt, label: "Invoice Generator" },
     ],

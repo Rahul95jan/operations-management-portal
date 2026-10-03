@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
+import { buildCourseByBatch, courseOf, courseOptionsFromBatches, sameCourse } from "../lib/courses";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -18,11 +19,7 @@ import { Line, Bar, Doughnut } from "react-chartjs-2";
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler);
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const EMPTY_FILTERS = { date_from: "", date_to: "", batch_name: "", mentor_name: "", session_type: "" };
-
-function unique(list) {
-  return [...new Set(list.filter(Boolean))].sort();
-}
+const EMPTY_FILTERS = { date_from: "", date_to: "", course_name: "", mentor_name: "", session_type: "" };
 
 function round1(n) {
   return Math.round((n + Number.EPSILON) * 10) / 10;
@@ -148,7 +145,10 @@ export default function Analytics() {
     });
   }, []);
 
-  const batchOptions = useMemo(() => unique(batches.map((b) => b.batch_name)), [batches]);
+  // Everything is presented by course; sessions/NPS link to batch records,
+  // so map those to their course.
+  const courseByBatch = useMemo(() => buildCourseByBatch(batches), [batches]);
+  const courseOptions = useMemo(() => courseOptionsFromBatches(batches), [batches]);
   // Only mentors registered in Mentor Management are shown. Sessions and
   // feedback are matched to them by normalized name so casing/spacing
   // differences in those records don't hide a mentor's data.
@@ -183,22 +183,22 @@ export default function Analytics() {
     return sessions.filter((s) => {
       if (filters.date_from && s.session_date && s.session_date < filters.date_from) return false;
       if (filters.date_to && s.session_date && s.session_date > filters.date_to) return false;
-      if (filters.batch_name && s.batch_name !== filters.batch_name) return false;
+      if (filters.course_name && !sameCourse(courseOf(s, courseByBatch), filters.course_name)) return false;
       if (filters.mentor_name && normName(s.mentor_name) !== normName(filters.mentor_name)) return false;
       if (filters.session_type && (s.session_type || "Live Session") !== filters.session_type) return false;
       return true;
     });
-  }, [sessions, filters]);
+  }, [sessions, filters, courseByBatch]);
 
   const filteredNps = useMemo(() => {
     return npsResponses.filter((n) => {
-      if (filters.batch_name && n.batch_name !== filters.batch_name) return false;
+      if (filters.course_name && !sameCourse(courseOf(n, courseByBatch), filters.course_name)) return false;
       if (filters.mentor_name && normName(n.mentor_name) !== normName(filters.mentor_name)) return false;
       if (filters.date_from && n.created_at && n.created_at.slice(0, 10) < filters.date_from) return false;
       if (filters.date_to && n.created_at && n.created_at.slice(0, 10) > filters.date_to) return false;
       return true;
     });
-  }, [npsResponses, filters]);
+  }, [npsResponses, filters, courseByBatch]);
 
   // ================= Executive / Session metrics =================
   const nowMs = Date.now();
@@ -225,8 +225,8 @@ export default function Analytics() {
 
   const totalMentors = mentors.length;
   const activeMentors = mentors.filter((m) => m.status !== "Inactive").length;
-  const totalBatches = batches.length;
-  const activeBatches = batches.filter((b) => b.status !== "Inactive").length;
+  const totalBatches = courseOptions.length;
+  const activeBatches = courseOptionsFromBatches(batches.filter((b) => b.status !== "Inactive")).length;
 
   // ================= Mentor Analytics (real, from sessions + nps) =================
   const mentorStats = useMemo(() => {
@@ -271,12 +271,14 @@ export default function Analytics() {
   const mentorAvgAttendance = avg(mentorStats.map((m) => m.attendance).filter((v) => v !== null));
   const mentorAvgSLA = avg(mentorStats.map((m) => m.sla).filter((v) => v !== null));
 
-  // ================= Batch Analytics (reuses the Batches page's real health methodology) =================
+  // ================= Course Analytics (same health methodology as the Courses page) =================
+  // Grouped by course: records that share a course count as one course.
   const batchStats = useMemo(() => {
-    return batches
-      .filter((b) => !filters.batch_name || b.batch_name === filters.batch_name)
-      .map((b) => {
-        const bSessions = b.batch_name ? filteredSessions.filter((s) => s.batch_name === b.batch_name) : [];
+    return courseOptions
+      .filter((course) => !filters.course_name || sameCourse(course, filters.course_name))
+      .map((course) => {
+        const records = batches.filter((b) => sameCourse(b.course_name || b.batch_name, course));
+        const bSessions = filteredSessions.filter((s) => sameCourse(courseOf(s, courseByBatch), course));
         const withReg = bSessions.filter((s) => Number(s.registered_students) > 0);
         const attendance = avg(withReg.map((s) => Number(s.attendance_percentage) || 0));
         const completionSessions = withReg.filter((s) => s.assignment_given);
@@ -284,23 +286,24 @@ export default function Analytics() {
           ? avg(completionSessions.map((s) => (Number(s.assignment_completed) || 0) / Number(s.registered_students) * 100))
           : null;
         const health = withReg.length === 0 ? "Not Enough Data" : attendance >= 75 ? "Healthy" : "At Risk";
-        const npsForBatch = filteredNps.filter((n) => n.batch_name === b.batch_name);
-        const rating = avg(npsForBatch.map((n) => (n.instructor_rating + n.doubt_rating + n.website_rating) / 3));
+        const npsForCourse = filteredNps.filter((n) => sameCourse(courseOf(n, courseByBatch), course));
+        const rating = avg(npsForCourse.map((n) => (n.instructor_rating + n.doubt_rating + n.website_rating) / 3));
         const completedCount = bSessions.filter((s) => s.status === "Completed").length;
         const allDone = bSessions.length > 0 && bSessions.every((s) => s.status !== "Scheduled");
+        const anyActive = records.some((b) => b.status !== "Inactive");
         return {
-          batch_name: b.batch_name || "Untitled",
-          mentor_name: b.mentor_name || "Not Assigned",
+          name: course,
+          mentor_name: [...new Set(records.map((b) => b.mentor_name).filter(Boolean))].join(", ") || "Not Assigned",
           sessions: bSessions.length,
           completedCount,
           attendance,
           rating,
           completion,
           health,
-          status: allDone ? "Completed" : b.status === "Inactive" ? "Inactive" : "Active",
+          status: allDone ? "Completed" : anyActive ? "Active" : "Inactive",
         };
       });
-  }, [batches, filteredSessions, filteredNps, filters.batch_name]);
+  }, [batches, courseOptions, courseByBatch, filteredSessions, filteredNps, filters.course_name]);
 
   const completedBatches = batchStats.filter((b) => b.status === "Completed").length;
   const batchTotalSessions = batchStats.reduce((sum, b) => sum + b.sessions, 0);
@@ -402,7 +405,7 @@ export default function Analytics() {
     const params = new URLSearchParams();
     if (filters.date_from) params.set("date_from", filters.date_from);
     if (filters.date_to) params.set("date_to", filters.date_to);
-    if (filters.batch_name) params.set("batch_name", filters.batch_name);
+    if (filters.course_name) params.set("course_name", filters.course_name);
     if (filters.mentor_name) params.set("mentor_name", filters.mentor_name);
     if (filters.session_type) params.set("session_type", filters.session_type);
     const qs = params.toString();
@@ -439,7 +442,7 @@ export default function Analytics() {
           <div className="top-header">
             <div>
               <h1 className="page-title"><span className="page-title-icon">📊</span> Analytics</h1>
-              <p className="page-subtitle">Insights for better decisions. Track sessions, mentors and batches performance.</p>
+              <p className="page-subtitle">Insights for better decisions. Track sessions, mentors and courses performance.</p>
             </div>
             <a href={exportUrl} target="_blank" rel="noreferrer" className="btn-export-report">⬇ Export Report</a>
           </div>
@@ -465,9 +468,9 @@ export default function Analytics() {
                 onChange={(e) => setDraftDates({ ...draftDates, date_to: e.target.value })}
               />
             </div>
-            <select className="filter-input" value={filters.batch_name} onChange={(e) => setFilters({ ...filters, batch_name: e.target.value })}>
-              <option value="">All Batches</option>
-              {batchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+            <select className="filter-input" value={filters.course_name} onChange={(e) => setFilters({ ...filters, course_name: e.target.value })}>
+              <option value="">All Courses</option>
+              {courseOptions.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <select className="filter-input" value={filters.mentor_name} onChange={(e) => setFilters({ ...filters, mentor_name: e.target.value })}>
               <option value="">All Mentors</option>
@@ -497,8 +500,8 @@ export default function Analytics() {
                 <KPI icon="📆" value={upcomingSessions} label="Upcoming" color="#0891b2" bg="#e0f2fe" />
                 <KPI icon="🧑‍🏫" value={totalMentors} label="Total Mentors" color="#ea580c" bg="#ffedd5" />
                 <KPI icon="🟢" value={activeMentors} label="Active Mentors" color="#16a34a" bg="#dcfce7" />
-                <KPI icon="🎓" value={totalBatches} label="Total Batches" color="#7c3aed" bg="#ede9fe" />
-                <KPI icon="📦" value={activeBatches} label="Active Batches" color="#16a34a" bg="#dcfce7" />
+                <KPI icon="🎓" value={totalBatches} label="Total Courses" color="#7c3aed" bg="#ede9fe" />
+                <KPI icon="📦" value={activeBatches} label="Active Courses" color="#16a34a" bg="#dcfce7" />
                 <KPI icon="⏱️" value={`${round1(totalSessionMinutes / 60)}h`} label="Total Session Hours" color="#0891b2" bg="#e0f2fe" />
                 <KPI icon="👥" value={fmtPct(avgAttendance)} label="Avg Attendance" color="#7c3aed" bg="#ede9fe" />
                 <KPI icon="⭐" value={avgSessionRating === null ? "—" : `${fmt1(avgSessionRating)} / 5`} label="Avg Session Rating" color="#eab308" bg="#fef9c3" />
@@ -600,11 +603,11 @@ export default function Analytics() {
             </Card>
           </Section>
 
-          {/* Batch Analytics */}
-          <Section icon="🎓" title="Batch Analytics" subtitle="Monitor batch health and overall performance">
+          {/* Course Analytics */}
+          <Section icon="🎓" title="Course Analytics" subtitle="Monitor course health and overall performance">
             <div className="kpi-grid kpi-grid-4">
-              <KPI icon="🎓" value={totalBatches} label="Total Batches" color="#7c3aed" bg="#ede9fe" />
-              <KPI icon="📦" value={activeBatches} label="Active Batches" color="#16a34a" bg="#dcfce7" />
+              <KPI icon="🎓" value={totalBatches} label="Total Courses" color="#7c3aed" bg="#ede9fe" />
+              <KPI icon="📦" value={activeBatches} label="Active Courses" color="#16a34a" bg="#dcfce7" />
               <KPI icon="✅" value={completedBatches} label="Completed" color="#16a34a" bg="#dcfce7" />
               <KPI icon="📅" value={batchTotalSessions} label="Total Sessions" color="#2563eb" bg="#dbeafe" />
               <KPI icon="👥" value={fmtPct(batchAvgAttendance)} label="Avg Attendance" color="#7c3aed" bg="#ede9fe" />
@@ -613,7 +616,7 @@ export default function Analytics() {
             </div>
 
             <div className="grid-3col">
-              <Card title="Batch Health Status">
+              <Card title="Course Health Status">
                 {batchStats.length === 0 ? <EmptyChart /> : (
                   <Doughnut
                     data={{
@@ -624,17 +627,17 @@ export default function Analytics() {
                     height={140}
                   />
                 )}
-                <div className="donut-center-label">{batchStats.length}<br /><span>Batches</span></div>
+                <div className="donut-center-label">{batchStats.length}<br /><span>Courses</span></div>
               </Card>
 
-              <Card title="Batch Performance" style={{ gridColumn: "span 2" }}>
+              <Card title="Course Performance" style={{ gridColumn: "span 2" }}>
                 <div className="table-wrap">
                   <table className="styled-table">
-                    <thead><tr><th>Batch</th><th>Sessions</th><th>Attendance</th><th>Rating</th><th>Completion</th><th>Status</th></tr></thead>
+                    <thead><tr><th>Course</th><th>Sessions</th><th>Attendance</th><th>Rating</th><th>Completion</th><th>Status</th></tr></thead>
                     <tbody>
                       {batchStats.map((b) => (
-                        <tr key={b.batch_name}>
-                          <td className="strong">{b.batch_name}</td>
+                        <tr key={b.name}>
+                          <td className="strong">{b.name}</td>
                           <td>{b.completedCount} / {b.sessions}</td>
                           <td>{fmtPct(b.attendance)}</td>
                           <td>{fmt1(b.rating)}</td>
@@ -644,16 +647,16 @@ export default function Analytics() {
                       ))}
                     </tbody>
                   </table>
-                  {batchStats.length === 0 && <div className="empty-state">No batch data matches these filters.</div>}
+                  {batchStats.length === 0 && <div className="empty-state">No course data matches these filters.</div>}
                 </div>
               </Card>
             </div>
 
-            <Card title="Attendance by Batch">
+            <Card title="Attendance by Course">
               {batchStats.filter((b) => b.attendance !== null).length === 0 ? <EmptyChart /> : (
                 <Bar
                   data={{
-                    labels: batchStats.filter((b) => b.attendance !== null).map((b) => b.batch_name),
+                    labels: batchStats.filter((b) => b.attendance !== null).map((b) => b.name),
                     datasets: [{ label: "Attendance %", data: batchStats.filter((b) => b.attendance !== null).map((b) => fmt1(b.attendance)), backgroundColor: "#3b82f6" }],
                   }}
                   options={{ plugins: { legend: { display: false } }, scales: { y: { min: 0, max: 100 } } }}
@@ -708,12 +711,12 @@ export default function Analytics() {
             <Card title="Recent Negative Feedback">
               <div className="table-wrap">
                 <table className="styled-table">
-                  <thead><tr><th>Date</th><th>Batch</th><th>Mentor</th><th>Rating</th><th>Feedback</th></tr></thead>
+                  <thead><tr><th>Date</th><th>Course</th><th>Mentor</th><th>Rating</th><th>Feedback</th></tr></thead>
                   <tbody>
                     {recentNegativeFeedback.map((n) => (
                       <tr key={n.id}>
                         <td>{(n.created_at || "").slice(0, 10)}</td>
-                        <td>{n.batch_name}</td>
+                        <td>{courseOf(n, courseByBatch)}</td>
                         <td>{n.mentor_name}</td>
                         <td>{fmt1(n.overall)}</td>
                         <td>{n.feedback}</td>

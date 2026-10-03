@@ -30,6 +30,7 @@ import {
   Settings2,
   ArrowRight,
 } from "lucide-react";
+import { buildCourseByBatch, courseOf } from "../lib/courses";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Tooltip, Legend, Filler);
 
@@ -249,6 +250,7 @@ export default function Home() {
   const sessionsTrend = todaysSessions.length - yesterdaysSessionsCount;
 
   const activeMentors = mentors.filter((m) => m.status !== "Inactive").length;
+  const courseByBatch = useMemo(() => buildCourseByBatch(batches), [batches]);
   const activeBatches = useMemo(() => batches.filter((b) => b.status !== "Inactive" && b.status !== "Completed"), [batches]);
   const totalLearners = useMemo(
     () => activeBatches.reduce((sum, b) => sum + (Number(b.active_learners) > 0 ? Number(b.active_learners) : Number(b.strength) || 0), 0),
@@ -327,7 +329,7 @@ export default function Home() {
       if (r.received_at) events.push({ icon: Layers, color: "#4ade80", text: `Resource uploaded — ${r.session_topic}`, who: r.mentor_name, ts: r.received_at.slice(0, 10) });
     });
     nps.forEach((n) => {
-      if (n.created_at) events.push({ icon: UserCheck, color: "#f0c75e", text: `Feedback received — ${n.batch_name}`, who: n.mentor_name, ts: n.created_at.slice(0, 10) });
+      if (n.created_at) events.push({ icon: UserCheck, color: "#f0c75e", text: `Feedback received — ${courseOf(n, courseByBatch)}`, who: n.mentor_name, ts: n.created_at.slice(0, 10) });
     });
     return events.sort((a, b) => (b.ts || "").localeCompare(a.ts || "")).slice(0, 5);
   }, [invoices, resourceTracking, nps]);
@@ -336,13 +338,13 @@ export default function Home() {
   const attentionItems = useMemo(() => {
     const items = [];
     resourceTracking.filter((r) => r.missing_count > 0).forEach((r) => {
-      items.push({ text: `${r.missing_count} resource${r.missing_count === 1 ? "" : "s"} pending — ${r.session_topic || r.batch_name}`, when: r.session_date });
+      items.push({ text: `${r.missing_count} resource${r.missing_count === 1 ? "" : "s"} pending — ${r.session_topic || courseOf(r, courseByBatch)}`, when: r.session_date });
     });
     sessions.filter((s) => s.status === "Completed" && !(Number(s.attended_students) > 0)).forEach((s) => {
-      items.push({ text: `Attendance not recorded — ${s.topic || s.batch_name}`, when: s.session_date });
+      items.push({ text: `Attendance not recorded — ${s.topic || courseOf(s, courseByBatch)}`, when: s.session_date });
     });
     sessions.filter((s) => s.status === "Completed" && Number(s.attended_students) > 0 && Number(s.attendance_percentage) > 0 && Number(s.attendance_percentage) < 60).forEach((s) => {
-      items.push({ text: `Low attendance (${Math.round(s.attendance_percentage)}%) — ${s.batch_name || s.topic}`, when: s.session_date });
+      items.push({ text: `Low attendance (${Math.round(s.attendance_percentage)}%) — ${courseOf(s, courseByBatch) || s.topic}`, when: s.session_date });
     });
     return items.sort((a, b) => (b.when || "").localeCompare(a.when || "")).slice(0, 5);
   }, [resourceTracking, sessions]);
@@ -353,7 +355,7 @@ export default function Home() {
   const quickActions = [
     { icon: Plus, label: "Create Session", href: "/sessions", accent: "#60a5fa" },
     { icon: UserPlus, label: "Add Mentor", href: "/mentors", accent: "#4ade80" },
-    { icon: Settings2, label: "Manage Batches", href: "/batches", accent: "#a78bfa" },
+    { icon: Settings2, label: "Manage Courses", href: "/batches", accent: "#a78bfa" },
     { icon: Receipt, label: "Generate Invoice", href: "/invoice-generator", accent: "#f0c75e" },
   ];
 
@@ -390,17 +392,17 @@ export default function Home() {
           {/* KPI row */}
           <div className="kpi-row">
             <KPICard icon={Video} accent="#60a5fa" value={liveSessionsCount} label="Live Sessions" sub="Ongoing now" />
-            <KPICard icon={Users} accent="#4ade80" value={totalLearners} label="Total Learners" sub="Across all batches" />
+            <KPICard icon={Users} accent="#4ade80" value={totalLearners} label="Total Learners" sub="Across all courses" />
             <KPICard
               icon={UserCheck} accent="#f0c75e" value={activeMentors} label="Active Mentors"
               trend={sessionsTrend === 0 ? null : { dir: sessionsTrend > 0 ? "up" : "down", text: `${Math.abs(sessionsTrend)} sessions vs yesterday` }}
             />
-            <KPICard icon={Layers} accent="#a78bfa" value={activeBatches.length} label="Active Batches" sub="Ongoing" />
+            <KPICard icon={Layers} accent="#a78bfa" value={activeBatches.length} label="Active Courses" sub="Ongoing" />
             <KPICard icon={FileWarning} accent="#fb923c" value={pendingResourceSessions} label="Pending Resources" sub="Need attention" />
             <KPICard icon={Receipt} accent="#f87171" value={pendingInvoices} label="Pending Invoices" sub="To be generated" />
           </div>
 
-          {/* Row 2: Session Trend | Batch Health | Today's Sessions */}
+          {/* Row 2: Session Trend | Course Health | Today's Sessions */}
           <div className="grid-3a">
             <div className="card">
               <div className="card-header">
@@ -428,12 +430,12 @@ export default function Home() {
             <div className="card">
               <div className="card-header">
                 <div>
-                  <div className="card-title">Batch Health Status</div>
-                  <div className="card-sub">Overall performance of active batches</div>
+                  <div className="card-title">Course Health Status</div>
+                  <div className="card-sub">Overall performance of active courses</div>
                 </div>
               </div>
               {batches.length === 0 ? (
-                <div className="empty-state">No batches yet.</div>
+                <div className="empty-state">No courses yet.</div>
               ) : (
                 <div className="donut-row">
                   <div style={{ position: "relative", width: "130px", flexShrink: 0 }}>
@@ -441,7 +443,7 @@ export default function Home() {
                       data={{ labels: Object.keys(batchHealth), datasets: [{ data: Object.values(batchHealth), backgroundColor: ["#4ade80", "#f0c75e", "#f87171"], borderWidth: 0 }] }}
                       options={{ plugins: { legend: { display: false } }, cutout: "72%" }}
                     />
-                    <div className="donut-center-label">{batches.length}<br /><span>Total Batches</span></div>
+                    <div className="donut-center-label">{batches.length}<br /><span>Total Courses</span></div>
                   </div>
                   <div className="donut-legend">
                     <div><span className="legend-dot" style={{ background: "#4ade80" }} /> Healthy <b>{batchHealth.Healthy}</b></div>

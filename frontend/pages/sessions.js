@@ -259,7 +259,8 @@ function Field({ label, children }) {
 const EMPTY_FORM = {
   topic: "",
   mentor_name: "",
-  batch_name: "",
+  course_name: "",
+  batch_name: "", // internal link to the course's record; resolved by the backend when empty
   session_date: "",
   session_time: "",
   status: "Scheduled",
@@ -385,7 +386,7 @@ export default function Sessions() {
   const [toast, setToast] = useState(null);
 
   const [activeTab, setActiveTab] = useState("All");
-  const [filters, setFilters] = useState({ date: "", mentor: "", batch: "", type: "", status: "" });
+  const [filters, setFilters] = useState({ date: "", mentor: "", course: "", type: "", status: "" });
   const [viewMode, setViewMode] = useState("list");
 
   const [viewSession, setViewSession] = useState(null);
@@ -438,6 +439,24 @@ export default function Sessions() {
       // Non-fatal — the mentor dropdown just stays empty.
     }
   };
+
+  // The portal works in courses. Sessions still carry a batch_name link, so
+  // map it to its course for display / filtering when course_name is empty.
+  const courseByBatch = useMemo(() => {
+    const map = {};
+    batches.forEach((b) => { if (b.batch_name) map[b.batch_name.trim().toLowerCase()] = b.course_name || b.batch_name; });
+    return map;
+  }, [batches]);
+  const courseOf = (session) =>
+    session?.course_name || courseByBatch[(session?.batch_name || "").trim().toLowerCase()] || session?.batch_name || "";
+  const courseOptions = useMemo(() => {
+    const seen = new Map();
+    batches.forEach((b) => {
+      const name = (b.course_name || b.batch_name || "").trim();
+      if (name && !seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
+    });
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }, [batches]);
 
   const loadBatches = async () => {
     try {
@@ -600,6 +619,7 @@ export default function Sessions() {
     setForm({
       topic: session.topic,
       mentor_name: session.mentor_name,
+      course_name: courseOf(session),
       batch_name: session.batch_name,
       session_date: session.session_date,
       session_time: session.session_time,
@@ -620,6 +640,7 @@ export default function Sessions() {
     setForm({
       topic: session.topic,
       mentor_name: session.mentor_name,
+      course_name: courseOf(session),
       batch_name: session.batch_name,
       session_date: "",
       session_time: "",
@@ -650,6 +671,7 @@ export default function Sessions() {
         topic: rescheduleSession.topic,
         mentor_name: rescheduleSession.mentor_name,
         batch_name: rescheduleSession.batch_name,
+        course_name: courseOf(rescheduleSession),
         status: rescheduleSession.status,
         session_type: rescheduleSession.session_type || "Live Session",
         webinar_id: rescheduleSession.webinar_id || "",
@@ -700,7 +722,7 @@ export default function Sessions() {
   // ---- Schedule conflict warnings (feature 4 & 5) — client-side only,
   // warns but never blocks Create/Update. ----
   const scheduleConflicts = useMemo(() => {
-    if (!form.session_date || !form.session_time) return { mentor: false, batch: false };
+    if (!form.session_date || !form.session_time) return { mentor: false, course: false };
 
     const clashesWith = (session) =>
       session.id !== editId &&
@@ -710,9 +732,9 @@ export default function Sessions() {
 
     return {
       mentor: !!form.mentor_name && sessions.some((s) => clashesWith(s) && s.mentor_name === form.mentor_name),
-      batch: !!form.batch_name && sessions.some((s) => clashesWith(s) && s.batch_name === form.batch_name),
+      course: !!form.course_name && sessions.some((s) => clashesWith(s) && courseOf(s).toLowerCase() === form.course_name.toLowerCase()),
     };
-  }, [form.mentor_name, form.batch_name, form.session_date, form.session_time, sessions, editId]);
+  }, [form.mentor_name, form.course_name, form.session_date, form.session_time, sessions, editId, courseByBatch]);
 
   // ---- Tab counts ----
   const tabCounts = useMemo(() => {
@@ -733,12 +755,12 @@ export default function Sessions() {
         !q ||
         (session.topic || "").toLowerCase().includes(q) ||
         (session.mentor_name || "").toLowerCase().includes(q) ||
-        (session.batch_name || "").toLowerCase().includes(q);
+        courseOf(session).toLowerCase().includes(q);
       if (!matchesSearch) return false;
 
       if (filters.date && session.session_date !== filters.date) return false;
       if (filters.mentor && session.mentor_name !== filters.mentor) return false;
-      if (filters.batch && session.batch_name !== filters.batch) return false;
+      if (filters.course && courseOf(session).toLowerCase() !== filters.course.toLowerCase()) return false;
       if (filters.type && (session.session_type || "Live Session") !== filters.type) return false;
       if (filters.status && session.status !== filters.status) return false;
 
@@ -747,12 +769,12 @@ export default function Sessions() {
   }, [sessions, activeTab, search, filters]);
 
   const clearFilters = () => {
-    setFilters({ date: "", mentor: "", batch: "", type: "", status: "" });
+    setFilters({ date: "", mentor: "", course: "", type: "", status: "" });
     setSearch("");
   };
 
   const hasActiveFilters =
-    search || filters.date || filters.mentor || filters.batch || filters.type || filters.status;
+    search || filters.date || filters.mentor || filters.course || filters.type || filters.status;
 
   // ---- Pagination over the filtered list (list view only; calendar always shows the full month) ----
   useEffect(() => {
@@ -887,7 +909,7 @@ export default function Sessions() {
           <div className="page-hero-content">
             <h1 className="page-hero-title">Session Management</h1>
             <p className="page-hero-subtitle">
-              Schedule new sessions, track status, and keep mentors &amp; batches in sync.
+              Schedule new sessions, track status, and keep mentors &amp; courses in sync.
             </p>
           </div>
         </div>
@@ -948,7 +970,7 @@ export default function Sessions() {
               {editId ? "✏️ Update Session" : "➕ Create Session"}
             </h2>
             <div className="tip-box">
-              💡 <b>Tip:</b> You can also check mentor &amp; batch conflicts while scheduling.
+              💡 <b>Tip:</b> You can also check mentor &amp; course conflicts while scheduling.
             </div>
           </div>
 
@@ -973,6 +995,7 @@ export default function Sessions() {
                   setForm({
                     ...form,
                     session_type: nextType,
+                    course_name: nextType === "Webinar Session" ? "" : form.course_name,
                     batch_name: nextType === "Webinar Session" ? "" : form.batch_name,
                   });
                 }}
@@ -1112,17 +1135,21 @@ export default function Sessions() {
             </Field>
 
             {form.session_type !== "Webinar Session" && (
-              <Field label="Batch">
+              <Field label="Course">
                 <select
                   className="styled-input"
                   style={inputStyle}
-                  value={form.batch_name}
-                  onChange={(e) => setForm({ ...form, batch_name: e.target.value })}
+                  value={form.course_name}
+                  onChange={(e) => setForm({ ...form, course_name: e.target.value, batch_name: "" })}
                 >
-                  <option value="">Select Batch</option>
-                  {batches.map((batch) => (
-                    <option key={batch.id} value={batch.batch_name}>
-                      {batch.batch_name}
+                  <option value="">Select Course</option>
+                  {/* keep a session's current course selectable even if it's no longer listed */}
+                  {form.course_name && !courseOptions.some((c) => c.toLowerCase() === form.course_name.toLowerCase()) && (
+                    <option value={form.course_name}>{form.course_name}</option>
+                  )}
+                  {courseOptions.map((course) => (
+                    <option key={course} value={course}>
+                      {course}
                     </option>
                   ))}
                 </select>
@@ -1163,13 +1190,13 @@ export default function Sessions() {
             </Field>
           </div>
 
-          {(scheduleConflicts.mentor || scheduleConflicts.batch) && (
+          {(scheduleConflicts.mentor || scheduleConflicts.course) && (
             <div className="conflict-warning">
               {scheduleConflicts.mentor && (
                 <div>⚠ <b>Schedule Conflict</b> — this mentor already has a session scheduled at this time.</div>
               )}
-              {scheduleConflicts.batch && (
-                <div>⚠ <b>Batch Schedule Conflict</b> — this batch already has a session scheduled at this time.</div>
+              {scheduleConflicts.course && (
+                <div>⚠ <b>Course Schedule Conflict</b> — this course already has a session scheduled at this time.</div>
               )}
             </div>
           )}
@@ -1254,12 +1281,12 @@ export default function Sessions() {
               <select
                 className="styled-input filter-select select-with-icon"
                 style={inputStyle}
-                value={filters.batch}
-                onChange={(e) => setFilters({ ...filters, batch: e.target.value })}
+                value={filters.course}
+                onChange={(e) => setFilters({ ...filters, course: e.target.value })}
               >
-                <option value="">All Batches</option>
-                {batches.map((b) => (
-                  <option key={b.id} value={b.batch_name}>{b.batch_name}</option>
+                <option value="">All Courses</option>
+                {courseOptions.map((c) => (
+                  <option key={c} value={c}>{c}</option>
                 ))}
               </select>
             </div>
@@ -1355,7 +1382,7 @@ export default function Sessions() {
                       <th>Webinar ID</th>
                       <th>Zoom ID</th>
                       <th>Mentor</th>
-                      <th>Batch</th>
+                      <th>Course</th>
                       <th>Date</th>
                       <th>Time</th>
                       <th>Status</th>
@@ -1379,7 +1406,7 @@ export default function Sessions() {
                             <span>{session.mentor_name || "Not Assigned"}</span>
                           </div>
                         </td>
-                        <td>{session.batch_name || "Not Assigned"}</td>
+                        <td>{courseOf(session) || "Not Assigned"}</td>
                         <td className="muted">{session.session_date || "—"}</td>
                         <td className="muted">{session.session_time || "—"}</td>
                         <td>
@@ -1598,7 +1625,7 @@ export default function Sessions() {
                     <div className="calendar-day-row-main">
                       <div className="calendar-day-row-topic">{s.topic}</div>
                       <div className="calendar-day-row-meta">
-                        {s.mentor_name || "Not Assigned"} · {s.batch_name || "No batch"}
+                        {s.mentor_name || "Not Assigned"} · {courseOf(s) || "No course"}
                       </div>
                     </div>
                     <SessionTypeBadge type={s.session_type} />
@@ -1631,7 +1658,7 @@ export default function Sessions() {
               <div className="info-chip"><div className="info-chip-label">Topic</div><div className="info-chip-value">{viewSession.topic || "—"}</div></div>
               <div className="info-chip"><div className="info-chip-label">Session Type</div><div className="info-chip-value"><SessionTypeBadge type={viewSession.session_type} /></div></div>
               <div className="info-chip"><div className="info-chip-label">Mentor</div><div className="info-chip-value">{viewSession.mentor_name || "Not Assigned"}</div></div>
-              <div className="info-chip"><div className="info-chip-label">Batch</div><div className="info-chip-value">{viewSession.batch_name || "Not Assigned"}</div></div>
+              <div className="info-chip"><div className="info-chip-label">Course</div><div className="info-chip-value">{courseOf(viewSession) || "Not Assigned"}</div></div>
               <div className="info-chip"><div className="info-chip-label">Date</div><div className="info-chip-value">{viewSession.session_date || "—"}</div></div>
               <div className="info-chip"><div className="info-chip-label">Time</div><div className="info-chip-value">{viewSession.session_time || "—"}</div></div>
               <div className="info-chip"><div className="info-chip-label">Status</div><div className="info-chip-value"><StatusBadge status={viewSession.status} /></div></div>

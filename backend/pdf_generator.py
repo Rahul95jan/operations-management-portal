@@ -34,7 +34,7 @@ except Exception:
 # Invoice PDF
 # =====================================================
 
-def generate_invoice(invoice):
+def generate_invoice(invoice, course_name=None):
     if not os.path.exists("pdfs"):
         os.makedirs("pdfs")
 
@@ -162,7 +162,7 @@ def generate_invoice(invoice):
     details_cell = [
         Paragraph("INVOICE DETAILS", section_label_style),
         kv("Date Issued", datetime.now().strftime("%d %b %Y"), value_size=10.5),
-        kv("Batch", invoice.batch_name, value_size=10.5),
+        kv("Course", course_name or invoice.batch_name, value_size=10.5),
         kv("Billing Month", invoice.month, value_size=10.5),
         status_badge,
     ]
@@ -200,7 +200,7 @@ def generate_invoice(invoice):
             Paragraph("AMOUNT", ParagraphStyle("ItemHeaderR", parent=item_header_style, alignment=2)),
         ],
         [
-            Paragraph(f"Mentoring Services — {invoice.batch_name} ({invoice.month})", item_desc_style),
+            Paragraph(f"Mentoring Services — {course_name or invoice.batch_name} ({invoice.month})", item_desc_style),
             Paragraph(str(invoice.total_sessions), item_value_style),
             Paragraph(f"{invoice.total_hours} hrs", item_value_style),
             Paragraph(f"₹ {rate_val:,.2f}", item_value_style),
@@ -758,7 +758,6 @@ def generate_nps_report(records, insights):
 
     breakdown_section("Mentors Needing Attention (lowest NPS first)", insights["by_mentor"])
     breakdown_section("Courses Needing Attention (lowest NPS first)", insights["by_course"])
-    breakdown_section("Batches Needing Attention (lowest NPS first)", insights["by_batch"])
 
     # ---- Learner concerns ----
     elements.append(Paragraph("<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;Recurring Themes in Learner Feedback", section_style))
@@ -807,7 +806,7 @@ def generate_nps_report(records, insights):
     # ---- Full response table ----
     elements.append(Paragraph("<font color='#f59e0b'>&#9679;</font>&nbsp;&nbsp;All Responses", section_style))
 
-    table_header = ["Learner", "Course", "Batch", "Mentor", "Score", "Segment"]
+    table_header = ["Learner", "Course", "Mentor", "Score", "Segment"]
     table_rows = [table_header]
     segments = []
 
@@ -822,12 +821,12 @@ def generate_nps_report(records, insights):
 
         segments.append(segment)
         table_rows.append([
-            r.learner_name, r.course_name, r.batch_name, r.mentor_name, str(score), segment,
+            r.learner_name, r.course_name, r.mentor_name, str(score), segment,
         ])
 
     response_table = Table(
         table_rows,
-        colWidths=[38 * mm, 34 * mm, 30 * mm, 34 * mm, 16 * mm, 26 * mm],
+        colWidths=[44 * mm, 48 * mm, 44 * mm, 16 * mm, 26 * mm],
         repeatRows=1,
     )
 
@@ -1018,8 +1017,8 @@ def generate_analytics_report(data, filter_desc="All data"):
         ("Upcoming", es["upcoming_sessions"]),
         ("Total Mentors", es["total_mentors"]),
         ("Active Mentors", es["active_mentors"]),
-        ("Total Batches", es["total_batches"]),
-        ("Active Batches", es["active_batches"]),
+        ("Total Courses", es["total_batches"]),
+        ("Active Courses", es["active_batches"]),
         ("Total Session Hours", f"{es['total_session_hours']}h"),
         ("Avg Attendance", pct(es["avg_attendance"])),
         ("Avg Session Rating", f"{num1(es['avg_session_rating'])} / 5" if es["avg_session_rating"] is not None else "—"),
@@ -1071,10 +1070,10 @@ def generate_analytics_report(data, filter_desc="All data"):
     elements.append(Spacer(1, 10))
 
     bs = data["batch_summary"]
-    elements.append(bullet("Batch Analytics"))
+    elements.append(bullet("Course Analytics"))
     elements.append(kpi_grid([
-        ("Total Batches", bs["total_batches"]),
-        ("Active Batches", bs["active_batches"]),
+        ("Total Courses", bs["total_batches"]),
+        ("Active Courses", bs["active_batches"]),
         ("Completed", bs["completed_batches"]),
         ("Total Sessions", bs["total_sessions"]),
         ("Avg Attendance", pct(bs["avg_attendance"])),
@@ -1087,10 +1086,10 @@ def generate_analytics_report(data, filter_desc="All data"):
         for b in data["batch_stats"]
     ]
     elements.append(data_table(
-        ["Batch", "Sessions", "Attendance", "Rating", "Completion", "Health"],
+        ["Course", "Sessions", "Attendance", "Rating", "Completion", "Health"],
         bp_rows,
         [42 * mm, 26 * mm, 26 * mm, 20 * mm, 26 * mm, 32 * mm],
-        "No batches match this scope.",
+        "No courses match this scope.",
     ))
     elements.append(Spacer(1, 10))
 
@@ -1112,7 +1111,7 @@ def generate_analytics_report(data, filter_desc="All data"):
             for n in data["recent_negative_feedback"]
         ]
         elements.append(data_table(
-            ["Date", "Batch", "Mentor", "Rating", "Feedback"],
+            ["Date", "Course", "Mentor", "Rating", "Feedback"],
             nf_rows,
             [22 * mm, 26 * mm, 24 * mm, 16 * mm, 78 * mm],
             "No recent negative feedback.",
@@ -1519,7 +1518,7 @@ def generate_mentor_performance_report(data, filter_desc="All data"):
 
     elements.append(bullet("Productivity &amp; Cost Efficiency (INR)"))
     elements.append(small_table(
-        ["Mentor", "Sessions Delivered", "Learners Served", "Batches Served", "Cost / Session", "Cost / Hour", "Total Cost"],
+        ["Mentor", "Sessions Delivered", "Learners Served", "Courses Served", "Cost / Session", "Cost / Hour", "Total Cost"],
         [[m["mentor_name"], dim_val(m, "productivity", "sessions_delivered"), dim_val(m, "productivity", "learners_served"),
           dim_val(m, "productivity", "batches_served"), dim_val(m, "cost_efficiency", "cost_per_session"),
           dim_val(m, "cost_efficiency", "cost_per_hour"), dim_val(m, "cost_efficiency", "total_cost")] for m in scorecard if m.get("productivity") or m.get("cost_efficiency")],
@@ -1858,7 +1857,7 @@ def generate_session_reports_list_pdf(rows, summary, filter_desc="All data"):
         [
             f"#{r['id']} {r['topic'] or ''}"[:40],
             r["mentor_name"] or "—",
-            r["batch_name"] or "—",
+            r.get("course_name") or r["batch_name"] or "—",
             r["session_date"] or "—",
             r["status"] or "—",
             str(r["learner_count"]),
@@ -1868,7 +1867,7 @@ def generate_session_reports_list_pdf(rows, summary, filter_desc="All data"):
         for r in rows
     ]
     elements.append(data_table(
-        ["Session", "Mentor", "Batch", "Date", "Status", "Learners", "Att %", "Rating"],
+        ["Session", "Mentor", "Course", "Date", "Status", "Learners", "Att %", "Rating"],
         body_rows,
         [42 * mm, 30 * mm, 28 * mm, 22 * mm, 20 * mm, 18 * mm, 14 * mm, 16 * mm],
         "No session reports match this scope.",
@@ -2003,7 +2002,7 @@ def generate_session_report_pdf(bundle, attendance, feedback):
     # Session information
     elements.append(bullet("Session Information"))
     elements.append(field("Date / Time", f"{info['session_date'] or '—'} {info['session_time'] or ''}"))
-    elements.append(field("Course / Batch", f"{info['course_name'] or '—'} / {info['batch_name'] or '—'}"))
+    elements.append(field("Course", info["course_name"] or info["batch_name"] or "—"))
     elements.append(field("Mentor", f"{info['mentor_name'] or '—'} ({info['mentor_email'] or '—'})"))
     elements.append(field("Session Type", info["session_type"]))
     elements.append(field("Status", info["status"]))
@@ -2065,7 +2064,7 @@ def generate_session_report_pdf(bundle, attendance, feedback):
     # Feedback
     elements.append(bullet("Feedback"))
     elements.append(field("Average Rating", feedback["average_rating"]))
-    elements.append(field("NPS (approx., matched by batch + mentor)", feedback["nps"]["average_score"]))
+    elements.append(field("NPS (approx., matched by course + mentor)", feedback["nps"]["average_score"]))
     elements.append(field("Mentor Feedback", feedback["mentor_feedback"]))
     elements.append(field("Operations Feedback", feedback["operations_feedback"]))
     elements.append(Spacer(1, 8))

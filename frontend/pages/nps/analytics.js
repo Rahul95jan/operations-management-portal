@@ -268,21 +268,20 @@ export default function NPSAnalyticsPage() {
 
   const [allResponses, setAllResponses] = useState(null);
   const [loadError, setLoadError] = useState(false);
-  const [filterOptions, setFilterOptions] = useState({ course_name: [], batch_name: [], mentor_name: [] });
+  const [filterOptions, setFilterOptions] = useState({ course_name: [], mentor_name: [] });
 
-  const [filters, setFilters] = useState({ course_name: "", batch_name: "", mentor_name: "" });
+  const [filters, setFilters] = useState({ course_name: "", mentor_name: "" });
   const [dateRangeDays, setDateRangeDays] = useState(90);
   const [segment, setSegment] = useState("");
   // Filter bar edits are staged here and only take effect on "Apply Filter".
-  const [draft, setDraft] = useState({ course_name: "", batch_name: "", mentor_name: "", dateRangeDays: 90, segment: "" });
+  const [draft, setDraft] = useState({ course_name: "", mentor_name: "", dateRangeDays: 90, segment: "" });
   const draftDirty =
     draft.course_name !== filters.course_name ||
-    draft.batch_name !== filters.batch_name ||
     draft.mentor_name !== filters.mentor_name ||
     draft.dateRangeDays !== dateRangeDays ||
     draft.segment !== segment;
   const applyFilters = () => {
-    setFilters({ course_name: draft.course_name, batch_name: draft.batch_name, mentor_name: draft.mentor_name });
+    setFilters({ course_name: draft.course_name, mentor_name: draft.mentor_name });
     setDateRangeDays(draft.dateRangeDays);
     setSegment(draft.segment);
   };
@@ -301,7 +300,7 @@ export default function NPSAnalyticsPage() {
   }, []);
 
   useEffect(() => {
-    // Mentor names come from Mentor Management; course/batch from the responses.
+    // Mentor names come from Mentor Management; courses from the responses.
     Promise.all([
       fetch(`${API}/nps`).then((r) => r.json()).catch(() => []),
       fetch(`${API}/mentors`).then((r) => r.json()).catch(() => []),
@@ -310,7 +309,6 @@ export default function NPSAnalyticsPage() {
       const mentorList = Array.isArray(mentorData) ? mentorData : [];
       setFilterOptions({
         course_name: unique(all.map((r) => r.course_name)),
-        batch_name: unique(all.map((r) => r.batch_name)),
         mentor_name: unique(mentorList.map((m) => (m.name || "").trim())),
       });
     });
@@ -328,13 +326,13 @@ export default function NPSAnalyticsPage() {
   useEffect(loadResponses, [filters]);
 
   const resetFilters = () => {
-    setFilters({ course_name: "", batch_name: "", mentor_name: "" });
+    setFilters({ course_name: "", mentor_name: "" });
     setDateRangeDays(90);
     setSegment("");
-    setDraft({ course_name: "", batch_name: "", mentor_name: "", dateRangeDays: 90, segment: "" });
+    setDraft({ course_name: "", mentor_name: "", dateRangeDays: 90, segment: "" });
   };
 
-  // ---- Date-range + segment filtering (client-side; course/batch/mentor already server-filtered) ----
+  // ---- Date-range + segment filtering (client-side; course/mentor already server-filtered) ----
   const { current, previous } = useMemo(() => {
     if (!allResponses) return { current: [], previous: [] };
     const now2 = Date.now();
@@ -458,7 +456,6 @@ export default function NPSAnalyticsPage() {
     return buildGroupTable(known, "mentor_name");
   }, [current, filterOptions.mentor_name]);
   const byCourse = useMemo(() => buildGroupTable(current, "course_name"), [current]);
-  const byBatch = useMemo(() => buildGroupTable(current, "batch_name"), [current]);
 
   const themes = useMemo(() => extractThemes(withFeedback), [withFeedback]);
 
@@ -480,7 +477,6 @@ export default function NPSAnalyticsPage() {
       pct: stats.total ? Math.round((detractors.length / stats.total) * 100) : 0,
       topTheme: detractorThemes[0]?.name || "—",
       topCourse: modeOf(detractors, "course_name"),
-      topBatch: modeOf(detractors, "batch_name"),
       topMentor: modeOf(detractors, "mentor_name"),
     };
   }, [detractors, stats.total]);
@@ -522,15 +518,15 @@ export default function NPSAnalyticsPage() {
         note: "Review learner feedback and session-level comments for this mentor.",
       });
     });
-    byBatch.filter((b) => b.responses >= HEALTH_THRESHOLDS.minSampleForSegment && b.detractorPct >= HEALTH_THRESHOLDS.highDetractorPct).forEach((b) => {
+    byCourse.filter((c) => c.responses >= HEALTH_THRESHOLDS.minSampleForSegment && c.detractorPct >= HEALTH_THRESHOLDS.highDetractorPct).forEach((c) => {
       items.push({
         issue: "High Detractor Concentration",
-        evidence: `${b.detractorPct}% detractors across ${b.responses} responses.`,
-        affected: `Batch: ${b.name}`,
-        metric: `NPS ${b.nps}`,
+        evidence: `${c.detractorPct}% detractors across ${c.responses} responses.`,
+        affected: `Course: ${c.name}`,
+        metric: `NPS ${c.nps}`,
         trendDir: "down",
         priority: "Medium",
-        note: "Check pacing, cohort size, or scheduling for this batch.",
+        note: "Check pacing, cohort size, or scheduling for this course.",
       });
     });
     if (trends.nps && trends.nps.dir === "down" && Math.abs(parseInt(trends.nps.text, 10)) >= HEALTH_THRESHOLDS.npsDeclineDelta) {
@@ -556,7 +552,7 @@ export default function NPSAnalyticsPage() {
       });
     }
     return items;
-  }, [driverAnalysis, byMentor, byBatch, trends, prevStats, stats]);
+  }, [driverAnalysis, byMentor, byCourse, trends, prevStats, stats]);
 
   const filteredResponses = useMemo(() => {
     const term = responseSearch.trim().toLowerCase();
@@ -564,7 +560,6 @@ export default function NPSAnalyticsPage() {
     return current.filter((r) =>
       (r.learner_name || "").toLowerCase().includes(term) ||
       (r.course_name || "").toLowerCase().includes(term) ||
-      (r.batch_name || "").toLowerCase().includes(term) ||
       (r.mentor_name || "").toLowerCase().includes(term) ||
       (r.feedback || "").toLowerCase().includes(term)
     );
@@ -638,13 +633,6 @@ export default function NPSAnalyticsPage() {
                 <select value={draft.course_name} onChange={(e) => setDraft((p) => ({ ...p, course_name: e.target.value }))}>
                   <option value="">All Courses</option>
                   {filterOptions.course_name.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div className="filter-field">
-                <label>Batch</label>
-                <select value={draft.batch_name} onChange={(e) => setDraft((p) => ({ ...p, batch_name: e.target.value }))}>
-                  <option value="">All Batches</option>
-                  {filterOptions.batch_name.map((b) => <option key={b} value={b}>{b}</option>)}
                 </select>
               </div>
               <div className="filter-field">
@@ -891,8 +879,8 @@ export default function NPSAnalyticsPage() {
                 </div>
               </div>
 
-              {/* By Mentor / Course / Batch */}
-              <div className="grid-3a">
+              {/* By Mentor / Course */}
+              <div className="grid-2a">
                 <div className="card">
                   <SectionTitle icon={Users} color="#2563eb" title="Mentor NPS Performance" sub="Compare NPS and experience scores across mentors" />
                   <div className="table-wrap" style={{ marginTop: "10px" }}>
@@ -935,25 +923,6 @@ export default function NPSAnalyticsPage() {
                   </div>
                 </div>
 
-                <div className="card">
-                  <SectionTitle icon={ListFilter} color="#f59e0b" title="Batch Health" sub="Response count and NPS by batch" />
-                  <div className="table-wrap" style={{ marginTop: "10px" }}>
-                    <table className="mini-table">
-                      <thead><tr><th>Batch</th><th>NPS</th><th>Resp.</th><th>Detr. %</th><th>Trend</th></tr></thead>
-                      <tbody>
-                        {byBatch.slice(0, 6).map((b) => (
-                          <tr key={b.name}>
-                            <td className="strong">{b.name}</td>
-                            <td style={{ color: b.nps >= 0 ? "#16a34a" : "#dc2626", fontWeight: 700 }}>{b.nps > 0 ? "+" : ""}{b.nps}</td>
-                            <td className="muted">{b.responses}</td>
-                            <td className="muted">{b.detractorPct}%</td>
-                            <td>{b.nps >= 0 ? <span style={{ color: "#16a34a" }}>↑</span> : <span style={{ color: "#dc2626" }}>↓</span>}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
               </div>
 
               {/* NPS Trend vs Experience + Feedback Sentiment/Themes */}
@@ -1062,7 +1031,6 @@ export default function NPSAnalyticsPage() {
                   </div>
                   <div className="intel-stats-row">
                     <div><span>Most Affected Course</span><b>{detractorIntel.topCourse}</b></div>
-                    <div><span>Most Affected Batch</span><b>{detractorIntel.topBatch}</b></div>
                     <div><span>Most Affected Mentor</span><b>{detractorIntel.topMentor}</b></div>
                   </div>
                   {detractors.length === 0 ? (
@@ -1070,14 +1038,13 @@ export default function NPSAnalyticsPage() {
                   ) : (
                     <div className="table-wrap" style={{ marginTop: "8px" }}>
                       <table className="mini-table">
-                        <thead><tr><th>NPS</th><th>Mentor</th><th>Course</th><th>Batch</th><th>Feedback</th></tr></thead>
+                        <thead><tr><th>NPS</th><th>Mentor</th><th>Course</th><th>Feedback</th></tr></thead>
                         <tbody>
                           {detractors.slice(0, 5).map((r) => (
                             <tr key={r.id}>
                               <td style={{ color: "#dc2626", fontWeight: 800 }}>{r.nps_score}</td>
                               <td className="muted">{r.mentor_name}</td>
                               <td className="muted">{r.course_name}</td>
-                              <td className="muted">{r.batch_name}</td>
                               <td className="muted" style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.feedback || "—"}</td>
                             </tr>
                           ))}
@@ -1114,13 +1081,13 @@ export default function NPSAnalyticsPage() {
                   <SectionTitle icon={Search} color="#2563eb" title="Response Explorer" sub="View detailed learner responses with filters" />
                   <div className="search-wrap">
                     <Search size={14} strokeWidth={2.3} className="search-icon" />
-                    <input className="search-input" placeholder="Search by learner, course, batch, mentor…" value={responseSearch} onChange={(e) => setResponseSearch(e.target.value)} />
+                    <input className="search-input" placeholder="Search by learner, course, mentor…" value={responseSearch} onChange={(e) => setResponseSearch(e.target.value)} />
                   </div>
                 </div>
                 <div className="table-wrap">
                   <table className="styled-table">
                     <thead>
-                      <tr><th>Date</th><th>Learner</th><th>Course</th><th>Batch</th><th>Mentor</th><th>Teaching</th><th>Doubt</th><th>LMS</th><th>NPS</th><th>Segment</th><th>Feedback</th></tr>
+                      <tr><th>Date</th><th>Learner</th><th>Course</th><th>Mentor</th><th>Teaching</th><th>Doubt</th><th>LMS</th><th>NPS</th><th>Segment</th><th>Feedback</th></tr>
                     </thead>
                     <tbody>
                       {pagedResponses.map((r) => {
@@ -1130,7 +1097,6 @@ export default function NPSAnalyticsPage() {
                             <td className="muted">{r.created_at ? new Date(r.created_at).toLocaleDateString() : "—"}</td>
                             <td className="strong">{r.learner_name}</td>
                             <td className="muted">{r.course_name}</td>
-                            <td className="muted">{r.batch_name}</td>
                             <td className="muted">{r.mentor_name}</td>
                             <td className="muted">{r.instructor_rating}</td>
                             <td className="muted">{r.doubt_rating}</td>

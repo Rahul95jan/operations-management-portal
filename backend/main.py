@@ -737,16 +737,47 @@ def _notify_mentor_session_change(db, session_obj, action, old_date=None, old_ti
     return {"notified": sent, "reason": "sent" if sent else "email_unavailable", "mentor_email": mentor_email}
 
 
+def _course_lookup(db):
+    """Returns a function mapping a batch_name to its course name (the portal
+    shows courses; many records only link to a course record by batch_name)."""
+    mapping = {
+        b.batch_name.strip().lower(): (b.course_name or b.batch_name).strip()
+        for b in db.query(Batch).all() if b.batch_name
+    }
+    return lambda batch_name: mapping.get((batch_name or "").strip().lower()) or (batch_name or "")
+
+
+def _resolve_course_batch(db, course_name=None, batch_name=None):
+    """The portal now picks a Course; sessions still carry batch_name because
+    attendance, resources, invoices etc. link by it. Fill whichever is missing
+    from the matching Batch record (case/space-insensitive)."""
+    course_name = (course_name or "").strip() or None
+    batch_name = (batch_name or "").strip() or None
+    if course_name and not batch_name:
+        matches = db.query(Batch).filter(func.lower(func.trim(Batch.course_name)) == course_name.lower()).all()
+        # Prefer a record named after the course (how the Courses page creates them), then an active one.
+        preferred = next((b for b in matches if (b.batch_name or "").strip().lower() == course_name.lower()), None)
+        preferred = preferred or next((b for b in matches if b.status != "Inactive"), None) or (matches[0] if matches else None)
+        batch_name = preferred.batch_name if preferred else course_name
+    elif batch_name and not course_name:
+        batch = db.query(Batch).filter(func.lower(func.trim(Batch.batch_name)) == batch_name.lower()).first()
+        course_name = batch.course_name if batch else None
+    return course_name, batch_name
+
+
 @app.post("/sessions")
 def create_session(session: SessionCreate, _user: User = Depends(require_permission("sessions", "create"))):
 
     db = SessionLocal()
 
+    course_name, batch_name = _resolve_course_batch(db, session.course_name, session.batch_name)
+
     new_session = SessionModel(
         project_name=session.topic,
         topic=session.topic,
         mentor_name=session.mentor_name,
-        batch_name=session.batch_name,
+        batch_name=batch_name,
+        course_name=course_name,
         session_date=session.session_date,
         session_time=session.session_time,
         status=session.status,
@@ -811,7 +842,9 @@ def update_session(session_id: int, session: SessionCreate, _user: User = Depend
 
     existing_session.topic = session.topic
     existing_session.mentor_name = session.mentor_name
-    existing_session.batch_name = session.batch_name
+    course_name, batch_name = _resolve_course_batch(db, session.course_name, session.batch_name)
+    existing_session.batch_name = batch_name
+    existing_session.course_name = course_name
     existing_session.session_date = session.session_date
     existing_session.session_time = session.session_time
     existing_session.status = session.status
@@ -1245,6 +1278,7 @@ def export_sessions():
     db = SessionLocal()
     try:
         sessions = db.query(SessionModel).order_by(SessionModel.id).all()
+        course_for = _course_lookup(db)
     finally:
         db.close()
 
@@ -1255,7 +1289,7 @@ def export_sessions():
             "ID": session.id,
             "Topic": session.topic,
             "Mentor": session.mentor_name,
-            "Batch": session.batch_name,
+            "Course": session.course_name or course_for(session.batch_name),
             "Date": session.session_date,
             "Time": session.session_time,
             "Status": session.status
@@ -1263,7 +1297,7 @@ def export_sessions():
 
     return _xlsx_response(
         data,
-        ["ID", "Topic", "Mentor", "Batch", "Date", "Time", "Status"],
+        ["ID", "Topic", "Mentor", "Course", "Date", "Time", "Status"],
         "sessions.xlsx",
     )
 
@@ -1281,8 +1315,7 @@ def export_batches():
     for batch in batches:
         data.append({
             "ID": batch.id,
-            "Batch": batch.batch_name,
-            "Course": batch.course_name,
+            "Course": batch.course_name or batch.batch_name,
             "Strength": batch.strength,
             "Mentor": batch.mentor_name,
             "Status": batch.status
@@ -1290,8 +1323,8 @@ def export_batches():
 
     return _xlsx_response(
         data,
-        ["ID", "Batch", "Course", "Strength", "Mentor", "Status"],
-        "batches.xlsx",
+        ["ID", "Course", "Strength", "Mentor", "Status"],
+        "courses.xlsx",
     )
 
 @app.get("/export-invoices")
@@ -1300,6 +1333,7 @@ def export_invoices():
     db = SessionLocal()
 
     invoices = db.query(Invoice).all()
+    course_for = _course_lookup(db)
 
     data = []
 
@@ -1307,7 +1341,7 @@ def export_invoices():
         data.append({
             "Invoice No.": inv.invoice_number,
             "Mentor": inv.mentor_name,
-            "Batch": inv.batch_name,
+            "Course": course_for(inv.batch_name),
             "Month": inv.month,
             "Sessions": inv.total_sessions,
             "Hours": inv.total_hours,
@@ -1674,7 +1708,7 @@ def create_invoice(invoice: InvoiceCreate):
         # Generate PDF
         # =====================================
 
-        pdf_path = generate_invoice(new_invoice)
+        pdf_path = generate_invoice(new_invoice, course_name=_course_lookup(db)(new_invoice.batch_name))
 
         print("PDF Generated:", pdf_path)
 
@@ -1722,7 +1756,7 @@ def download_invoice(invoice_id: int):
         print("=" * 60)
 
         # Always regenerate PDF using latest database values
-        pdf_path = generate_invoice(invoice)
+        pdf_path = generate_invoice(invoice, course_name=_course_lookup(db)(invoice.batch_name))
 
         return FileResponse(
             path=pdf_path,
@@ -2245,7 +2279,6 @@ def export_nps(course_name: str = None, batch_name: str = None, mentor_name: str
                 "Email": r.learner_email,
                 "Mobile": r.mobile_number,
                 "Course": r.course_name,
-                "Batch": r.batch_name,
                 "Mentor": r.mentor_name,
                 "Instructor Rating": r.instructor_rating,
                 "Doubt Rating": r.doubt_rating,
@@ -3079,7 +3112,7 @@ def placement_status():
     ]
 
 
-def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=None, date_from=None, date_to=None):
+def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=None, date_from=None, date_to=None, course_name=None):
     """Builds every section of the Analytics Dashboard as plain dicts/lists,
     applying the same batch/mentor/session-type/date filters as the frontend.
     Mirrors the client-side aggregation in pages/analytics.js exactly, so the
@@ -3119,6 +3152,24 @@ def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=N
         session_query = session_query.filter(SessionModel.session_date <= date_to)
     sessions = session_query.all()
 
+    # The portal reports by Course: sessions/NPS link to a course record by
+    # batch_name, so resolve each record's course for filtering and grouping.
+    all_course_records = db.query(Batch).all()
+    course_of_batch = {
+        b.batch_name.strip().lower(): (b.course_name or b.batch_name).strip()
+        for b in all_course_records if b.batch_name
+    }
+
+    def course_of(rec):
+        own = (getattr(rec, "course_name", None) or "").strip()
+        return own or course_of_batch.get((rec.batch_name or "").strip().lower()) or (rec.batch_name or "").strip()
+
+    def same_course(a, b):
+        return (a or "").strip().lower() == (b or "").strip().lower()
+
+    if course_name:
+        sessions = [s for s in sessions if same_course(course_of(s), course_name)]
+
     total_sessions = len(sessions)
     completed_sessions = len([s for s in sessions if s.status == "Completed"])
     cancelled_sessions = len([s for s in sessions if s.status == "Cancelled"])
@@ -3152,9 +3203,10 @@ def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=N
     total_mentors = len(mentors)
     active_mentors = len([m for m in mentors if m.status != "Inactive"])
 
-    batches = db.query(Batch).all()
-    total_batches = len(batches)
-    active_batches = len([b for b in batches if b.status != "Inactive"])
+    batches = all_course_records
+    course_names = sorted({(b.course_name or b.batch_name).strip() for b in batches if (b.course_name or b.batch_name)}, key=str.lower)
+    total_batches = len(course_names)
+    active_batches = len({(b.course_name or b.batch_name).strip().lower() for b in batches if b.status != "Inactive" and (b.course_name or b.batch_name)})
 
     # ---- NPS feedback (filtered by batch/mentor/date, matching the UI) ----
     nps_query = db.query(NPSFeedback)
@@ -3163,6 +3215,8 @@ def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=N
     if mentor_name:
         nps_query = nps_query.filter(NPSFeedback.mentor_name == mentor_name)
     nps_all = nps_query.all()
+    if course_name:
+        nps_all = [n for n in nps_all if same_course(course_of(n), course_name)]
     if date_from:
         nps_all = [n for n in nps_all if not n.created_at or n.created_at.strftime("%Y-%m-%d") >= date_from]
     if date_to:
@@ -3196,31 +3250,35 @@ def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=N
     mentor_avg_sla = avg([m["sla"] for m in mentor_stats])
     top_mentors_by_sessions = sorted(mentor_stats, key=lambda m: m["sessions"], reverse=True)[:5]
 
-    # ---- Batch stats ----
+    # ---- Course stats (records sharing a course count as one course) ----
     batch_stats = []
-    for b in batches:
-        if batch_name and b.batch_name != batch_name:
+    for course in course_names:
+        if course_name and not same_course(course, course_name):
             continue
-        b_sessions = [s for s in sessions if b.batch_name and s.batch_name == b.batch_name]
+        records = [b for b in batches if same_course(b.course_name or b.batch_name, course)]
+        if batch_name and not any(b.batch_name == batch_name for b in records):
+            continue
+        b_sessions = [s for s in sessions if same_course(course_of(s), course)]
         with_reg = [s for s in b_sessions if (s.registered_students or 0) > 0]
         attendance = avg([s.attendance_percentage or 0 for s in with_reg])
         completion_sessions = [s for s in with_reg if s.assignment_given]
         completion = avg([(s.assignment_completed or 0) / s.registered_students * 100 for s in completion_sessions]) if completion_sessions else None
         health = "Not Enough Data" if not with_reg else ("Healthy" if attendance >= 75 else "At Risk")
-        b_nps = [n for n in nps_all if n.batch_name == b.batch_name]
+        b_nps = [n for n in nps_all if same_course(course_of(n), course)]
         rating = avg([overall_rating(n) for n in b_nps])
         completed_count = len([s for s in b_sessions if s.status == "Completed"])
         all_done = len(b_sessions) > 0 and all(s.status != "Scheduled" for s in b_sessions)
+        any_active = any(b.status != "Inactive" for b in records)
         batch_stats.append({
-            "batch_name": b.batch_name or "Untitled",
-            "mentor_name": b.mentor_name or "Not Assigned",
+            "batch_name": course,  # course name (key kept for the PDF/Excel builders)
+            "mentor_name": ", ".join(sorted({b.mentor_name for b in records if b.mentor_name})) or "Not Assigned",
             "sessions": len(b_sessions),
             "completed_count": completed_count,
             "attendance": attendance,
             "rating": rating,
             "completion": completion,
             "health": health,
-            "status": "Completed" if all_done else ("Inactive" if b.status == "Inactive" else "Active"),
+            "status": "Completed" if all_done else ("Active" if any_active else "Inactive"),
         })
 
     completed_batches = len([b for b in batch_stats if b["status"] == "Completed"])
@@ -3246,7 +3304,7 @@ def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=N
     recent_negative_feedback = [
         {
             "date": n.created_at.strftime("%Y-%m-%d") if n.created_at else "—",
-            "batch_name": n.batch_name,
+            "batch_name": course_of(n),  # course name
             "mentor_name": n.mentor_name,
             "rating": round(overall_rating(n), 1),
             "feedback": n.feedback,
@@ -3338,10 +3396,12 @@ def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=N
     }
 
 
-def _filter_description(batch_name, mentor_name, session_type, date_from, date_to):
+def _filter_description(batch_name, mentor_name, session_type, date_from, date_to, course_name=None):
     parts = []
+    if course_name:
+        parts.append(f"Course = {course_name}")
     if batch_name:
-        parts.append(f"Batch = {batch_name}")
+        parts.append(f"Course = {batch_name}")
     if mentor_name:
         parts.append(f"Mentor = {mentor_name}")
     if session_type:
@@ -3356,6 +3416,7 @@ def _filter_description(batch_name, mentor_name, session_type, date_from, date_t
 @app.get("/export-analytics")
 def export_analytics(
     batch_name: Optional[str] = None,
+    course_name: Optional[str] = None,
     mentor_name: Optional[str] = None,
     session_type: Optional[str] = None,
     date_from: Optional[str] = None,
@@ -3364,7 +3425,7 @@ def export_analytics(
     db = SessionLocal()
 
     try:
-        data = _gather_analytics_data(db, batch_name, mentor_name, session_type, date_from, date_to)
+        data = _gather_analytics_data(db, batch_name, mentor_name, session_type, date_from, date_to, course_name)
 
         file_name = "analytics_report.xlsx"
 
@@ -3374,10 +3435,14 @@ def export_analytics(
             pd.DataFrame(data["session_issues"]).to_excel(writer, sheet_name="Session Issues", index=False)
             pd.DataFrame([data["mentor_summary"]]).to_excel(writer, sheet_name="Mentor Analytics", index=False)
             pd.DataFrame(data["mentor_stats"]).to_excel(writer, sheet_name="Mentor Performance", index=False)
-            pd.DataFrame([data["batch_summary"]]).to_excel(writer, sheet_name="Batch Analytics", index=False)
-            pd.DataFrame(data["batch_stats"]).to_excel(writer, sheet_name="Batch Performance", index=False)
+            course_cols = {
+                "batch_name": "course", "total_batches": "total_courses",
+                "active_batches": "active_courses", "completed_batches": "completed_courses",
+            }
+            pd.DataFrame([data["batch_summary"]]).rename(columns=course_cols).to_excel(writer, sheet_name="Course Analytics", index=False)
+            pd.DataFrame(data["batch_stats"]).rename(columns=course_cols).to_excel(writer, sheet_name="Course Performance", index=False)
             pd.DataFrame([data["feedback_summary"]]).to_excel(writer, sheet_name="Session Feedback", index=False)
-            pd.DataFrame(data["recent_negative_feedback"]).to_excel(writer, sheet_name="Negative Feedback", index=False)
+            pd.DataFrame(data["recent_negative_feedback"]).rename(columns={"batch_name": "course"}).to_excel(writer, sheet_name="Negative Feedback", index=False)
             pd.DataFrame([data["attendance_summary"]]).to_excel(writer, sheet_name="Attendance Analytics", index=False)
             pd.DataFrame(data["low_attendance_sessions"]).to_excel(writer, sheet_name="Low Attendance Sessions", index=False)
 
@@ -3394,6 +3459,7 @@ def export_analytics(
 @app.get("/export-analytics-report")
 def export_analytics_report(
     batch_name: Optional[str] = None,
+    course_name: Optional[str] = None,
     mentor_name: Optional[str] = None,
     session_type: Optional[str] = None,
     date_from: Optional[str] = None,
@@ -3402,8 +3468,8 @@ def export_analytics_report(
     db = SessionLocal()
 
     try:
-        data = _gather_analytics_data(db, batch_name, mentor_name, session_type, date_from, date_to)
-        filter_desc = _filter_description(batch_name, mentor_name, session_type, date_from, date_to)
+        data = _gather_analytics_data(db, batch_name, mentor_name, session_type, date_from, date_to, course_name)
+        filter_desc = _filter_description(batch_name, mentor_name, session_type, date_from, date_to, course_name)
 
         pdf_path = generate_analytics_report(data, filter_desc)
 
@@ -4935,7 +5001,7 @@ def list_resources(
 
 
 @app.get("/resources/pending")
-def get_pending_resources(mentor_name: str = None, batch_name: str = None):
+def get_pending_resources(mentor_name: str = None, batch_name: str = None, course_name: str = None):
     db = SessionLocal()
 
     try:
@@ -4945,6 +5011,9 @@ def get_pending_resources(mentor_name: str = None, batch_name: str = None):
             rows = [r for r in rows if r["mentor_name"] == mentor_name]
         if batch_name:
             rows = [r for r in rows if r["batch_name"] == batch_name]
+        if course_name:
+            wanted = course_name.strip().lower()
+            rows = [r for r in rows if (r.get("course_name") or r.get("batch_name") or "").strip().lower() == wanted]
 
         return rows
 

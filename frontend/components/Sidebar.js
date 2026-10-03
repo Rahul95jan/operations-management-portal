@@ -114,7 +114,7 @@ export default function Sidebar() {
               )}
               {hasPermission(user, "sessions") && <NavItem href="/sessions" icon={Calendar} label="Sessions" active={isActive("/sessions")} />}
               {hasPermission(user, "mentors") && <NavItem href="/mentors" icon={Users} label="Mentors" active={isActive("/mentors")} />}
-              {hasPermission(user, "batches") && <NavItem href="/batches" icon={GraduationCap} label="Batches" active={isActive("/batches")} />}
+              {hasPermission(user, "batches") && <NavItem href="/batches" icon={GraduationCap} label="Courses" active={isActive("/batches")} />}
               {hasPermission(user, "analytics") && (
                 <NavItem
                   href="/session-reports"

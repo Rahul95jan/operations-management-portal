@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
+import { buildCourseByBatch, courseOf, courseOfBatch, courseOptionsFromBatches, batchForCourse, sameCourse } from "../lib/courses";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -262,7 +263,8 @@ function Field({ label, required, children }) {
   );
 }
 
-const EMPTY_FORM = { mentor_name: "", mentor_email: "", batch_name: "", month: "", sessions: "", hours: "", rate: "", amount: "" };
+// course_name is what's picked; batch_name is the course record the invoice links to.
+const EMPTY_FORM = { mentor_name: "", mentor_email: "", course_name: "", batch_name: "", month: "", sessions: "", hours: "", rate: "", amount: "" };
 const ROWS_PER_PAGE = 5;
 
 function Toast({ toast, onClose }) {
@@ -292,7 +294,7 @@ export default function InvoiceGenerator() {
   const [saving, setSaving] = useState(false);
 
   const [search, setSearch] = useState("");
-  const [batchFilter, setBatchFilter] = useState("All");
+  const [batchFilter, setBatchFilter] = useState("All"); // holds a course name
   const [monthFilter, setMonthFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [currentPage, setCurrentPage] = useState(1);
@@ -373,7 +375,7 @@ export default function InvoiceGenerator() {
 
   useEffect(() => {
     setValidated(false);
-  }, [form.mentor_name, form.batch_name, form.month, editId]);
+  }, [form.mentor_name, form.course_name, form.month, editId]);
 
   const rangeFilteredInvoices = useMemo(() => {
     if (!rangeFrom && !rangeTo) return invoices;
@@ -443,10 +445,14 @@ export default function InvoiceGenerator() {
     setForm((f) => ({ ...f, hours: value, amount: Number(value || 0) * Number(f.rate || 0) }));
   };
 
+  const courseByBatch = useMemo(() => buildCourseByBatch(batches), [batches]);
+  const courseOptions = useMemo(() => courseOptionsFromBatches(batches), [batches]);
+  const invoiceCourse = (inv) => courseOfBatch(inv.batch_name, courseByBatch);
+
   const matchingSessions = useMemo(() => {
-    if (!form.mentor_name || !form.batch_name || !form.month) return [];
-    return sessions.filter((s) => s.mentor_name === form.mentor_name && s.batch_name === form.batch_name && (s.session_date || "").startsWith(form.month));
-  }, [sessions, form.mentor_name, form.batch_name, form.month]);
+    if (!form.mentor_name || !form.course_name || !form.month) return [];
+    return sessions.filter((s) => s.mentor_name === form.mentor_name && sameCourse(courseOf(s, courseByBatch), form.course_name) && (s.session_date || "").startsWith(form.month));
+  }, [sessions, form.mentor_name, form.course_name, form.month, courseByBatch]);
 
   // Auto-fill Total Sessions / Total Hours from the real matching sessions —
   // still editable afterwards, since tracked session durations are often
@@ -466,20 +472,20 @@ export default function InvoiceGenerator() {
 
   const validationChecks = useMemo(() => {
     const hasMentor = !!form.mentor_name;
-    const hasBatch = !!form.batch_name;
+    const hasBatch = !!form.course_name;
     const hasMonth = !!form.month;
     const sessionsFound = matchingSessions.length > 0;
     const allHaveDuration = sessionsFound && matchingSessions.every((s) => Number(s.duration) > 0);
-    const duplicate = invoices.some((i) => i.id !== editId && i.mentor_name === form.mentor_name && i.batch_name === form.batch_name && i.month === form.month);
+    const duplicate = invoices.some((i) => i.id !== editId && i.mentor_name === form.mentor_name && sameCourse(invoiceCourse(i), form.course_name) && i.month === form.month);
     return [
       { label: "Mentor selected", pass: hasMentor },
-      { label: "Batch selected", pass: hasBatch },
+      { label: "Course selected", pass: hasBatch },
       { label: "Billing month selected", pass: hasMonth },
       { label: "Sessions found", pass: sessionsFound, advisory: true },
       { label: "All sessions have duration", pass: allHaveDuration, advisory: true },
       { label: "No duplicate invoice", pass: !duplicate },
     ];
-  }, [form.mentor_name, form.batch_name, form.month, matchingSessions, invoices, editId]);
+  }, [form.mentor_name, form.course_name, form.month, matchingSessions, invoices, editId, courseByBatch]);
 
   const allChecksPass = validationChecks.filter((c) => !c.advisory).every((c) => c.pass);
 
@@ -494,6 +500,7 @@ export default function InvoiceGenerator() {
     setForm({
       mentor_name: inv.mentor_name,
       mentor_email: inv.mentor_email || "",
+      course_name: invoiceCourse(inv),
       batch_name: inv.batch_name,
       month: inv.month,
       sessions: inv.total_sessions,
@@ -506,7 +513,7 @@ export default function InvoiceGenerator() {
   };
 
   const saveInvoice = async () => {
-    if (!form.mentor_name || !form.batch_name || !form.month || !form.sessions || !form.hours) {
+    if (!form.mentor_name || !form.course_name || !form.month || !form.sessions || !form.hours) {
       showToast("Please fill all required fields.");
       return;
     }
@@ -514,7 +521,8 @@ export default function InvoiceGenerator() {
     const payload = {
       mentor_name: form.mentor_name,
       mentor_email: form.mentor_email,
-      batch_name: form.batch_name,
+      // Keep the existing link when the course is unchanged; otherwise link the course's record.
+      batch_name: form.batch_name || batchForCourse(form.course_name, batches)?.batch_name || form.course_name,
       month: form.month,
       total_sessions: Number(form.sessions),
       total_hours: String(form.hours),
@@ -596,9 +604,9 @@ export default function InvoiceGenerator() {
   const filteredInvoices = useMemo(() => {
     const q = search.toLowerCase();
     return rangeFilteredInvoices.filter((inv) => {
-      const matchesSearch = !q || (inv.mentor_name || "").toLowerCase().includes(q) || (inv.batch_name || "").toLowerCase().includes(q) || (inv.invoice_number || "").toLowerCase().includes(q);
+      const matchesSearch = !q || (inv.mentor_name || "").toLowerCase().includes(q) || invoiceCourse(inv).toLowerCase().includes(q) || (inv.invoice_number || "").toLowerCase().includes(q);
       if (!matchesSearch) return false;
-      if (batchFilter !== "All" && inv.batch_name !== batchFilter) return false;
+      if (batchFilter !== "All" && !sameCourse(invoiceCourse(inv), batchFilter)) return false;
       if (monthFilter !== "All" && inv.month !== monthFilter) return false;
       if (statusFilter !== "All" && displayStatus(inv) !== statusFilter) return false;
       return true;
@@ -630,15 +638,16 @@ export default function InvoiceGenerator() {
   const batchPayoutSummary = useMemo(() => {
     const map = {};
     rangeFilteredInvoices.forEach((i) => {
-      if (!map[i.batch_name]) map[i.batch_name] = { name: i.batch_name, invoices: 0, total: 0, paid: 0, pending: 0 };
+      const course = invoiceCourse(i);
+      if (!map[course]) map[course] = { name: course, invoices: 0, total: 0, paid: 0, pending: 0 };
       const amt = Number(i.total_amount) || 0;
-      map[i.batch_name].invoices += 1;
-      map[i.batch_name].total += amt;
-      if (i.payment_status === "Paid") map[i.batch_name].paid += amt;
-      else map[i.batch_name].pending += amt;
+      map[course].invoices += 1;
+      map[course].total += amt;
+      if (i.payment_status === "Paid") map[course].paid += amt;
+      else map[course].pending += amt;
     });
     return Object.values(map).sort((a, b) => b.total - a.total);
-  }, [rangeFilteredInvoices]);
+  }, [rangeFilteredInvoices, courseByBatch]);
 
   const invoiceActivity = (inv) => {
     if (!inv) return [];
@@ -792,10 +801,11 @@ export default function InvoiceGenerator() {
                     {mentors.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
                   </select>
                 </Field>
-                <Field label="Batch" required>
-                  <select className="styled-input" style={inputStyle} value={form.batch_name} onChange={(e) => setForm({ ...form, batch_name: e.target.value })}>
-                    <option value="">Select Batch</option>
-                    {batches.map((b) => <option key={b.id} value={b.batch_name}>{b.batch_name}</option>)}
+                <Field label="Course" required>
+                  <select className="styled-input" style={inputStyle} value={form.course_name} onChange={(e) => setForm({ ...form, course_name: e.target.value, batch_name: "" })}>
+                    <option value="">Select Course</option>
+                    {form.course_name && !courseOptions.some((c) => sameCourse(c, form.course_name)) && <option value={form.course_name}>{form.course_name}</option>}
+                    {courseOptions.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </Field>
                 <Field label="Billing Month" required>
@@ -854,7 +864,7 @@ export default function InvoiceGenerator() {
             <div className="history-tabs">
               <button className={`history-tab ${historyTab === "invoices" ? "history-tab-active" : ""}`} onClick={() => setHistoryTab("invoices")}>Invoice History</button>
               <button className={`history-tab ${historyTab === "mentor" ? "history-tab-active" : ""}`} onClick={() => setHistoryTab("mentor")}>Mentor Payout Summary</button>
-              <button className={`history-tab ${historyTab === "batch" ? "history-tab-active" : ""}`} onClick={() => setHistoryTab("batch")}>Batch Payout Summary</button>
+              <button className={`history-tab ${historyTab === "batch" ? "history-tab-active" : ""}`} onClick={() => setHistoryTab("batch")}>Course Payout Summary</button>
             </div>
 
             {historyTab === "invoices" && (
@@ -863,11 +873,11 @@ export default function InvoiceGenerator() {
                   <div className="filters-row">
                     <div className="search-wrap">
                       <span className="search-icon"><Icon name="search" size={13} color="#94a3b8" /></span>
-                      <input type="text" placeholder="Search invoice no., mentor, batch..." value={search} onChange={(e) => setSearch(e.target.value)} className="styled-input" style={{ ...inputStyle, width: "260px", paddingLeft: "34px" }} />
+                      <input type="text" placeholder="Search invoice no., mentor, course..." value={search} onChange={(e) => setSearch(e.target.value)} className="styled-input" style={{ ...inputStyle, width: "260px", paddingLeft: "34px" }} />
                     </div>
                     <select className="styled-input filter-select" style={{ ...inputStyle, width: "auto" }} value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)}>
-                      <option value="All">All Batches</option>
-                      {[...new Set(invoices.map((i) => i.batch_name))].map((b) => <option key={b} value={b}>{b}</option>)}
+                      <option value="All">All Courses</option>
+                      {[...new Set(invoices.map((i) => invoiceCourse(i)))].filter(Boolean).sort().map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                     <select className="styled-input filter-select" style={{ ...inputStyle, width: "auto" }} value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)}>
                       <option value="All">All Months</option>
@@ -901,7 +911,7 @@ export default function InvoiceGenerator() {
                             <th><input type="checkbox" checked={pagedInvoices.length > 0 && selectedIds.length === pagedInvoices.length} onChange={toggleSelectAll} /></th>
                             <th>Invoice No.</th>
                             <th>Mentor</th>
-                            <th>Batch</th>
+                            <th>Course</th>
                             <th>Month</th>
                             <th className="num">Sessions</th>
                             <th className="num">Hours</th>
@@ -918,7 +928,7 @@ export default function InvoiceGenerator() {
                               <td><input type="checkbox" checked={selectedIds.includes(inv.id)} onChange={() => toggleSelect(inv.id)} /></td>
                               <td className="muted">{inv.invoice_number || `#${inv.id}`}</td>
                               <td className="strong">{inv.mentor_name}</td>
-                              <td>{inv.batch_name}</td>
+                              <td>{invoiceCourse(inv)}</td>
                               <td>{monthLabel(inv.month)}</td>
                               <td className="num">{inv.total_sessions}</td>
                               <td className="num">{inv.total_hours}</td>
@@ -981,7 +991,7 @@ export default function InvoiceGenerator() {
             {historyTab === "batch" && (
               <div className="table-wrap">
                 <table className="styled-table">
-                  <thead><tr><th>Batch</th><th>Invoices</th><th>Total</th><th>Paid</th><th>Pending</th></tr></thead>
+                  <thead><tr><th>Course</th><th>Invoices</th><th>Total</th><th>Paid</th><th>Pending</th></tr></thead>
                   <tbody>
                     {batchPayoutSummary.map((b) => (
                       <tr key={b.name}><td className="strong">{b.name}</td><td>{b.invoices}</td><td>{money(b.total)}</td><td>{money(b.paid)}</td><td>{money(b.pending)}</td></tr>
@@ -1008,7 +1018,7 @@ export default function InvoiceGenerator() {
                   <h3 style={{ margin: 0 }}>{viewInvoice.invoice_number || `#${viewInvoice.id}`}</h3>
                   <StatusBadge status={displayStatus(viewInvoice)} />
                 </div>
-                <div className="muted" style={{ fontSize: "13px" }}>{viewInvoice.mentor_name} · {viewInvoice.batch_name}</div>
+                <div className="muted" style={{ fontSize: "13px" }}>{viewInvoice.mentor_name} · {invoiceCourse(viewInvoice)}</div>
               </div>
 
               <div className="drawer-actions">
@@ -1064,11 +1074,11 @@ export default function InvoiceGenerator() {
               {drawerTab === "sessions" && (
                 <div className="drawer-section">
                   <div className="drawer-section-title">Matching Sessions</div>
-                  {sessions.filter((s) => s.mentor_name === viewInvoice.mentor_name && s.batch_name === viewInvoice.batch_name && (s.session_date || "").startsWith(viewInvoice.month)).length === 0 ? (
-                    <div className="hint-text">No sessions found for this mentor, batch, and billing month.</div>
+                  {sessions.filter((s) => s.mentor_name === viewInvoice.mentor_name && sameCourse(courseOf(s, courseByBatch), invoiceCourse(viewInvoice)) && (s.session_date || "").startsWith(viewInvoice.month)).length === 0 ? (
+                    <div className="hint-text">No sessions found for this mentor, course, and billing month.</div>
                   ) : (
                     <div className="drawer-sessions-list">
-                      {sessions.filter((s) => s.mentor_name === viewInvoice.mentor_name && s.batch_name === viewInvoice.batch_name && (s.session_date || "").startsWith(viewInvoice.month)).map((s) => (
+                      {sessions.filter((s) => s.mentor_name === viewInvoice.mentor_name && sameCourse(courseOf(s, courseByBatch), invoiceCourse(viewInvoice)) && (s.session_date || "").startsWith(viewInvoice.month)).map((s) => (
                         <div key={s.id} className="drawer-session-row">
                           <div className="drawer-session-date">{s.session_date}</div>
                           <div><div className="strong">{s.topic || "Untitled Session"}</div><div className="muted" style={{ fontSize: "12px" }}>{s.duration ? `${s.duration} min` : "Duration —"}</div></div>

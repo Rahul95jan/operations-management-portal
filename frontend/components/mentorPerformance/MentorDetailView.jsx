@@ -56,7 +56,7 @@ import {
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-const TABS = ["Overview", "Sessions", "NPS & Feedback", "Batches", "Attendance", "Quality", "Operations", "Reports"];
+const TABS = ["Overview", "Sessions", "NPS & Feedback", "Courses", "Attendance", "Quality", "Operations", "Reports"];
 const TREND_RANGE_LABELS = { 7: "7 Days", 30: "30 Days", 90: "3 Months", 180: "6 Months" };
 
 // Frontend-only, clearly configurable thresholds — no backend logic touched.
@@ -264,8 +264,7 @@ function SessionDrawer({ session, onClose }) {
               <DrawerField label="Date" value={info ? fmtDateTime(info.session_date, info.session_time).date : session.session_date} />
               <DrawerField label="Time" value={info?.session_time || session.session_time} />
               <DrawerField label="Duration" value={(info?.duration || session.duration) ? `${info?.duration || session.duration} min` : "—"} />
-              <DrawerField label="Batch" value={info?.batch_name || session.batch_name || "—"} />
-              <DrawerField label="Course" value={info?.course_name || session.course_name || "—"} />
+              <DrawerField label="Course" value={info?.course_name || session.course_name || info?.batch_name || session.batch_name || "—"} />
               <DrawerField label="Session Type" value={info?.session_type || session.session_type || "—"} />
               <DrawerField label="Status" value={<Badge label={info?.status || session.status} styles={STATUS_STYLES} />} />
             </div>
@@ -280,7 +279,7 @@ function SessionDrawer({ session, onClose }) {
             <div className="drawer-section-title">Session Quality</div>
             <div className="drawer-grid">
               <DrawerField label="Session Rating" value={feedback?.average_rating ? `${feedback.average_rating} / 5` : "Not Available"} />
-              <DrawerField label="Batch/Mentor NPS (avg)" value={feedback?.nps?.average_score ?? "Not Available"} />
+              <DrawerField label="Course/Mentor NPS (avg)" value={feedback?.nps?.average_score ?? "Not Available"} />
             </div>
             {feedback?.nps?.note && <div className="drawer-note">ℹ️ {feedback.nps.note}</div>}
 
@@ -669,25 +668,10 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
     return { buckets, flagged };
   }, [sessionRows]);
 
-  const batchStats = useMemo(() => {
-    const map = {};
-    sessionRows.forEach((r) => {
-      const key = r.batch_name || "No Batch";
-      if (!map[key]) map[key] = { name: key, sessions: 0, learners: 0, attSum: 0, attN: 0, ratingSum: 0, ratingN: 0 };
-      map[key].sessions += 1;
-      map[key].learners += r.learner_count || 0;
-      if (r.attendance_percentage) { map[key].attSum += r.attendance_percentage; map[key].attN += 1; }
-      if (r.rating) { map[key].ratingSum += r.rating; map[key].ratingN += 1; }
-    });
-    return Object.values(map)
-      .map((b) => ({ ...b, avgAttendance: b.attN ? Math.round(b.attSum / b.attN) : null, avgRating: b.ratingN ? Math.round((b.ratingSum / b.ratingN) * 10) / 10 : null }))
-      .sort((a, b) => b.sessions - a.sessions);
-  }, [sessionRows]);
-
   const courseStats = useMemo(() => {
     const map = {};
     sessionRows.forEach((r) => {
-      const key = r.course_name || "No Course";
+      const key = r.course_name || r.batch_name || "No Course";
       if (!map[key]) map[key] = { name: key, sessions: 0, learners: 0, attSum: 0, attN: 0, ratingSum: 0, ratingN: 0 };
       map[key].sessions += 1;
       map[key].learners += r.learner_count || 0;
@@ -1032,35 +1016,8 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                   <div className="grid-3a">
                     <div className="card">
                       <div className="card-header-row">
-                        <SectionTitle icon={GraduationCap} color="#2563eb" title="Batch-wise Performance" sub="Performance across different batches" />
-                        <button className="view-all-link" onClick={() => setActiveTab("Batches")}>View All →</button>
-                      </div>
-                      {batchStats.length === 0 ? (
-                        <div className="empty-state" style={{ padding: "16px 0" }}>No batches found for this mentor.</div>
-                      ) : (
-                        <div className="table-wrap" style={{ marginTop: "10px" }}>
-                          <table className="mini-table">
-                            <thead><tr><th>Batch</th><th>Sessions</th><th>Learners</th><th>Attendance</th><th>Rating</th></tr></thead>
-                            <tbody>
-                              {batchStats.slice(0, 4).map((b, i) => (
-                                <tr key={b.name}>
-                                  <td><span className="legend-dot" style={{ background: dotColor(i) }} /> {b.name}</td>
-                                  <td>{b.sessions}</td>
-                                  <td>{b.learners}</td>
-                                  <td>{b.avgAttendance !== null ? `${b.avgAttendance}%` : "—"}</td>
-                                  <td>{b.avgRating ? `★ ${b.avgRating}` : "—"}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="card">
-                      <div className="card-header-row">
                         <SectionTitle icon={BookOpen} color="#16a34a" title="Course-wise Performance" sub="Performance across courses" />
-                        <button className="view-all-link" onClick={() => setActiveTab("Batches")}>View All →</button>
+                        <button className="view-all-link" onClick={() => setActiveTab("Courses")}>View All →</button>
                       </div>
                       {courseStats.length === 0 ? (
                         <div className="empty-state" style={{ padding: "16px 0" }}>No courses found for this mentor.</div>
@@ -1121,7 +1078,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                             <div key={f.id} className="feedback-item">
                               <div className="feedback-stars"><StarRow value={f.instructor_rating} /></div>
                               <div className="feedback-text">&ldquo;{f.feedback}&rdquo;</div>
-                              <div className="feedback-meta">{[f.course_name, f.batch_name].filter(Boolean).join(" · ") || "—"} · {f.created_at ? new Date(f.created_at).toLocaleDateString() : "—"}</div>
+                              <div className="feedback-meta">{f.course_name || f.batch_name || "—"} · {f.created_at ? new Date(f.created_at).toLocaleDateString() : "—"}</div>
                             </div>
                           ))}
                         </div>
@@ -1158,7 +1115,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                               </span>
                               <div style={{ minWidth: 0, flex: 1 }}>
                                 <div className="attention-reason">{r.reason}</div>
-                                <div className="attention-sub">{r.topic} · {r.batch_name || "No batch"} · {fmtDateTime(r.session_date, r.session_time).date}</div>
+                                <div className="attention-sub">{r.topic} · {r.course_name || r.batch_name || "No course"} · {fmtDateTime(r.session_date, r.session_time).date}</div>
                               </div>
                             </div>
                           ))}
@@ -1179,7 +1136,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                         <Search size={14} strokeWidth={2.3} className="search-icon" />
                         <input
                           className="search-input"
-                          placeholder="Search sessions, topics, batches…"
+                          placeholder="Search sessions, topics, courses…"
                           value={sessionSearchInput}
                           onChange={(e) => setSessionSearchInput(e.target.value)}
                           aria-label="Search sessions"
@@ -1209,7 +1166,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                       <table className="styled-table">
                         <thead>
                           <tr>
-                            <th>Session</th><th>Date &amp; Time</th><th>Batch</th><th>Course</th><th>Type</th>
+                            <th>Session</th><th>Date &amp; Time</th><th>Course</th><th>Type</th>
                             <th>Learners</th><th>Attendance</th><th>Attendance %</th><th>Rating</th><th>Recording</th><th>Report</th><th>Status</th><th>Actions</th>
                           </tr>
                         </thead>
@@ -1220,8 +1177,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                               <tr key={r.id}>
                                 <td><div className="strong">#{r.id}</div><div className="muted-sm">{r.topic}</div></td>
                                 <td><div>{dt.date}</div><div className="muted-sm">{dt.time}</div></td>
-                                <td>{r.batch_name || "—"}</td>
-                                <td className="muted">{r.course_name || "—"}</td>
+                                <td>{r.course_name || r.batch_name || "—"}</td>
                                 <td className="muted">{r.session_type || "—"}</td>
                                 <td className="muted">{r.learner_count}</td>
                                 <td className="muted">{r.attendance} / {r.learner_count || 0}</td>
@@ -1315,7 +1271,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                             <div key={f.id} className="feedback-item">
                               <div className="feedback-stars"><StarRow value={f.instructor_rating} /></div>
                               <div className="feedback-text">&ldquo;{f.feedback}&rdquo;</div>
-                              <div className="feedback-meta">{[f.course_name, f.batch_name].filter(Boolean).join(" · ") || "—"} · {f.created_at ? new Date(f.created_at).toLocaleDateString() : "—"}</div>
+                              <div className="feedback-meta">{f.course_name || f.batch_name || "—"} · {f.created_at ? new Date(f.created_at).toLocaleDateString() : "—"}</div>
                             </div>
                           ))}
                         </div>
@@ -1342,33 +1298,9 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                 </>
               )}
 
-              {/* ---------------- BATCHES ---------------- */}
-              {activeTab === "Batches" && (
+              {/* ---------------- COURSES ---------------- */}
+              {activeTab === "Courses" && (
                 <>
-                  <div className="card">
-                    <h2 className="card-title">Batch-wise Performance</h2>
-                    {batchStats.length === 0 ? (
-                      <div className="empty-state">No batches found for this mentor.</div>
-                    ) : (
-                      <div className="table-wrap">
-                        <table className="styled-table">
-                          <thead><tr><th>Batch</th><th>Sessions</th><th>Learners</th><th>Attendance</th><th>Rating</th></tr></thead>
-                          <tbody>
-                            {batchStats.map((b) => (
-                              <tr key={b.name}>
-                                <td className="strong">{b.name}</td>
-                                <td>{b.sessions}</td>
-                                <td>{b.learners}</td>
-                                <td>{b.avgAttendance !== null ? `${b.avgAttendance}%` : "—"}</td>
-                                <td>{b.avgRating ? `★ ${b.avgRating}` : "Not Available"}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-
                   <div className="card">
                     <h2 className="card-title">Course-wise Performance</h2>
                     {courseStats.length === 0 ? (
@@ -1528,7 +1460,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                         <>
                           <div>Sessions: {mentorData.productivity.sessions_delivered}</div>
                           <div>Learners Served: {mentorData.productivity.learners_served}</div>
-                          <div>Batches: {mentorData.productivity.batches_served}</div>
+                          <div>Courses: {mentorData.productivity.batches_served}</div>
                           <div>Avg Learners/Session: {mentorData.productivity.avg_learners_per_session}</div>
                         </>
                       )}
@@ -1606,7 +1538,6 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                     <DrawerField label="Rating Summary" value={sessionSummary?.average_rating ? `${sessionSummary.average_rating} / 5` : "Not Available"} />
                     <DrawerField label="NPS Summary" value={npsStats ? `${npsStats.npsScore > 0 ? "+" : ""}${npsStats.npsScore} (${npsStats.total} responses)` : "Not Available"} />
                     <DrawerField label="Learner Feedback" value={`${recentFeedback.length} written responses`} />
-                    <DrawerField label="Batch Performance" value={`${batchStats.length} batches`} />
                     <DrawerField label="Course Performance" value={`${courseStats.length} courses`} />
                     <DrawerField label="Operational Performance" value={opStats ? `Recording ${opStats.recordingCompliance}% · Report ${opStats.reportCompletion}%` : "Not Available"} />
                     <DrawerField label="Issues Requiring Attention" value={`${health.flagged.length} sessions flagged`} />
@@ -1655,7 +1586,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                   <option value="below3">Below 3</option>
                 </select>
               </div>
-              <div className="table-filter-note">Batch, Course and Date Range are set in the main Mentor 360 filters and apply here too.</div>
+              <div className="table-filter-note">Course and Date Range are set in the main Mentor 360 filters and apply here too.</div>
               <button className="table-filter-clear" onClick={() => setTableFilters({ status: "", rating: "" })}>Clear these filters</button>
             </div>
           </>

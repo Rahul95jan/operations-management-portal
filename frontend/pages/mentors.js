@@ -1208,7 +1208,7 @@ export default function Mentors() {
                           <div>
                             <div className="strong">{s.topic || "Untitled Session"}</div>
                             <div className="muted" style={{ fontSize: "12px" }}>
-                              {s.batch_name || "Not Assigned"} · {s.duration ? `${s.duration} min` : "Duration —"}
+                              {s.course_name || s.batch_name || "Not Assigned"} · {s.duration ? `${s.duration} min` : "Duration —"}
                             </div>
                           </div>
                         </div>

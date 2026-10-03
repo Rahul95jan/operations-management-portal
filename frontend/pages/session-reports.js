@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
+import { courseOptionsFromBatches } from "../lib/courses";
 import {
   CategoryScale,
   LinearScale,
@@ -399,7 +400,6 @@ const emptyFilters = {
   date_to: "",
   status: "",
   mentor_name: "",
-  batch_name: "",
   course_name: "",
   session_type: "",
   recording_status: "",
@@ -531,8 +531,7 @@ function SessionDrawer({ session, onClose }) {
               <DrawerField label="Time" value={info?.session_time || session.session_time} />
               <DrawerField label="Duration" value={(info?.duration || session.duration) ? `${info?.duration || session.duration} min` : "—"} />
               <DrawerField label="Mentor" value={info?.mentor_name || session.mentor_name} />
-              <DrawerField label="Batch" value={info?.batch_name || session.batch_name || "—"} />
-              <DrawerField label="Course" value={info?.course_name || session.course_name || "—"} />
+              <DrawerField label="Course" value={info?.course_name || session.course_name || info?.batch_name || session.batch_name || "—"} />
               <DrawerField label="Session Type" value={info?.session_type || session.session_type || "—"} />
               <DrawerField label="Status" value={<Badge label={info?.status || session.status} styles={STATUS_STYLES} />} />
             </div>
@@ -547,7 +546,7 @@ function SessionDrawer({ session, onClose }) {
             <div className="drawer-section-title">Session Quality</div>
             <div className="drawer-quality">
               <DrawerField label="Session Rating" value={feedback?.average_rating ? `${feedback.average_rating} / 5` : "Not Available"} />
-              <DrawerField label="Batch/Mentor NPS (avg)" value={feedback?.nps?.average_score ?? "Not Available"} />
+              <DrawerField label="Course/Mentor NPS (avg)" value={feedback?.nps?.average_score ?? "Not Available"} />
               {feedback?.nps?.note && <div className="drawer-note">ℹ️ {feedback.nps.note}</div>}
             </div>
 
@@ -724,11 +723,11 @@ export default function SessionReports() {
     setPage(1);
   };
 
-  const courseOptions = useMemo(() => [...new Set(batches.map((b) => b.course_name).filter(Boolean))].sort(), [batches]);
+  const courseOptions = useMemo(() => courseOptionsFromBatches(batches), [batches]);
   const advancedFilterActive = !!(filters.session_type || filters.recording_status || filters.report_status || filters.attendance_tier || filters.rating_tier);
 
   const viewBatch = (batchName) => {
-    const next = { ...emptyFilters, batch_name: batchName };
+    const next = { ...emptyFilters, course_name: batchName }; // batchName holds a course name
     setFilters(next);
     setAppliedFilters(next);
     setPage(1);
@@ -798,10 +797,10 @@ export default function SessionReports() {
     const batchAttendance = {};
     filteredAllRows.forEach((r) => {
       if (r.mentor_name) mentorCounts[r.mentor_name] = (mentorCounts[r.mentor_name] || 0) + 1;
-      if (r.batch_name && r.attendance_percentage) {
-        if (!batchAttendance[r.batch_name]) batchAttendance[r.batch_name] = { sum: 0, n: 0 };
-        batchAttendance[r.batch_name].sum += r.attendance_percentage;
-        batchAttendance[r.batch_name].n += 1;
+      if (r.course_name && r.attendance_percentage) {
+        if (!batchAttendance[r.course_name]) batchAttendance[r.course_name] = { sum: 0, n: 0 };
+        batchAttendance[r.course_name].sum += r.attendance_percentage;
+        batchAttendance[r.course_name].n += 1;
       }
     });
     const mostActiveMentor = Object.entries(mentorCounts).sort((a, b) => b[1] - a[1])[0];
@@ -813,7 +812,8 @@ export default function SessionReports() {
   // ---- New: Operations Intelligence computations (all derived from real filteredAllRows/summary) ----
 
   const mentorMatrix = useMemo(() => buildOpsMatrix(filteredAllRows, "mentor_name"), [filteredAllRows]);
-  const batchMatrix = useMemo(() => buildOpsMatrix(filteredAllRows, "batch_name"), [filteredAllRows]);
+  // Grouped by course (rows carry the course, falling back to the linked record's).
+  const batchMatrix = useMemo(() => buildOpsMatrix(filteredAllRows, "course_name"), [filteredAllRows]);
   const atRiskBatches = useMemo(() => batchMatrix.filter((b) => b.risk !== "Good"), [batchMatrix]);
 
   const visibleMentorMatrix = useMemo(() => {
@@ -921,10 +921,9 @@ export default function SessionReports() {
       if (w) w.count += 1;
     });
 
-    const byMentor = {}, byBatch = {}, byCourse = {};
+    const byMentor = {}, byCourse = {};
     cancelled.forEach((r) => {
       if (r.mentor_name) byMentor[r.mentor_name] = (byMentor[r.mentor_name] || 0) + 1;
-      if (r.batch_name) byBatch[r.batch_name] = (byBatch[r.batch_name] || 0) + 1;
       if (r.course_name) byCourse[r.course_name] = (byCourse[r.course_name] || 0) + 1;
     });
     const top = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1])[0] || null;
@@ -933,7 +932,7 @@ export default function SessionReports() {
       total: cancelled.length, rescheduled: rescheduled.length, rate, learnersImpacted,
       trendLabels: weeks.map((w) => `${w.end}d`).reverse(),
       trend: weeks.map((w) => w.count).reverse(),
-      topMentor: top(byMentor), topBatch: top(byBatch), topCourse: top(byCourse),
+      topMentor: top(byMentor), topCourse: top(byCourse),
     };
   }, [filteredAllRows]);
 
@@ -997,7 +996,7 @@ export default function SessionReports() {
           issue: "Attendance declining", priority: "High", metric: "Attendance %",
           evidence: `Avg attendance dropped ${Math.abs(signals.attendanceDelta)} pts (${signals.previous.avgAttendance}% → ${signals.current.avgAttendance}%)`,
           affected: `${signals.current.count} sessions in the last 30 days`,
-          recommendation: "Investigate attendance patterns for the affected batches and review recent learner feedback.",
+          recommendation: "Investigate attendance patterns for the affected courses and review recent learner feedback.",
         });
       }
       if (signals.ratingDelta !== null && signals.ratingDelta <= -0.3) {
@@ -1027,10 +1026,10 @@ export default function SessionReports() {
     });
     batchMatrix.filter((b) => b.risk === "Critical").slice(0, 3).forEach((b) => {
       items.push({
-        issue: `Batch requires review: ${b.name}`, priority: "High", metric: "Attendance / Cancellation",
+        issue: `Course requires review: ${b.name}`, priority: "High", metric: "Attendance / Cancellation",
         evidence: `Avg attendance ${b.avgAttendance ?? "N/A"}%, cancellation rate ${b.cancelRate}%`,
         affected: `${b.sessions} sessions`,
-        recommendation: "Review batch scheduling, mentor assignment and learner feedback associated with this batch.",
+        recommendation: "Review course scheduling, mentor assignment and learner feedback associated with this course.",
       });
     });
     if (cancellation.rate >= HEALTH_THRESHOLDS.highCancellationPct) {
@@ -1038,7 +1037,7 @@ export default function SessionReports() {
         issue: "Overall cancellation rate elevated", priority: "Medium", metric: "Cancellation %",
         evidence: `${cancellation.rate}% of all sessions cancelled (${cancellation.total} sessions)`,
         affected: `${cancellation.learnersImpacted} learners impacted`,
-        recommendation: "Review cancellation patterns by course, batch and mentor for a potential operational cause.",
+        recommendation: "Review cancellation patterns by course and mentor for a potential operational cause.",
       });
     }
     return items;
@@ -1118,13 +1117,6 @@ export default function SessionReports() {
                 <select style={inputStyle} value={filters.course_name} onChange={(e) => setFilters({ ...filters, course_name: e.target.value })}>
                   <option value="">All Courses</option>
                   {courseOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div className="fbar-field">
-                <label className="field-label">Batch</label>
-                <select style={inputStyle} value={filters.batch_name} onChange={(e) => setFilters({ ...filters, batch_name: e.target.value })}>
-                  <option value="">All Batches</option>
-                  {batches.map((b) => <option key={b.id} value={b.batch_name}>{b.batch_name}</option>)}
                 </select>
               </div>
               <div className="fbar-field">
@@ -1301,7 +1293,7 @@ export default function SessionReports() {
               <SectionTitle icon={Star} iconColor="#a855f7" title="Session Quality" sub={`Based on learner feedback (${quality?.count || 0} responses)`} />
               <QualityBar label="Mentor Teaching Method" value={quality?.instructor} max={5} />
               <QualityBar label="Doubt Resolution" value={quality?.doubt} max={5} />
-              <QualityBar label="Overall Experience (NPS)" value={quality?.nps} max={10} note="Matched by batch + mentor — not tied to a single session." />
+              <QualityBar label="Overall Experience (NPS)" value={quality?.nps} max={10} note="Matched by course + mentor — not tied to a single session." />
             </div>
           </div>
 
@@ -1330,17 +1322,17 @@ export default function SessionReports() {
             )}
           </div>
 
-          {/* Batch Operations Health Matrix */}
+          {/* Course Operations Health Matrix */}
           <div className="card" style={{ marginTop: "16px" }}>
-            <SectionTitle icon={Layers} iconColor="#16a34a" title="Batch Operations Health Matrix" sub="Per-batch attendance, quality and compliance rollup" />
+            <SectionTitle icon={Layers} iconColor="#16a34a" title="Course Operations Health Matrix" sub="Per-course attendance, quality and compliance rollup" />
             {batchMatrix.length === 0 ? (
-              <div className="empty-state" style={{ padding: "20px 0" }}>No batch data yet.</div>
+              <div className="empty-state" style={{ padding: "20px 0" }}>No course data yet.</div>
             ) : (
               <div className="table-wrap">
                 <table className="styled-table matrix-table">
                   <thead>
                     <tr>
-                      <th>Batch</th><th>Sessions</th><th>Learners</th><th>Attendance</th><th>Rating</th>
+                      <th>Course</th><th>Sessions</th><th>Learners</th><th>Attendance</th><th>Rating</th>
                       <th>Recording</th><th>Reports</th><th>SLA</th><th>Cancellation</th><th>Risk</th><th>Trend</th>
                     </tr>
                   </thead>
@@ -1581,13 +1573,13 @@ export default function SessionReports() {
             ) : (
               <div className="table-wrap">
                 <table className="styled-table matrix-table">
-                  <thead><tr><th>Session</th><th>Mentor</th><th>Batch</th><th>Date</th><th>Issue</th><th>Age</th><th>Status</th></tr></thead>
+                  <thead><tr><th>Session</th><th>Mentor</th><th>Course</th><th>Date</th><th>Issue</th><th>Age</th><th>Status</th></tr></thead>
                   <tbody>
                     {criticalOperationalItems.slice(0, 10).map((r) => (
                       <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => setDrawerSession(r)}>
                         <td className="strong">#{r.id} {r.topic}</td>
                         <td className="muted">{r.mentor_name || "—"}</td>
-                        <td className="muted">{r.batch_name || "—"}</td>
+                        <td className="muted">{r.course_name || r.batch_name || "—"}</td>
                         <td className="muted">{fmtDateTime(r.session_date, r.session_time).date}</td>
                         <td className="muted">{r.issue}</td>
                         <td className="muted">{r.age !== null ? `${r.age}d` : "—"}</td>
@@ -1623,14 +1615,13 @@ export default function SessionReports() {
                 </div>
                 <div className="insights-list" style={{ marginTop: "12px" }}>
                   {cancellation.topMentor && <div>Most cancellations by mentor: <b>{cancellation.topMentor[0]}</b> ({cancellation.topMentor[1]})</div>}
-                  {cancellation.topBatch && <div>Most cancellations by batch: <b>{cancellation.topBatch[0]}</b> ({cancellation.topBatch[1]})</div>}
                   {cancellation.topCourse && <div>Most cancellations by course: <b>{cancellation.topCourse[0]}</b> ({cancellation.topCourse[1]})</div>}
                 </div>
               </>
             )}
           </div>
 
-          {/* Requires Attention (sessions) + At-Risk Batches */}
+          {/* Requires Attention (sessions) + At-Risk Courses */}
           <div className="grid-2a">
             <div className="card">
               <SectionTitle icon={AlertTriangle} iconColor="#f59e0b" title="Sessions Requiring Attention" sub="Rule-based on attendance, rating, recording and report compliance" />
@@ -1639,13 +1630,13 @@ export default function SessionReports() {
               ) : (
                 <div className="table-wrap">
                   <table className="styled-table matrix-table">
-                    <thead><tr><th>Session</th><th>Mentor</th><th>Batch</th><th>Date</th><th>Issue</th><th>Priority</th></tr></thead>
+                    <thead><tr><th>Session</th><th>Mentor</th><th>Course</th><th>Date</th><th>Issue</th><th>Priority</th></tr></thead>
                     <tbody>
                       {health.flagged.slice(0, 8).map((r) => (
                         <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => setDrawerSession(r)}>
                           <td className="strong">#{r.id} {r.topic}</td>
                           <td className="muted">{r.mentor_name || "—"}</td>
-                          <td className="muted">{r.batch_name || "—"}</td>
+                          <td className="muted">{r.course_name || r.batch_name || "—"}</td>
                           <td className="muted">{fmtDateTime(r.session_date, r.session_time).date}</td>
                           <td className="muted">{r.reason}</td>
                           <td><Badge label={r.tier === "attention" ? "Critical" : "Watch"} styles={RISK_STYLES} /></td>
@@ -1659,13 +1650,13 @@ export default function SessionReports() {
             </div>
 
             <div className="card">
-              <SectionTitle icon={Layers} iconColor="#b45309" title="Batches Requiring Attention" sub="Batches flagged Watch or Critical" />
+              <SectionTitle icon={Layers} iconColor="#b45309" title="Courses Requiring Attention" sub="Courses flagged Watch or Critical" />
               {atRiskBatches.length === 0 ? (
-                <div className="empty-state" style={{ padding: "16px 0" }}>No batches currently at risk.</div>
+                <div className="empty-state" style={{ padding: "16px 0" }}>No courses currently at risk.</div>
               ) : (
                 <div className="table-wrap">
                   <table className="styled-table matrix-table">
-                    <thead><tr><th>Batch</th><th>Attendance</th><th>Rating</th><th>Compliance</th><th>Sessions</th><th>Risk</th><th>Trend</th><th></th></tr></thead>
+                    <thead><tr><th>Course</th><th>Attendance</th><th>Rating</th><th>Compliance</th><th>Sessions</th><th>Risk</th><th>Trend</th><th></th></tr></thead>
                     <tbody>
                       {atRiskBatches.map((b) => (
                         <tr key={b.name}>
@@ -1676,7 +1667,7 @@ export default function SessionReports() {
                           <td className="muted">{b.sessions}</td>
                           <td><Badge label={b.risk} styles={RISK_STYLES} /></td>
                           <td><TrendArrow trend={b.trend} /></td>
-                          <td><button className="btn-view-details" onClick={() => viewBatch(b.name)}>View Batch</button></td>
+                          <td><button className="btn-view-details" onClick={() => viewBatch(b.name)}>View Course</button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -1764,7 +1755,7 @@ export default function SessionReports() {
                   <Search size={14} strokeWidth={2.3} className="search-icon" />
                   <input
                     type="text"
-                    placeholder="Search sessions, topics, mentors, batches…"
+                    placeholder="Search sessions, topics, mentors, courses…"
                     value={search}
                     onChange={(e) => { setPage(1); setSearch(e.target.value); }}
                     className="search-input"
@@ -1787,7 +1778,7 @@ export default function SessionReports() {
                         <th onClick={() => toggleSort("id")} className="sortable">Session{sortIndicator("id")}</th>
                         <th onClick={() => toggleSort("session_date")} className="sortable">Date &amp; Time{sortIndicator("session_date")}</th>
                         <th>Mentor</th>
-                        <th>Batch / Course</th>
+                        <th>Course</th>
                         <th>Type / Duration</th>
                         <th>Status</th>
                         <th>Attendance</th>
@@ -1813,8 +1804,7 @@ export default function SessionReports() {
                             </td>
                             <td>{r.mentor_name || "—"}</td>
                             <td>
-                              <div>{r.batch_name || "—"}</div>
-                              <div className="muted-sm">{r.course_name || "—"}</div>
+                              <div>{r.course_name || r.batch_name || "—"}</div>
                             </td>
                             <td>
                               <div style={{ color: "#94a3b8" }}>{r.session_type || "—"}</div>

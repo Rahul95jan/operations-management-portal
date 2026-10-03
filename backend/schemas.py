@@ -55,6 +55,7 @@ class SessionCreate(BaseModel):
     topic: str
     mentor_name: str
     batch_name: str | None = None
+    course_name: str | None = None  # the portal picks a course; batch_name is resolved from it
     session_date: str
     session_time: str
     status: str

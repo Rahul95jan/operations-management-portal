@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import Sidebar from "../../components/Sidebar";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import PortalHeader from "../../components/resources/portal/PortalHeader";
 import MentorAvatar from "../../components/resources/portal/MentorAvatar";
+import { buildCourseByBatch, courseOf } from "../../lib/courses";
 import SubmittedResourcesList from "../../components/resources/SubmittedResourcesList";
 import { RESOURCE_TYPES, typeConfig } from "../../components/resources/resourceTypes";
 import { API, FILE_ACCEPT, NO_BATCH, SESSION_TYPES, fileMatchesType, formatDate, formatFileSize, formatTime, sessionTypeOf, typeLabel } from "../../components/resources/portal/portalUtils";
@@ -55,6 +56,7 @@ export default function UploadResourcePage() {
 
   const [sessions, setSessions] = useState([]);
   const [mentors, setMentors] = useState([]);
+  const [courseRecords, setCourseRecords] = useState([]); // /batches rows: batch_name -> course_name
   const [currentUser, setCurrentUser] = useState(null);
   const [schedulerStatus, setSchedulerStatus] = useState(null);
 
@@ -78,19 +80,24 @@ export default function UploadResourcePage() {
   useEffect(() => {
     fetch(`${API}/sessions`).then((r) => r.json()).then((d) => setSessions(Array.isArray(d) ? d : [])).catch(() => setSessions([]));
     fetch(`${API}/mentors`).then((r) => r.json()).then((d) => setMentors(Array.isArray(d) ? d : [])).catch(() => setMentors([]));
+    fetch(`${API}/batches`).then((r) => (r.ok ? r.json() : [])).then((d) => setCourseRecords(Array.isArray(d) ? d : [])).catch(() => setCourseRecords([]));
     fetch(`${API}/users/me`).then((r) => r.json()).then(setCurrentUser).catch(() => setCurrentUser(null));
     fetch(`${API}/resource-scheduler/status`).then((r) => r.json()).then(setSchedulerStatus).catch(() => setSchedulerStatus(null));
   }, []);
 
+  // A session's course: its own course_name, else the course of the record it links to.
+  const courseByBatch = useMemo(() => buildCourseByBatch(courseRecords), [courseRecords]);
+  const sessionCourse = useCallback((s) => courseOf(s, courseByBatch), [courseByBatch]);
+
   const selectedSession = useMemo(() => sessions.find((s) => String(s.id) === String(sessionId)) || null, [sessions, sessionId]);
 
-  // Deep link from the tracker: /resources?session_id=12 preselects batch + session.
+  // Deep link from the tracker: /resources?session_id=12 preselects course + session.
   useEffect(() => {
     const wanted = router.query.session_id;
     if (!wanted || !sessions.length) return;
     const match = sessions.find((s) => String(s.id) === String(wanted));
     if (match) {
-      setBatchName(match.batch_name || NO_BATCH);
+      setBatchName(sessionCourse(match) || NO_BATCH);
       const known = mentors.find((m) => normName(m.name) === normName(match.mentor_name));
       setMentorName(known ? known.name : match.mentor_name || "");
       setSessionType(sessionTypeOf(match));
@@ -118,12 +125,13 @@ export default function UploadResourcePage() {
     loadSessionState(sessionId);
   }, [sessionId]);
 
-  // Batch -> Mentor -> Session Type -> Session: each step narrows the next.
-  const batchOptions = useMemo(() => unique(sessions.map((s) => s.batch_name)), [sessions]);
-  const hasUnbatched = useMemo(() => sessions.some((s) => !s.batch_name), [sessions]);
+  // Course -> Mentor -> Session Type -> Session: each step narrows the next.
+  // (batchName holds the selected course; sessions link to a course record by batch_name.)
+  const batchOptions = useMemo(() => unique(sessions.map((s) => sessionCourse(s))), [sessions, sessionCourse]);
+  const hasUnbatched = useMemo(() => sessions.some((s) => !sessionCourse(s)), [sessions, sessionCourse]);
   const batchSessions = useMemo(
-    () => sessions.filter((s) => !batchName || (batchName === NO_BATCH ? !s.batch_name : s.batch_name === batchName)),
-    [sessions, batchName]
+    () => sessions.filter((s) => !batchName || (batchName === NO_BATCH ? !sessionCourse(s) : normName(sessionCourse(s)) === normName(batchName))),
+    [sessions, batchName, sessionCourse]
   );
   // Mentors come from Mentor Management: those with a session in the chosen
   // batch, listed under their Mentor Management name. Falls back to the
@@ -214,7 +222,7 @@ export default function UploadResourcePage() {
   };
 
   const validate = () => {
-    if (!batchName) return "Please select a batch.";
+    if (!batchName) return "Please select a course.";
     if (!mentorName) return "Please select your name.";
     if (!sessionType) return "Please choose the session type.";
     if (!selectedSession) return "Please select a session.";
@@ -315,11 +323,11 @@ export default function UploadResourcePage() {
               <div className="form-grid">
                 <div className="fields">
                   <label className="field">
-                    <span>Select Batch <b>*</b></span>
+                    <span>Select Course <b>*</b></span>
                     <select value={batchName} onChange={(e) => changeBatch(e.target.value)}>
-                      <option value="">Choose a batch</option>
+                      <option value="">Choose a course</option>
                       {batchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
-                      {hasUnbatched && <option value={NO_BATCH}>No batch (webinars)</option>}
+                      {hasUnbatched && <option value={NO_BATCH}>No course (webinars)</option>}
                     </select>
                   </label>
 
@@ -505,7 +513,7 @@ export default function UploadResourcePage() {
                   <h3>Resource Guidelines</h3>
                   <p>Please make sure you upload the correct and final version of the resource.</p>
                   <ul>
-                    <li><CheckCircle2 size={15} /> Select the correct batch and session</li>
+                    <li><CheckCircle2 size={15} /> Select the correct course and session</li>
                     <li><CheckCircle2 size={15} /> Upload only relevant and finalized content</li>
                     <li><CheckCircle2 size={15} /> Choose the type that matches what you upload</li>
                     <li><CheckCircle2 size={15} /> A confirmation email is sent after each successful upload</li>

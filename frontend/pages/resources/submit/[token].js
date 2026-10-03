@@ -169,8 +169,8 @@ export default function SubmitResourcesByToken() {
                   <div className="detail-value">{session.mentor_name || "—"}</div>
                 </div>
                 <div>
-                  <div className="detail-label">Batch</div>
-                  <div className="detail-value">{session.batch_name || "—"}</div>
+                  <div className="detail-label">Course</div>
+                  <div className="detail-value">{session.course_name || session.batch_name || "—"}</div>
                 </div>
                 <div>
                   <div className="detail-label">Session</div>

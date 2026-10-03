@@ -23,6 +23,7 @@ from models.session_attendance import SessionAttendance
 from models.mentor import Mentor
 from models.resource import Resource
 from models.nps import NPSFeedback
+from models.batch import Batch
 
 
 # =========================================================
@@ -50,7 +51,17 @@ def _apply_base_filters(query, date_from=None, date_to=None, status=None,
     if batch_name:
         query = query.filter(_name_matches(SessionModel.batch_name, batch_name))
     if course_name:
-        query = query.filter(_name_matches(SessionModel.course_name, course_name))
+        # Sessions name their course, or (older ones) link to a course record
+        # by batch_name — match either.
+        wanted = course_name.strip().lower()
+        linked = [
+            b.batch_name for b in query.session.query(Batch).all()
+            if b.batch_name and (b.course_name or b.batch_name).strip().lower() == wanted
+        ]
+        conditions = [_name_matches(SessionModel.course_name, course_name)]
+        if linked:
+            conditions.append(SessionModel.batch_name.in_(linked))
+        query = query.filter(or_(*conditions))
     if session_type:
         query = query.filter(or_(SessionModel.session_type == session_type, SessionModel.category == session_type))
     return query
@@ -60,7 +71,14 @@ def _recording_status(session):
     return "Available" if session.recording_link else "Not Available"
 
 
-def _row_dict(session, report_map):
+def _course_by_batch(db):
+    return {
+        b.batch_name.strip().lower(): (b.course_name or b.batch_name)
+        for b in db.query(Batch).all() if b.batch_name
+    }
+
+
+def _row_dict(session, report_map, course_map=None):
     report = report_map.get(session.id)
     return {
         "id": session.id,
@@ -70,7 +88,8 @@ def _row_dict(session, report_map):
         "topic": session.topic,
         "mentor_name": session.mentor_name,
         "batch_name": session.batch_name,
-        "course_name": session.course_name,
+        # The portal shows courses: fall back to the course of the linked record.
+        "course_name": session.course_name or (course_map or {}).get((session.batch_name or "").strip().lower()) or session.batch_name,
         "session_type": session.session_type or session.category,
         "status": session.status,
         "learner_count": session.registered_students or 0,
@@ -96,7 +115,8 @@ def _filtered_rows(db, date_from=None, date_to=None, status=None, mentor_name=No
         reports = db.query(SessionReport).filter(SessionReport.session_id.in_(session_ids)).all()
         report_map = {r.session_id: r for r in reports}
 
-    rows = [_row_dict(s, report_map) for s in sessions]
+    course_map = _course_by_batch(db)
+    rows = [_row_dict(s, report_map, course_map) for s in sessions]
 
     if recording_status:
         rows = [r for r in rows if r["recording_status"] == recording_status]
@@ -111,7 +131,7 @@ def _filtered_rows(db, date_from=None, date_to=None, status=None, mentor_name=No
             if term in str(r["id"]).lower()
             or term in (r["topic"] or "").lower()
             or term in (r["mentor_name"] or "").lower()
-            or term in (r["batch_name"] or "").lower()
+            or term in (r["course_name"] or "").lower()
         ]
 
     return rows
@@ -632,14 +652,14 @@ def build_csv(db, filters, search=None):
     writer = csv.writer(buffer)
     writer.writerow([
         "Session ID", "Date", "Time", "Duration (min)", "Topic", "Mentor",
-        "Batch", "Course", "Session Type", "Status", "Learner Count",
+        "Course", "Session Type", "Status", "Learner Count",
         "Attendance", "Attendance %", "Recording Status", "Report Status",
     ])
 
     for r in rows:
         writer.writerow([
             r["id"], r["session_date"], r["session_time"], r["duration"],
-            r["topic"], r["mentor_name"], r["batch_name"], r["course_name"],
+            r["topic"], r["mentor_name"], r["course_name"],
             r["session_type"], r["status"], r["learner_count"], r["attendance"],
             r["attendance_percentage"], r["recording_status"], r["report_status"],
         ])

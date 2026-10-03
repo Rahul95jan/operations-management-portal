@@ -33,7 +33,7 @@ SECTIONS = {
     "dashboard":        {"label": "Dashboard",         "route": "/",                  "actions": ["view"]},
     "sessions":         {"label": "Sessions",          "route": "/sessions",          "actions": ["view", "create", "edit", "delete"]},
     "mentors":          {"label": "Mentors",            "route": "/mentors",           "actions": ["view", "create", "edit", "delete"]},
-    "batches":          {"label": "Batches",            "route": "/batches",           "actions": ["view", "create", "edit", "delete"]},
+    "batches":          {"label": "Courses",            "route": "/batches",           "actions": ["view", "create", "edit", "delete"]},
     "analytics":        {"label": "Analytics",          "route": "/analytics",         "actions": ["view", "export"]},
     "invoices":         {"label": "Invoices",           "route": "/invoice-generator", "actions": ["view", "create", "edit"]},
     "resources":        {"label": "Resource Portal",    "route": "/resources",         "actions": ["view", "manage"]},

@@ -53,7 +53,9 @@ const DATE_RANGES = [
   { value: "month", label: "This Month" },
 ];
 
-const EMPTY_FILTERS = { range: "", batch_name: "", mentor_name: "", session_type: "", session_id: "" };
+const EMPTY_FILTERS = { range: "", course_name: "", mentor_name: "", session_type: "", session_id: "" };
+// Rows carry the session's course; older sessions only have a batch link.
+const rowCourse = (r) => (r.course_name || r.batch_name || "").trim();
 
 // Session-type chip colours (same palette as the Sessions page).
 const TYPE_STYLES = {
@@ -230,7 +232,7 @@ export default function ResourceTrackerPage() {
 
   const options = useMemo(
     () => ({
-      batch_name: unique((rows || []).map((r) => r.batch_name)),
+      course_name: unique((rows || []).map((r) => rowCourse(r))),
       // Mentor names come from Mentor Management (falls back to the rows'
       // names if the Mentors list couldn't be loaded).
       mentor_name: mentors.length ? unique(mentors.map((m) => (m.name || "").trim())) : unique((rows || []).map((r) => r.mentor_name)),
@@ -270,13 +272,13 @@ export default function ResourceTrackerPage() {
     if (!rows) return [];
     const term = search.trim().toLowerCase();
     return rows.filter((r) => {
-      if (filters.batch_name && r.batch_name !== filters.batch_name) return false;
+      if (filters.course_name && normName(rowCourse(r)) !== normName(filters.course_name)) return false;
       if (filters.mentor_name && normName(r.mentor_name) !== normName(filters.mentor_name)) return false;
       if (filters.session_type && (r.session_type || "Live Session") !== filters.session_type) return false;
       if (filters.session_id && String(r.session_id) !== filters.session_id) return false;
       if (!inRange(r, filters.range)) return false;
       if (term) {
-        const haystack = [r.session_topic, r.course_name, r.batch_name, r.mentor_name, ...(r.required_resources || []), ...(r.missing_resources || [])]
+        const haystack = [r.session_topic, rowCourse(r), r.mentor_name, ...(r.required_resources || []), ...(r.missing_resources || [])]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
@@ -300,7 +302,7 @@ export default function ResourceTrackerPage() {
     if (!sort.field) return list;
     const dir = sort.dir === "asc" ? 1 : -1;
     const key = {
-      batch: (r) => (r.batch_name || "").toLowerCase(),
+      batch: (r) => rowCourse(r).toLowerCase(),
       due: (r) => parseServerDate(r.due_at)?.getTime() ?? null,
       status: (r) => STATUS_ORDER[displayStatus(r.status)] ?? 9,
       submitted: (r) => (r.missing_count > 0 ? null : parseServerDate(r.received_at)?.getTime() ?? null),
@@ -366,10 +368,10 @@ export default function ResourceTrackerPage() {
                 {DATE_RANGES.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
               </select>
             </FilterField>
-            <FilterField icon={Layers} label="Batch">
-              <select value={draft.batch_name} onChange={(e) => setDraftField("batch_name", e.target.value)}>
-                <option value="">All Batches</option>
-                {options.batch_name.map((b) => <option key={b} value={b}>{b}</option>)}
+            <FilterField icon={Layers} label="Course">
+              <select value={draft.course_name} onChange={(e) => setDraftField("course_name", e.target.value)}>
+                <option value="">All Courses</option>
+                {options.course_name.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </FilterField>
             <FilterField icon={Users} label="Mentor">
@@ -399,7 +401,7 @@ export default function ResourceTrackerPage() {
             <div className="search">
               <label>Search</label>
               <div className="search-box">
-                <input placeholder="Search by session, batch or resource…" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <input placeholder="Search by session, course or resource…" value={search} onChange={(e) => setSearch(e.target.value)} />
                 <span className="search-btn"><Search size={15} /></span>
               </div>
             </div>
@@ -456,7 +458,7 @@ export default function ResourceTrackerPage() {
                     <tr>
                       <th className="c-num">#</th>
                       <th>Session Details</th>
-                      <SortHeader label="Batch" field="batch" sort={sort} onSort={toggleSort} />
+                      <SortHeader label="Course" field="batch" sort={sort} onSort={toggleSort} />
                       <SortHeader label="Due Date" field="due" sort={sort} onSort={toggleSort} />
                       <SortHeader label="Submission Status" field="status" sort={sort} onSort={toggleSort} />
                       <SortHeader label="Submitted Date" field="submitted" sort={sort} onSort={toggleSort} />
@@ -489,7 +491,7 @@ export default function ResourceTrackerPage() {
                               <span className="sub">· {r.session_date ? formatDate(`${r.session_date}T00:00:00`) : "—"}</span>
                             </div>
                           </td>
-                          <td className="nowrap">{r.batch_name || "—"}</td>
+                          <td className="nowrap">{rowCourse(r) || "—"}</td>
                           <td className="nowrap">
                             {r.due_at ? (
                               <>

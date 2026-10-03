@@ -106,7 +106,7 @@ export default function LiveSessionReports() {
 
             {selected && (
               <div className="info-grid">
-                <Info label="Batch" value={selected.batch_name} />
+                <Info label="Course" value={selected.course_name || selected.batch_name} />
                 <Info label="Mentor" value={selected.mentor_name} />
                 <Info label="Date" value={selected.session_date} />
                 <Info label="Time" value={selected.session_time} />
@@ -123,7 +123,7 @@ export default function LiveSessionReports() {
                 <div className="card-head">
                   <div>
                     <h2 className="card-title">🎯 Attendance (Zoom report)</h2>
-                    <p className="hint">Upload Zoom&apos;s attendance / participants report (CSV or Excel). Learners are matched by email; joining more than 10 min after the start counts as Late, and the mentor (host) is left out. Absentees are counted against Zoom&apos;s registrants or the batch strength.</p>
+                    <p className="hint">Upload Zoom&apos;s attendance / participants report (CSV or Excel). Learners are matched by email; joining more than 10 min after the start counts as Late, and the mentor (host) is left out. Absentees are counted against Zoom&apos;s registrants or the course strength.</p>
                   </div>
                   <div className="actions">
                     <FileButton label="Import Attendance" busy={importing === "attendance"} onFile={(f) => importReport("attendance", f)} />

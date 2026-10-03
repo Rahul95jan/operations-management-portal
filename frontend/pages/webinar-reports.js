@@ -582,7 +582,7 @@ export default function WebinarReports() {
                   <option value="">Select Webinar Session</option>
                   {sessions.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.topic} | {s.mentor_name} | {s.batch_name} | {s.session_date}
+                      {s.topic} | {s.mentor_name} | {s.course_name || s.batch_name || "—"} | {s.session_date}
                     </option>
                   ))}
                 </select>
@@ -599,7 +599,7 @@ export default function WebinarReports() {
 
             {selectedSession && (
               <div className="info-grid" style={{ marginTop: "16px" }}>
-                <div className="info-chip"><div className="info-chip-label">Batch</div><div className="info-chip-value">{selectedSession.batch_name || "—"}</div></div>
+                <div className="info-chip"><div className="info-chip-label">Course</div><div className="info-chip-value">{selectedSession.course_name || selectedSession.batch_name || "—"}</div></div>
                 <div className="info-chip"><div className="info-chip-label">Mentor</div><div className="info-chip-value">{selectedSession.mentor_name || "—"}</div></div>
                 <div className="info-chip"><div className="info-chip-label">Date</div><div className="info-chip-value">{selectedSession.session_date || "—"}</div></div>
                 <div className="info-chip"><div className="info-chip-label">Platform</div><div className="info-chip-value">{selectedSession.platform || "Zoom"}</div></div>
@@ -801,7 +801,7 @@ export default function WebinarReports() {
                 <thead>
                   <tr>
                     <th>Title</th>
-                    <th>Batch</th>
+                    <th>Course</th>
                     <th>Mentor</th>
                     <th>Date</th>
                     <th>Registered</th>
@@ -823,7 +823,7 @@ export default function WebinarReports() {
                   {reports.map((r) => (
                     <tr key={r.id}>
                       <td className="strong">{r.webinar_title}</td>
-                      <td className="muted">{r.batch_name}</td>
+                      <td className="muted">{r.course_name || r.batch_name || "—"}</td>
                       <td className="muted">{r.mentor_name}</td>
                       <td className="muted">{r.session_date}</td>
                       <td className="muted">{r.registered_learners}</td>
@@ -859,7 +859,7 @@ export default function WebinarReports() {
                 <div>
                   <h2 className="card-title" style={{ margin: 0 }}>{viewReport.webinar_title}</h2>
                   <p className="hint-text" style={{ margin: "4px 0 0" }}>
-                    {viewReport.batch_name} · {viewReport.mentor_name} · {viewReport.session_date}
+                    {viewReport.course_name || viewReport.batch_name || "—"} · {viewReport.mentor_name} · {viewReport.session_date}
                   </p>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>

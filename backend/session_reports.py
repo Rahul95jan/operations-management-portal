@@ -9,9 +9,12 @@ attendance rows). No new auth/permission system — mirrors every other module.
 
 import csv
 import io
+import json
 from datetime import datetime
 
-from sqlalchemy import func
+from dateutil import parser as date_parser
+
+from sqlalchemy import func, or_
 
 from models.session import Session as SessionModel
 from models.session_analytics import SessionAnalytics
@@ -49,7 +52,7 @@ def _apply_base_filters(query, date_from=None, date_to=None, status=None,
     if course_name:
         query = query.filter(_name_matches(SessionModel.course_name, course_name))
     if session_type:
-        query = query.filter(SessionModel.category == session_type)
+        query = query.filter(or_(SessionModel.session_type == session_type, SessionModel.category == session_type))
     return query
 
 
@@ -68,7 +71,7 @@ def _row_dict(session, report_map):
         "mentor_name": session.mentor_name,
         "batch_name": session.batch_name,
         "course_name": session.course_name,
-        "session_type": session.category,
+        "session_type": session.session_type or session.category,
         "status": session.status,
         "learner_count": session.registered_students or 0,
         "attendance": session.attended_students or 0,
@@ -284,7 +287,7 @@ def session_detail_bundle(db, session_id):
             "session_date": session.session_date,
             "session_time": session.session_time,
             "duration": session.duration,
-            "session_type": session.category,
+            "session_type": session.session_type or session.category,
             "status": session.status,
             "course_name": session.course_name,
             "batch_name": session.batch_name,
@@ -373,6 +376,12 @@ def _avg_time_of_day(values):
                 break
             except ValueError:
                 continue
+        else:
+            # Zoom exports full date-times ("09/25/2026 08:31:05 PM").
+            try:
+                parsed.append(date_parser.parse(v))
+            except (ValueError, TypeError, OverflowError):
+                pass
 
     if not parsed:
         return None
@@ -390,13 +399,16 @@ def attendance_bundle(db, session_id):
     rows = db.query(SessionAttendance).filter(SessionAttendance.session_id == session_id).order_by(SessionAttendance.id.asc()).all()
 
     if rows:
-        total = len(rows)
         present = len([r for r in rows if r.attendance_status == "Present"])
-        absent = len([r for r in rows if r.attendance_status == "Absent"])
         late = len([r for r in rows if r.attendance_status == "Late"])
+        # Expected learners can exceed the rows (a participants report only
+        # lists people who joined), so absentees = expected - attendees.
+        total = max(len(rows), session.registered_students or 0)
+        absent = max(total - present - late, 0)
         attendance_percentage = round((present + late) / total * 100, 2) if total else 0
-        average_join_time = _avg_time_of_day([r.join_time for r in rows])
-        average_leave_time = _avg_time_of_day([r.leave_time for r in rows])
+        attended_rows = [r for r in rows if r.attendance_status in ("Present", "Late")]
+        average_join_time = _avg_time_of_day([r.join_time for r in attended_rows])
+        average_leave_time = _avg_time_of_day([r.leave_time for r in attended_rows])
 
         learners = [
             {
@@ -452,8 +464,10 @@ def feedback_bundle(db, session_id):
     nps_scores = [r.nps_score for r in nps_records if r.nps_score is not None]
     average_nps = round(sum(nps_scores) / len(nps_scores), 2) if nps_scores else None
 
+    poll = _poll_summary(report)
+
     return {
-        "average_rating": session.feedback_score or None,
+        "average_rating": session.feedback_score or (poll or {}).get("poll_average_rating") or None,
         "nps": {
             "average_score": average_nps,
             "response_count": len(nps_records),
@@ -464,9 +478,86 @@ def feedback_bundle(db, session_id):
     }
 
 
+def _poll_summary(report):
+    if not report or not report.poll_summary:
+        return None
+    try:
+        return json.loads(report.poll_summary)
+    except (ValueError, TypeError):
+        return None
+
+
+def poll_bundle(db, session_id):
+    session = _get_session(db, session_id)
+    if not session:
+        return None
+
+    report = db.query(SessionReport).filter(SessionReport.session_id == session_id).first()
+    poll = _poll_summary(report)
+    if not poll:
+        return {"has_data": False}
+
+    attended = session.attended_students or 0
+    responses = poll.get("poll_responses") or 0
+    conducted = poll.get("polls_conducted") or 0
+    # Each attendee can answer every poll, so compare the average responses
+    # per poll with the number who attended (only once attendance exists).
+    response_rate = min(round(responses / conducted / attended * 100, 1), 100.0) if attended and conducted else None
+    return {
+        "has_data": True,
+        "polls_conducted": poll.get("polls_conducted", 0),
+        "poll_responses": responses,
+        "poll_average_rating": poll.get("poll_average_rating", 0),
+        "highest_rated_poll": poll.get("highest_rated_poll", 0),
+        "poll_health_status": poll.get("poll_health_status", "No Data"),
+        # Responses vs learners who attended — only meaningful once attendance is imported.
+        "response_rate": response_rate,
+        "polls": poll.get("polls", []),
+        "imported_at": poll.get("imported_at"),
+    }
+
+
 # =========================================================
 # Mutations
 # =========================================================
+
+def replace_attendance(db, session_id, entries, expected_learners):
+    """Replaces a session's attendance with imported rows and syncs the
+    session's aggregate counts so lists, analytics and exports agree."""
+    session = _get_session(db, session_id)
+    db.query(SessionAttendance).filter(SessionAttendance.session_id == session_id).delete()
+    for e in entries:
+        db.add(SessionAttendance(session_id=session_id, **e))
+
+    attended = len([e for e in entries if e["attendance_status"] in ("Present", "Late")])
+    total = max(len(entries), expected_learners or 0)
+    if session:
+        session.registered_students = total
+        session.attended_students = attended
+        session.attendance_percentage = round(attended / total * 100, 2) if total else 0
+    db.commit()
+    return {"total": total, "attended": attended}
+
+
+def clear_attendance(db, session_id):
+    session = _get_session(db, session_id)
+    removed = db.query(SessionAttendance).filter(SessionAttendance.session_id == session_id).delete()
+    if session:
+        session.registered_students = 0
+        session.attended_students = 0
+        session.attendance_percentage = 0
+    db.commit()
+    return removed
+
+
+def save_poll_summary(db, session_id, summary):
+    report = db.query(SessionReport).filter(SessionReport.session_id == session_id).first()
+    if not report:
+        report = SessionReport(session_id=session_id, report_status="Pending")
+        db.add(report)
+    report.poll_summary = json.dumps(summary) if summary else None
+    db.commit()
+
 
 def upsert_report(db, session_id, data: dict):
     report = db.query(SessionReport).filter(SessionReport.session_id == session_id).first()

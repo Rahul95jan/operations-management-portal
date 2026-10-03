@@ -129,26 +129,28 @@ from auth import (
 app = FastAPI()
 
 
-# Additive, idempotent columns for DB-stored photos. Run at startup because
-# Base.metadata.create_all never adds columns to existing tables.
-PHOTO_STORAGE_MIGRATIONS = [
+# Additive, idempotent columns (DB-stored photos, imported session polls).
+# Run at startup because Base.metadata.create_all never adds columns to
+# existing tables.
+STARTUP_MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_data BYTEA",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime VARCHAR",
     "ALTER TABLE mentors ADD COLUMN IF NOT EXISTS photo_data BYTEA",
     "ALTER TABLE mentors ADD COLUMN IF NOT EXISTS photo_mime VARCHAR",
+    "ALTER TABLE session_reports ADD COLUMN IF NOT EXISTS poll_summary TEXT",
 ]
 
 
 @app.on_event("startup")
-def _ensure_photo_columns():
+def _ensure_startup_columns():
     from sqlalchemy import text
 
-    try:
-        with engine.begin() as conn:
-            for stmt in PHOTO_STORAGE_MIGRATIONS:
+    for stmt in STARTUP_MIGRATIONS:
+        try:
+            with engine.begin() as conn:
                 conn.execute(text(stmt))
-    except Exception as exc:  # never block startup; photo uploads will report the error
-        print(f"Photo column migration failed: {exc}")
+        except Exception as exc:  # never block startup; the affected feature will report the error
+            print(f"Startup migration failed ({stmt}): {exc}")
 
 
 @app.on_event("startup")
@@ -3925,7 +3927,7 @@ ZOOM_SUMMARY_ALIASES = {
     "meeting_id": ["id", "webinar_id"],
     "scheduled_time": ["scheduled_time"],
     "duration_minutes": ["duration_minutes", "actual_duration_minutes"],
-    "total_registrants": ["registrants"],
+    "total_registrants": ["registrants", "registered"],
     "cancelled_registrants": ["cancelled_registrants"],
     "approved_registrants": ["approved_registrants"],
     "denied_registrants": ["denied_registrants"],
@@ -3974,7 +3976,7 @@ def find_header_row(raw_rows, max_scan=15):
 def extract_meeting_summary(raw_rows, max_scan=15):
     for i, row in enumerate(raw_rows[:max_scan]):
         cells = [normalize_header(c) for c in row]
-        if "topic" in cells and ("registrants" in cells or "participants" in cells) and i + 1 < len(raw_rows):
+        if "topic" in cells and ({"registrants", "registered", "participants", "unique_viewers"} & set(cells)) and i + 1 < len(raw_rows):
             data_row = raw_rows[i + 1]
             summary = {}
             for field, aliases in ZOOM_SUMMARY_ALIASES.items():
@@ -4038,12 +4040,17 @@ def read_import_table(contents: bytes, filename: str):
     return df, summary
 
 
-@app.post("/webinar-registrations/{session_id}/import")
-async def import_webinar_registrations(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+def zoom_dt(value):
+    try:
+        return date_parser.parse(value)
+    except (ValueError, TypeError, OverflowError):
+        return None
 
-    contents = await file.read()
 
-    df, meeting_summary = read_import_table(contents, file.filename)
+def aggregate_zoom_learners(df):
+    """Collapses a Zoom registration/attendance table to one entry per email.
+    Returns (aggregated, skipped, not_approved); aggregated is None when the
+    file has no email column. Shared by the webinar and session-report imports."""
     df.columns = [normalize_header(c) for c in df.columns]
 
     def col_for(field):
@@ -4054,7 +4061,7 @@ async def import_webinar_registrations(session_id: int, file: UploadFile = File(
 
     email_col = col_for("learner_email")
     if not email_col:
-        return {"message": "Could not find an email column in this file.", "imported": 0, "updated": 0}
+        return None, 0, 0
 
     name_col = col_for("learner_name")
     first_col = col_for("first_name")
@@ -4148,6 +4155,20 @@ async def import_webinar_registrations(session_id: int, file: UploadFile = File(
             existing_dt, new_dt = parse_dt(entry["leave_time"]) if entry["leave_time"] else None, parse_dt(leave_time)
             if not entry["leave_time"] or (existing_dt and new_dt and new_dt > existing_dt):
                 entry["leave_time"] = leave_time
+
+    return aggregated, skipped, not_approved
+
+
+@app.post("/webinar-registrations/{session_id}/import")
+async def import_webinar_registrations(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+
+    contents = await file.read()
+
+    df, meeting_summary = read_import_table(contents, file.filename)
+
+    aggregated, skipped, not_approved = aggregate_zoom_learners(df)
+    if aggregated is None:
+        return {"message": "Could not find an email column in this file.", "imported": 0, "updated": 0}
 
     existing = {
         r.learner_email: r
@@ -6656,6 +6677,142 @@ def get_session_attendance(session_id: int, db: Session = Depends(get_db)):
 def create_session_attendance_row(session_id: int, data: SessionAttendanceCreate, db: Session = Depends(get_db)):
     row = session_reports.add_attendance_row(db, session_id, data.dict())
     return {"success": True, "id": row.id}
+
+
+# Learners who join more than this many minutes after the scheduled start are "Late".
+LATE_GRACE_MINUTES = 10
+
+
+@app.post("/session-reports/{session_id}/attendance/import")
+async def import_session_attendance(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Imports a Zoom attendance / participants (or registration) report into
+    this session's attendance: one row per learner, Present / Late / Absent."""
+    from fastapi import HTTPException
+
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    contents = await file.read()
+    try:
+        df, meeting_summary = read_import_table(contents, file.filename)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Couldn't read this file. Upload Zoom's attendance report as CSV or Excel.")
+
+    aggregated, skipped, not_approved = aggregate_zoom_learners(df)
+    if aggregated is None:
+        raise HTTPException(status_code=400, detail="Couldn't find an Email column. Upload Zoom's attendance / participants report.")
+
+    # The mentor shows up in Zoom's participant list as host — leave them out.
+    mentor = None
+    if session.mentor_name:
+        mentor = db.query(Mentor).filter(func.lower(func.trim(Mentor.name)) == session.mentor_name.strip().lower()).first()
+    mentor_email = (mentor.email or "").strip().lower() if mentor else ""
+    mentor_name = (session.mentor_name or "").strip().lower()
+
+    start_dt = zoom_dt(f"{session.session_date} {session.session_time}") if session.session_date and session.session_time else None
+
+    entries, host_rows = [], 0
+    for email, e in aggregated.items():
+        if (mentor_email and email.strip().lower() == mentor_email) or (mentor_name and (e["name"] or "").strip().lower() == mentor_name):
+            host_rows += 1
+            continue
+        if not e["attended"]:
+            status = "Absent"
+        else:
+            join_dt = zoom_dt(e["join_time"]) if e["join_time"] else None
+            late = bool(start_dt and join_dt and (join_dt - start_dt).total_seconds() > LATE_GRACE_MINUTES * 60)
+            status = "Late" if late else "Present"
+        entries.append({
+            "learner_name": e["name"] or email.split("@")[0],
+            "learner_email": email,
+            "join_time": e["join_time"],
+            "leave_time": e["leave_time"],
+            "duration_minutes": e["duration"] or None,
+            "attendance_status": status,
+        })
+
+    # Expected learners: Zoom's own registrant count if the file has one,
+    # otherwise the batch's strength — so absentees who never joined count.
+    expected = 0
+    for key in ("approved_registrants", "total_registrants"):
+        try:
+            expected = int(float((meeting_summary or {}).get(key) or 0))
+        except (TypeError, ValueError):
+            expected = 0
+        if expected:
+            break
+    expected_source = "Zoom registrants" if expected else ""
+    if not expected and session.batch_name:
+        batch = db.query(Batch).filter(func.lower(func.trim(Batch.batch_name)) == session.batch_name.strip().lower()).first()
+        if batch and batch.strength:
+            expected = int(batch.strength)
+            expected_source = "batch strength"
+
+    totals = session_reports.replace_attendance(db, session_id, entries, expected)
+
+    message = f"Imported {len(entries)} learner(s): {totals['attended']} attended out of {totals['total']}"
+    if expected_source and totals["total"] > len(entries):
+        message += f" (total from {expected_source})"
+    message += "."
+    if host_rows:
+        message += " Mentor/host row excluded."
+    if skipped:
+        message += f" Skipped {skipped} row(s) without an email."
+    return {"success": True, "message": message, "total": totals["total"], "attended": totals["attended"]}
+
+
+@app.delete("/session-reports/{session_id}/attendance")
+def clear_session_attendance(session_id: int, db: Session = Depends(get_db)):
+    removed = session_reports.clear_attendance(db, session_id)
+    return {"success": True, "message": f"Cleared {removed} attendance record(s)."}
+
+
+@app.get("/session-reports/{session_id}/polls")
+def get_session_polls(session_id: int, db: Session = Depends(get_db)):
+    bundle = session_reports.poll_bundle(db, session_id)
+    if bundle is None:
+        return {"success": False, "message": "Session not found"}
+    return {"success": True, **bundle}
+
+
+@app.post("/session-reports/{session_id}/polls/import")
+async def import_session_polls(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Imports Zoom's poll report for this session and stores the parsed summary."""
+    from fastapi import HTTPException
+
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    contents = await file.read()
+    try:
+        if (file.filename or "").lower().endswith(".csv"):
+            raw_rows = list(csv.reader(io.StringIO(decode_csv_bytes(contents))))
+        else:
+            raw = pd.read_excel(io.BytesIO(contents), header=None, dtype=str)
+            raw_rows = [["" if pd.isna(c) else str(c) for c in row] for row in raw.values.tolist()]
+        result = parse_poll_report(raw_rows)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Couldn't read this file. Upload Zoom's poll report as CSV or Excel.")
+
+    if not result["polls_conducted"]:
+        raise HTTPException(status_code=400, detail="No polls found in this file. Make sure it's Zoom's Poll Report export.")
+
+    result["poll_health_status"] = compute_poll_health_status(result["poll_average_rating"])
+    result["imported_at"] = datetime.utcnow().isoformat()
+    session_reports.save_poll_summary(db, session_id, result)
+
+    return {
+        "success": True,
+        "message": f"Imported {result['polls_conducted']} poll(s) with {result['poll_responses']} response(s). Average rating {result['poll_average_rating']}/5 — {result['poll_health_status']}.",
+    }
+
+
+@app.delete("/session-reports/{session_id}/polls")
+def clear_session_polls(session_id: int, db: Session = Depends(get_db)):
+    session_reports.save_poll_summary(db, session_id, None)
+    return {"success": True, "message": "Cleared imported poll data."}
 
 
 @app.put("/session-reports/{session_id}/attendance/{attendance_id}")

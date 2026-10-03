@@ -25,6 +25,8 @@ import {
   FileText,
   Presentation,
   Star,
+  Upload,
+  BarChart3,
 } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -77,6 +79,23 @@ function ProgressBar({ percent, color = "#16a34a" }) {
     </div>
   );
 }
+
+// File button that uploads straight away on pick (CSV / Excel from Zoom).
+function ImportButton({ label, busy, onFile }) {
+  return (
+    <label className={`import-btn ${busy ? "import-btn-busy" : ""}`}>
+      <Upload size={13} strokeWidth={2.4} /> {busy ? "Importing…" : label}
+      <input
+        type="file"
+        accept=".csv,.xlsx,.xls"
+        disabled={busy}
+        onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) onFile(f); }}
+      />
+    </label>
+  );
+}
+
+const POLL_HEALTH_TONE = { Good: "#16a34a", Poor: "#dc2626" };
 
 function KPICard({ label, value, color = "#0f172a", icon: Icon, percent }) {
   return (
@@ -217,6 +236,9 @@ export default function SessionReportDetail() {
   const [liveDetails, setLiveDetails] = useState(null);
   const [attendance, setAttendance] = useState(null);
   const [feedback, setFeedback] = useState(null);
+  const [polls, setPolls] = useState(null);
+  const [importing, setImporting] = useState(null); // "attendance" | "polls" | null
+  const [importMsg, setImportMsg] = useState({ attendance: null, polls: null }); // { ok, text }
 
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -234,8 +256,9 @@ export default function SessionReportDetail() {
       fetch(`${API}/session-reports/${id}/live-details`).then((r) => r.json()),
       fetch(`${API}/session-reports/${id}/attendance`).then((r) => r.json()),
       fetch(`${API}/session-reports/${id}/feedback`).then((r) => r.json()),
+      fetch(`${API}/session-reports/${id}/polls`).then((r) => r.json()).catch(() => null),
     ])
-      .then(([detail, live, att, fb]) => {
+      .then(([detail, live, att, fb, pl]) => {
         if (!detail.success) {
           setNotFound(true);
           return;
@@ -245,6 +268,7 @@ export default function SessionReportDetail() {
         setLiveDetails(live.success ? live : null);
         setAttendance(att.success ? att : null);
         setFeedback(fb.success ? fb : null);
+        setPolls(pl && pl.success ? pl : null);
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
@@ -277,6 +301,35 @@ export default function SessionReportDetail() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ report_status: status }),
     });
+    load();
+  };
+
+  // Upload a Zoom report for this session ("attendance" or "polls").
+  const importReport = async (kind, file) => {
+    setImporting(kind);
+    setImportMsg((m) => ({ ...m, [kind]: null }));
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const path = kind === "attendance" ? "attendance/import" : "polls/import";
+      const res = await fetch(`${API}/session-reports/${id}/${path}`, { method: "POST", body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Import failed. Please check the file and try again.");
+      setImportMsg((m) => ({ ...m, [kind]: { ok: true, text: data.message } }));
+      load();
+    } catch (err) {
+      setImportMsg((m) => ({ ...m, [kind]: { ok: false, text: err.message === "Failed to fetch" ? "Couldn't reach the server — please try again." : err.message } }));
+    } finally {
+      setImporting(null);
+    }
+  };
+
+  const clearImported = async (kind) => {
+    const what = kind === "attendance" ? "all imported attendance records" : "the imported poll results";
+    if (!window.confirm(`Clear ${what} for this session? You can re-import a corrected file afterwards.`)) return;
+    const res = await fetch(`${API}/session-reports/${id}/${kind}`, { method: "DELETE" }).catch(() => null);
+    const data = res ? await res.json().catch(() => ({})) : {};
+    setImportMsg((m) => ({ ...m, [kind]: res && res.ok ? { ok: true, text: data.message } : { ok: false, text: "Couldn't clear — please try again." } }));
     load();
   };
 
@@ -380,7 +433,19 @@ export default function SessionReportDetail() {
 
           {/* C. Attendance Report */}
           <div className="card" style={{ marginBottom: "24px" }}>
-            <SectionHeader icon={Users} title="C. Attendance Report" accent="#16a34a" />
+            <SectionHeader
+              icon={Users}
+              title="C. Attendance Report"
+              accent="#16a34a"
+              right={
+                <div className="import-actions">
+                  <ImportButton label="Import Attendance" busy={importing === "attendance"} onFile={(f) => importReport("attendance", f)} />
+                  {attendance?.has_detailed_rows && <button className="clear-btn" onClick={() => clearImported("attendance")}>Clear</button>}
+                </div>
+              }
+            />
+            <p className="import-hint">Upload Zoom&apos;s attendance / participants report (CSV or Excel). Learners are matched by email; joining more than 10 min after the start counts as Late, and the mentor (host) is left out.</p>
+            {importMsg.attendance && <div className={`import-msg ${importMsg.attendance.ok ? "import-msg-ok" : "import-msg-err"}`}>{importMsg.attendance.text}</div>}
             {attendance && (
               <div className="kpi-grid" style={{ marginBottom: "18px" }}>
                 <KPICard label="Total Learners" value={attendance.total_learners} icon={Users} />
@@ -394,7 +459,7 @@ export default function SessionReportDetail() {
             )}
 
             {!attendance?.has_detailed_rows && (
-              <p className="hint-text">ℹ️ No individual attendance records captured yet — the KPIs above use the session's aggregate attendance count.</p>
+              <p className="hint-text">ℹ️ No attendance imported yet — use “Import Attendance” above to load Zoom&apos;s report for this session.</p>
             )}
 
             <div className="table-wrap">
@@ -422,9 +487,57 @@ export default function SessionReportDetail() {
             </div>
           </div>
 
-          {/* D. Session Performance */}
+          {/* D. Poll Report */}
           <div className="card" style={{ marginBottom: "24px" }}>
-            <SectionHeader icon={Gauge} title="D. Session Performance" accent="#f59e0b" />
+            <SectionHeader
+              icon={BarChart3}
+              title="D. Poll Report"
+              accent="#7c3aed"
+              right={
+                <div className="import-actions">
+                  <ImportButton label="Import Poll Report" busy={importing === "polls"} onFile={(f) => importReport("polls", f)} />
+                  {polls?.has_data && <button className="clear-btn" onClick={() => clearImported("polls")}>Clear</button>}
+                </div>
+              }
+            />
+            <p className="import-hint">Upload Zoom&apos;s Poll Report (CSV or Excel). Ratings of 1–5 are averaged per question, then per poll; 4.3 / 5 or above counts as good poll health.</p>
+            {importMsg.polls && <div className={`import-msg ${importMsg.polls.ok ? "import-msg-ok" : "import-msg-err"}`}>{importMsg.polls.text}</div>}
+
+            {polls?.has_data ? (
+              <>
+                <div className="kpi-grid" style={{ marginBottom: "18px" }}>
+                  <KPICard label="Polls Conducted" value={polls.polls_conducted} color="#7c3aed" icon={BarChart3} />
+                  <KPICard label="Poll Responses" value={polls.poll_responses} color="#2563eb" icon={Users} />
+                  <KPICard label="Response Rate" value={polls.response_rate !== null ? `${polls.response_rate}%` : null} color="#0891b2" icon={TrendingUp} percent={polls.response_rate ?? undefined} />
+                  <KPICard label="Average Rating" value={`${polls.poll_average_rating} / 5`} color="#f59e0b" icon={Star} />
+                  <KPICard label="Poll Health" value={<StatusPill label={polls.poll_health_status} tone={polls.poll_health_status === "Good" ? "positive" : polls.poll_health_status === "Poor" ? "negative" : "neutral"} icon={polls.poll_health_status === "Good" ? CheckCircle2 : XCircle} />} color={POLL_HEALTH_TONE[polls.poll_health_status] || "#94a3b8"} />
+                </div>
+                {polls.response_rate === null && <p className="hint-text" style={{ marginTop: 0, marginBottom: "12px" }}>ℹ️ Import attendance to see the response rate (responses vs learners who attended).</p>}
+                <div className="table-wrap">
+                  <table className="styled-table">
+                    <thead><tr><th>Poll</th><th>Questions</th><th>Responses</th><th>Question Averages</th><th>Average Rating</th></tr></thead>
+                    <tbody>
+                      {polls.polls.map((pl, i) => (
+                        <tr key={i}>
+                          <td className="strong">{pl.name}</td>
+                          <td className="muted">{pl.questions || "—"}</td>
+                          <td>{pl.responses}</td>
+                          <td className="muted">{pl.question_averages?.length ? pl.question_averages.join(" · ") : "—"}</td>
+                          <td className="strong">{pl.average_rating ? `${pl.average_rating} / 5` : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <div className="empty-state">No poll results imported for this session yet.</div>
+            )}
+          </div>
+
+          {/* E. Session Performance */}
+          <div className="card" style={{ marginBottom: "24px" }}>
+            <SectionHeader icon={Gauge} title="E. Session Performance" accent="#f59e0b" />
             <div className="kpi-grid">
               <KPICard label="Scheduled Duration" value={performance.scheduled_duration ? `${performance.scheduled_duration} min` : null} icon={Clock3} />
               <KPICard label="Actual Duration" value={performance.actual_duration ? `${performance.actual_duration} min` : null} icon={Clock3} />
@@ -437,9 +550,9 @@ export default function SessionReportDetail() {
             </div>
           </div>
 
-          {/* E. Session Content */}
+          {/* F. Session Content */}
           <div className="card" style={{ marginBottom: "24px" }}>
-            <SectionHeader icon={BookOpen} title="E. Session Content" accent="#0ea5e9" />
+            <SectionHeader icon={BookOpen} title="F. Session Content" accent="#0ea5e9" />
             <Field label="Session Topic" value={content.topic} />
 
             <div className="note-grid">
@@ -480,7 +593,7 @@ export default function SessionReportDetail() {
 
           {/* F. Mentor Information */}
           <div className="card" style={{ marginBottom: "24px" }}>
-            <SectionHeader icon={Award} title="F. Mentor Information" accent="#8b5cf6" />
+            <SectionHeader icon={Award} title="G. Mentor Information" accent="#8b5cf6" />
             <div className="field-grid">
               <Field label="Mentor Name" value={mentor_info.mentor_name} />
               <Field label="Mentor Email" value={mentor_info.mentor_email} />
@@ -492,11 +605,11 @@ export default function SessionReportDetail() {
             </div>
           </div>
 
-          {/* G. Session Report (editable) */}
+          {/* H. Session Report (editable) */}
           <div className="card" style={{ marginBottom: "24px" }}>
             <SectionHeader
               icon={FileText}
-              title="G. Session Report"
+              title="H. Session Report"
               accent="#f59e0b"
               right={
                 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -575,7 +688,7 @@ export default function SessionReportDetail() {
 
           {/* H. Session Feedback */}
           <div className="card">
-            <SectionHeader icon={Star} title="H. Session Feedback" accent="#f59e0b" />
+            <SectionHeader icon={Star} title="I. Session Feedback" accent="#f59e0b" />
             <div className="kpi-grid">
               <KPICard label="Average Rating" value={feedback?.average_rating ? `${feedback.average_rating} / 5` : null} color="#f59e0b" icon={Star} />
               <KPICard label="NPS (approx.)" value={feedback?.nps?.average_score} color="#8b5cf6" icon={TrendingUp} />
@@ -611,6 +724,16 @@ export default function SessionReportDetail() {
           .link-chip-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
 
           .hint-text { font-size: 12px; color: #94a3b8; margin: 10px 0 0; }
+          .import-actions { display: flex; align-items: center; gap: 8px; }
+          :global(.import-btn) { display: inline-flex; align-items: center; gap: 6px; background: linear-gradient(120deg, #f59e0b, #fbbf24); color: #0f172a; border-radius: 8px; padding: 8px 13px; font-size: 12.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+          :global(.import-btn input) { display: none; }
+          :global(.import-btn-busy) { opacity: 0.6; cursor: progress; }
+          .clear-btn { background: #fff; border: 1px solid #e2e8f0; color: #b91c1c; border-radius: 8px; padding: 7px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+          .clear-btn:hover { background: #fef2f2; }
+          .import-hint { font-size: 12px; color: #64748b; margin: -6px 0 14px; line-height: 1.5; }
+          .import-msg { font-size: 12.5px; font-weight: 600; border-radius: 8px; padding: 9px 12px; margin-bottom: 14px; }
+          .import-msg-ok { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+          .import-msg-err { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
 
           .table-wrap { overflow-x: auto; margin-top: 12px; }
           .styled-table { width: 100%; border-collapse: collapse; font-size: 13px; }

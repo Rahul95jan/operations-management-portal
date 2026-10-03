@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime
+from sqlalchemy.orm import deferred
 from datetime import datetime
 from database import Base
 
@@ -34,6 +35,9 @@ class SessionReport(Base):
     action_items = Column(Text, nullable=True)
     follow_up_required = Column(Boolean, default=False)
     follow_up_date = Column(String, nullable=True)
+
+    # Parsed Zoom poll report (JSON) imported on the session report page.
+    poll_summary = deferred(Column(Text, nullable=True))
 
     report_status = Column(String, default="Pending")  # Pending | Submitted | Reviewed
     reviewed_by = Column(String, nullable=True)

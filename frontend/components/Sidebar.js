@@ -13,6 +13,7 @@ import {
   PieChart,
   Video,
   FilePlus2,
+  Radio,
   ListChecks,
   UploadCloud,
   Gauge,
@@ -133,6 +134,7 @@ export default function Sidebar() {
                   <NavItem href="/nps/analytics" icon={PieChart} label="NPS Analytics" active={isActive("/nps/analytics")} />
                   <NavItem href="/webinar-analytics" icon={Video} label="Webinar Analytics" active={isActive("/webinar-analytics")} />
                   <NavItem href="/webinar-reports" icon={FilePlus2} label="Log Webinar Report" active={isActive("/webinar-reports")} />
+                  <NavItem href="/live-session-reports" icon={Radio} label="Log Live Session Report" active={isActive("/live-session-reports")} />
                 </>
               )}
 

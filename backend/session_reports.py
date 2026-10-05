@@ -98,6 +98,9 @@ def _row_dict(session, report_map, course_map=None):
         "recording_status": _recording_status(session),
         "report_status": report.report_status if report else "Pending",
         "rating": session.feedback_score or None,
+        "teaching_rating": session.poll_teaching_rating,
+        "doubt_rating": session.poll_doubt_rating,
+        "effectiveness_rating": session.poll_effectiveness_rating,
     }
 
 
@@ -509,6 +512,52 @@ def _poll_summary(report):
         return None
 
 
+# Which poll questions measure what. The academy's standard poll asks about
+# teaching style, doubt handling and overall effectiveness (in that order).
+POLL_DIMENSION_KEYWORDS = [
+    ("teaching", ("teach", "explain", "explanation", "instructor", "trainer", "mentor's style", "style")),
+    ("doubt", ("doubt", "quer", "clarif", "question")),
+    ("effectiveness", ("effective", "overall", "session")),
+]
+POLL_DEFAULT_ORDER = ["teaching", "doubt", "effectiveness"]
+
+
+def _classify_question(label):
+    text = (label or "").lower()
+    for dim, words in POLL_DIMENSION_KEYWORDS:
+        if any(w in text for w in words):
+            return dim
+    return None
+
+
+def poll_dimensions(summary):
+    """Teaching / doubt / effectiveness averages from a parsed poll summary,
+    weighted by each poll's responses. Questions are matched by wording; polls
+    imported before wording was stored fall back to the standard order."""
+    sums = {d: 0.0 for d in POLL_DEFAULT_ORDER}
+    weights = {d: 0 for d in POLL_DEFAULT_ORDER}
+    for poll in (summary or {}).get("polls", []):
+        averages = poll.get("question_averages") or []
+        labels = poll.get("question_labels") or []
+        responses = poll.get("responses") or 1
+        for i, value in enumerate(averages):
+            dim = _classify_question(labels[i]) if i < len(labels) else None
+            if dim is None and not labels and len(averages) == len(POLL_DEFAULT_ORDER):
+                dim = POLL_DEFAULT_ORDER[i]
+            if dim:
+                sums[dim] += value * responses
+                weights[dim] += responses
+    return {d: (round(sums[d] / weights[d], 2) if weights[d] else None) for d in POLL_DEFAULT_ORDER}
+
+
+def _apply_poll_to_session(session, summary):
+    dims = poll_dimensions(summary)
+    session.feedback_score = summary.get("poll_average_rating") or 0
+    session.poll_teaching_rating = dims["teaching"]
+    session.poll_doubt_rating = dims["doubt"]
+    session.poll_effectiveness_rating = dims["effectiveness"]
+
+
 def poll_bundle(db, session_id):
     session = _get_session(db, session_id)
     if not session:
@@ -532,6 +581,7 @@ def poll_bundle(db, session_id):
         "poll_average_rating": poll.get("poll_average_rating", 0),
         "highest_rated_poll": poll.get("highest_rated_poll", 0),
         "poll_health_status": poll.get("poll_health_status", "No Data"),
+        **{f"{dim}_rating": value for dim, value in poll_dimensions(poll).items()},
         # Responses vs learners who attended — only meaningful once attendance is imported.
         "response_rate": response_rate,
         "polls": poll.get("polls", []),
@@ -585,9 +635,14 @@ def save_poll_summary(db, session_id, summary):
     session = _get_session(db, session_id)
     if session:
         if summary and summary.get("poll_average_rating"):
-            session.feedback_score = summary["poll_average_rating"]
-        elif previous and session.feedback_score == previous.get("poll_average_rating"):
-            session.feedback_score = 0  # clearing the poll removes the rating it set
+            _apply_poll_to_session(session, summary)
+        elif previous:
+            # Clearing the poll removes the ratings it set.
+            if session.feedback_score == previous.get("poll_average_rating"):
+                session.feedback_score = 0
+            session.poll_teaching_rating = None
+            session.poll_doubt_rating = None
+            session.poll_effectiveness_rating = None
     db.commit()
 
 
@@ -598,8 +653,10 @@ def backfill_poll_ratings(db):
     for report in db.query(SessionReport).filter(SessionReport.poll_summary.isnot(None)).all():
         poll = _poll_summary(report)
         session = _get_session(db, report.session_id)
-        if poll and poll.get("poll_average_rating") and session and not session.feedback_score:
-            session.feedback_score = poll["poll_average_rating"]
+        if poll and poll.get("poll_average_rating") and session and (
+            not session.feedback_score or session.poll_teaching_rating is None
+        ):
+            _apply_poll_to_session(session, poll)
             updated += 1
     if updated:
         db.commit()

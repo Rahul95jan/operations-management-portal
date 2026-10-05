@@ -45,7 +45,11 @@ class Session(Base):
     attendance_percentage = Column(Float, default=0)
 
     # Feedback
-    feedback_score = Column(Float, default=0)
+    feedback_score = Column(Float, default=0)  # overall rating (average of the poll questions)
+    # Per-question averages from the imported Zoom poll (live session report).
+    poll_teaching_rating = Column(Float, nullable=True)
+    poll_doubt_rating = Column(Float, nullable=True)
+    poll_effectiveness_rating = Column(Float, nullable=True)
 
     # Session Metrics
     assignment_given = Column(String)

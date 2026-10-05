@@ -201,7 +201,10 @@ export default function LiveSessionReports() {
                       <Kpi icon={BarChart3} label="Polls Conducted" value={polls.polls_conducted} color="#7c3aed" />
                       <Kpi icon={Users} label="Poll Responses" value={polls.poll_responses} color="#2563eb" />
                       <Kpi icon={TrendingUp} label="Response Rate" value={polls.response_rate !== null ? `${polls.response_rate}%` : "Import attendance"} color="#0891b2" />
-                      <Kpi icon={Star} label="Average Rating" value={`${polls.poll_average_rating} / 5`} color="#f59e0b" />
+                      <Kpi icon={Star} label="Teaching Style" value={polls.teaching_rating ? `${polls.teaching_rating} / 5` : "—"} color="#3b82f6" />
+                      <Kpi icon={Star} label="Doubt Handling" value={polls.doubt_rating ? `${polls.doubt_rating} / 5` : "—"} color="#8b5cf6" />
+                      <Kpi icon={Star} label="Session Effectiveness" value={polls.effectiveness_rating ? `${polls.effectiveness_rating} / 5` : "—"} color="#0891b2" />
+                      <Kpi icon={Star} label="Overall Rating" value={`${polls.poll_average_rating} / 5`} color="#f59e0b" />
                       <Kpi icon={Star} label="Poll Health" value={polls.poll_health_status} color={polls.poll_health_status === "Good" ? "#16a34a" : polls.poll_health_status === "Poor" ? "#dc2626" : "#94a3b8"} />
                     </div>
                     <table className="table">

@@ -139,6 +139,9 @@ STARTUP_MIGRATIONS = [
     "ALTER TABLE mentors ADD COLUMN IF NOT EXISTS photo_data BYTEA",
     "ALTER TABLE mentors ADD COLUMN IF NOT EXISTS photo_mime VARCHAR",
     "ALTER TABLE session_reports ADD COLUMN IF NOT EXISTS poll_summary TEXT",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS poll_teaching_rating FLOAT",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS poll_doubt_rating FLOAT",
+    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS poll_effectiveness_rating FLOAT",
 ]
 
 
@@ -3240,16 +3243,21 @@ def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=N
         m_sessions = [s for s in sessions if s.mentor_name == m.name]
         hours = sum(s.duration or 0 for s in m_sessions) / 60
         att_list = [s.attendance_percentage or 0 for s in m_sessions if (s.registered_students or 0) > 0]
-        m_nps = [n for n in nps_all if n.mentor_name == m.name]
         non_cancelled = len([s for s in m_sessions if s.status != "Cancelled"])
+
+        # Ratings come from the sessions' imported Zoom polls; NPS is reported
+        # only in the Session Feedback (NPS) section.
+        def poll_avg(field):
+            return avg([getattr(s, field) for s in m_sessions if (getattr(s, field) or 0) > 0])
+
         mentor_stats.append({
             "name": m.name,
             "sessions": len(m_sessions),
             "hours": round(hours, 1),
             "attendance": avg(att_list),
-            "teaching": avg([n.instructor_rating for n in m_nps]),
-            "doubt": avg([n.doubt_rating for n in m_nps]),
-            "overall": avg([overall_rating(n) for n in m_nps]),
+            "teaching": poll_avg("poll_teaching_rating"),
+            "doubt": poll_avg("poll_doubt_rating"),
+            "overall": poll_avg("feedback_score"),
             "sla": (non_cancelled / len(m_sessions) * 100) if m_sessions else None,
         })
 
@@ -3274,8 +3282,7 @@ def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=N
         completion_sessions = [s for s in with_reg if s.assignment_given]
         completion = avg([(s.assignment_completed or 0) / s.registered_students * 100 for s in completion_sessions]) if completion_sessions else None
         health = "Not Enough Data" if not with_reg else ("Healthy" if attendance >= 75 else "At Risk")
-        b_nps = [n for n in nps_all if same_course(course_of(n), course)]
-        rating = avg([overall_rating(n) for n in b_nps])
+        rating = avg([s.feedback_score for s in b_sessions if (s.feedback_score or 0) > 0])  # poll ratings
         completed_count = len([s for s in b_sessions if s.status == "Completed"])
         all_done = len(b_sessions) > 0 and all(s.status != "Scheduled" for s in b_sessions)
         any_active = any(b.status != "Inactive" for b in records)
@@ -4396,10 +4403,15 @@ def parse_poll_report(raw_rows):
         # average across every individual answer, which would weight
         # respondents differently if some skipped a question.
         question_averages = []
+        question_labels = []
+        raw_headers = raw_rows[marker + 1]
         for idx in rating_cols:
             scores = [int(r[idx].strip()) for r in data_rows if r[idx].strip().isdigit()]
             if scores:
                 question_averages.append(round(sum(scores) / len(scores), 2))
+                # Question wording (first line — Zoom adds the 1-5 scale text below it).
+                raw = raw_headers[idx] if idx < len(raw_headers) else ""
+                question_labels.append(" ".join(str(raw).strip().splitlines()[0].split()) if str(raw).strip() else "")
 
         avg_rating = round(sum(question_averages) / len(question_averages), 2) if question_averages else 0
 
@@ -4408,6 +4420,7 @@ def parse_poll_report(raw_rows):
             "questions": entry.get("questions", ""),
             "responses": len(data_rows),
             "question_averages": question_averages,
+            "question_labels": question_labels,
             "average_rating": avg_rating,
         })
 

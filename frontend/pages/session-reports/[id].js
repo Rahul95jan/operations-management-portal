@@ -505,7 +505,10 @@ export default function SessionReportDetail() {
                   <KPICard label="Polls Conducted" value={polls.polls_conducted} color="#7c3aed" icon={BarChart3} />
                   <KPICard label="Poll Responses" value={polls.poll_responses} color="#2563eb" icon={Users} />
                   <KPICard label="Response Rate" value={polls.response_rate !== null ? `${polls.response_rate}%` : null} color="#0891b2" icon={TrendingUp} percent={polls.response_rate ?? undefined} />
-                  <KPICard label="Average Rating" value={`${polls.poll_average_rating} / 5`} color="#f59e0b" icon={Star} />
+                  <KPICard label="Teaching Style" value={polls.teaching_rating ? `${polls.teaching_rating} / 5` : null} color="#3b82f6" icon={Star} />
+                  <KPICard label="Doubt Handling" value={polls.doubt_rating ? `${polls.doubt_rating} / 5` : null} color="#8b5cf6" icon={Star} />
+                  <KPICard label="Session Effectiveness" value={polls.effectiveness_rating ? `${polls.effectiveness_rating} / 5` : null} color="#0891b2" icon={Star} />
+                  <KPICard label="Overall Rating" value={`${polls.poll_average_rating} / 5`} color="#f59e0b" icon={Star} />
                   <KPICard label="Poll Health" value={<StatusPill label={polls.poll_health_status} tone={polls.poll_health_status === "Good" ? "positive" : polls.poll_health_status === "Poor" ? "negative" : "neutral"} icon={polls.poll_health_status === "Good" ? CheckCircle2 : XCircle} />} color={POLL_HEALTH_TONE[polls.poll_health_status] || "#94a3b8"} />
                 </div>
                 {polls.response_rate === null && <p className="hint-text" style={{ marginTop: 0, marginBottom: "12px" }}>ℹ️ Import attendance to see the response rate (responses vs learners who attended).</p>}

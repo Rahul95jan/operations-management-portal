@@ -683,6 +683,21 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
     return { registered, attended, high, medium, low, withPctCount: withPct.length };
   }, [sessionRows]);
 
+  // Session Quality comes from the sessions' imported Zoom polls (NPS has its own card).
+  const pollQuality = useMemo(() => {
+    const avgOf = (field) => {
+      const vals = sessionRows.map((r) => Number(r[field])).filter((v) => v > 0);
+      return vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100 : null;
+    };
+    return {
+      teaching: avgOf("teaching_rating"),
+      doubt: avgOf("doubt_rating"),
+      effectiveness: avgOf("effectiveness_rating"),
+      overall: avgOf("rating"),
+      sessions: sessionRows.filter((r) => Number(r.rating) > 0).length,
+    };
+  }, [sessionRows]);
+
   const opStats = useMemo(() => {
     const relevant = sessionRows.filter((r) => r.status !== "Cancelled" && (r.status === "Completed" || r.status === "Scheduled" || r.status === "Live"));
     const n = relevant.length;
@@ -884,7 +899,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                 <KPICard icon={CalendarClock} label="Total Sessions" value={sessionSummary?.total_sessions ?? "—"} sub="All time" color="#0f172a" trend={periodComparison.sessions} />
                 <KPICard icon={Users} label="Total Learners" value={sessionSummary?.total_learners_attended ?? "—"} sub="Across all sessions" color="#2563eb" trend={periodComparison.learners} />
                 <KPICard icon={Percent} label="Avg Attendance" value={sessionSummary ? `${sessionSummary.average_attendance_percentage}%` : "—"} sub="Across all sessions" color="#16a34a" trend={periodComparison.attendance} />
-                <KPICard icon={Star} label="Avg Rating" value={sessionSummary?.average_rating ? `${sessionSummary.average_rating} / 5` : "Not Available"} sub="Based on learner feedback" color="#a855f7" trend={periodComparison.rating} />
+                <KPICard icon={Star} label="Avg Rating" value={sessionSummary?.average_rating ? `${sessionSummary.average_rating} / 5` : "Not Available"} sub="From live session polls" color="#a855f7" trend={periodComparison.rating} />
                 <KPICard icon={Timer} label="Avg Duration" value={sessionSummary ? `${sessionSummary.average_session_duration} min` : "—"} sub="Per session" color="#f59e0b" trend={periodComparison.duration} />
               </div>
 
@@ -993,11 +1008,12 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                     </div>
 
                     <div className="card">
-                      <SectionTitle icon={Star} color="#a855f7" title="Session Quality" sub="Average ratings from learner feedback" />
+                      <SectionTitle icon={Star} color="#a855f7" title="Session Quality" sub="Average ratings from live session polls" />
                       <div style={{ marginTop: "14px" }}>
-                        <QualityBar label="Teaching Method" value={npsStats?.instructor} max={5} />
-                        <QualityBar label="Doubt Resolution" value={npsStats?.doubt} max={5} />
-                        <QualityBar label="Overall Experience" value={sessionSummary?.average_rating} max={5} />
+                        <QualityBar label="Teaching Style" value={pollQuality.teaching} max={5} />
+                        <QualityBar label="Doubt Handling" value={pollQuality.doubt} max={5} />
+                        <QualityBar label="Session Effectiveness" value={pollQuality.effectiveness} max={5} />
+                        <QualityBar label="Overall Rating" value={pollQuality.overall} max={5} />
                       </div>
                     </div>
                   </div>
@@ -1361,10 +1377,11 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
               {activeTab === "Quality" && (
                 <div className="card">
                   <h2 className="card-title">Session Quality</h2>
-                  <div className="card-sub" style={{ marginBottom: "16px" }}>Total feedback responses: {npsStats?.total ?? 0}</div>
-                  <QualityBar label="Mentor Teaching Method" value={npsStats?.instructor} max={5} />
-                  <QualityBar label="Doubt Resolution" value={npsStats?.doubt} max={5} />
-                  <QualityBar label="Overall Experience" value={sessionSummary?.average_rating} max={5} note="Based on average session feedback rating." />
+                  <div className="card-sub" style={{ marginBottom: "16px" }}>From live session polls · {pollQuality.sessions} poll-rated session{pollQuality.sessions === 1 ? "" : "s"}</div>
+                  <QualityBar label="Teaching Style" value={pollQuality.teaching} max={5} />
+                  <QualityBar label="Doubt Handling" value={pollQuality.doubt} max={5} />
+                  <QualityBar label="Session Effectiveness" value={pollQuality.effectiveness} max={5} />
+                  <QualityBar label="Overall Rating" value={pollQuality.overall} max={5} note="Average of the three poll questions." />
                 </div>
               )}
 

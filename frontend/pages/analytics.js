@@ -235,13 +235,14 @@ export default function Analytics() {
       const mSessions = filteredSessions.filter((s) => normName(s.mentor_name) === normName(name));
       const hours = mSessions.reduce((sum, s) => sum + (Number(s.duration) || 0), 0) / 60;
       const attendanceList = mSessions.filter((s) => Number(s.registered_students) > 0).map((s) => Number(s.attendance_percentage) || 0);
-      const npsForMentor = filteredNps.filter((n) => normName(n.mentor_name) === normName(name));
-      const teaching = avg(npsForMentor.map((n) => n.instructor_rating));
-      const doubt = avg(npsForMentor.map((n) => n.doubt_rating));
-      const experience = avg(npsForMentor.map((n) => n.website_rating));
-      // Overall: learner NPS when available, otherwise the sessions' poll ratings.
-      const sessionRatings = mSessions.map((s) => Number(s.feedback_score)).filter((v) => v > 0);
-      const overall = avg(npsForMentor.map((n) => (n.instructor_rating + n.doubt_rating + n.website_rating) / 3)) ?? avg(sessionRatings);
+      // Ratings come from the sessions' imported Zoom polls (NPS stays in the
+      // NPS / Session Feedback sections only).
+      const pollAvg = (field) => avg(mSessions.map((s) => Number(s[field])).filter((v) => v > 0));
+      const ratedSessions = mSessions.filter((s) => Number(s.feedback_score) > 0);
+      const teaching = pollAvg("poll_teaching_rating");
+      const doubt = pollAvg("poll_doubt_rating");
+      const experience = pollAvg("poll_effectiveness_rating");
+      const overall = pollAvg("feedback_score");
       const nonCancelled = mSessions.filter((s) => s.status !== "Cancelled").length;
       const sla = mSessions.length ? (nonCancelled / mSessions.length) * 100 : null;
       return {
@@ -253,13 +254,13 @@ export default function Analytics() {
         doubt,
         experience,
         overall,
-        responses: npsForMentor.length,
+        responses: ratedSessions.length, // poll-rated sessions
         sla,
       };
     }).filter((m) => !filters.mentor_name || normName(m.name) === normName(filters.mentor_name));
-  }, [mentorNames, filteredSessions, filteredNps, filters.mentor_name]);
+  }, [mentorNames, filteredSessions, filters.mentor_name]);
 
-  const ratedMentors = mentorStats.filter((m) => m.teaching !== null);
+  const ratedMentors = mentorStats.filter((m) => m.overall !== null);
   const selectedRatingMentor = ratingMentor ? mentorStats.find((m) => m.name === ratingMentor) : null;
 
   const topMentorsBySessions = useMemo(
@@ -288,11 +289,8 @@ export default function Analytics() {
           ? avg(completionSessions.map((s) => (Number(s.assignment_completed) || 0) / Number(s.registered_students) * 100))
           : null;
         const health = withReg.length === 0 ? "Not Enough Data" : attendance >= 75 ? "Healthy" : "At Risk";
-        const npsForCourse = filteredNps.filter((n) => sameCourse(courseOf(n, courseByBatch), course));
-        // Learner NPS when available, otherwise the sessions' poll ratings.
-        const rating =
-          avg(npsForCourse.map((n) => (n.instructor_rating + n.doubt_rating + n.website_rating) / 3)) ??
-          avg(bSessions.map((s) => Number(s.feedback_score)).filter((v) => v > 0));
+        // Sessions' poll ratings (NPS is reported separately).
+        const rating = avg(bSessions.map((s) => Number(s.feedback_score)).filter((v) => v > 0));
         const completedCount = bSessions.filter((s) => s.status === "Completed").length;
         const allDone = bSessions.length > 0 && bSessions.every((s) => s.status !== "Scheduled");
         const anyActive = records.some((b) => b.status !== "Inactive");
@@ -544,7 +542,7 @@ export default function Analytics() {
                     <option value="">All Mentors</option>
                     {mentorStats.map((m) => (
                       <option key={m.name} value={m.name}>
-                        {m.name}{m.responses ? ` (${m.responses})` : " (no feedback)"}
+                        {m.name}{m.responses ? ` (${m.responses} rated session${m.responses === 1 ? "" : "s"})` : " (no poll ratings)"}
                       </option>
                     ))}
                   </select>
@@ -556,8 +554,9 @@ export default function Analytics() {
                       data={{
                         labels: ratedMentors.map((m) => m.name),
                         datasets: [
-                          { label: "Teaching Method", data: ratedMentors.map((m) => fmt1(m.teaching)), backgroundColor: "#3b82f6" },
+                          { label: "Teaching Style", data: ratedMentors.map((m) => fmt1(m.teaching)), backgroundColor: "#3b82f6" },
                           { label: "Doubt Handling", data: ratedMentors.map((m) => fmt1(m.doubt)), backgroundColor: "#8b5cf6" },
+                          { label: "Session Effectiveness", data: ratedMentors.map((m) => fmt1(m.experience)), backgroundColor: "#f59e0b" },
                           { label: "Overall", data: ratedMentors.map((m) => fmt1(m.overall)), backgroundColor: "#22c55e" },
                         ],
                       }}
@@ -566,18 +565,18 @@ export default function Analytics() {
                     />
                   )
                 ) : !selectedRatingMentor || selectedRatingMentor.responses === 0 ? (
-                  <div className="empty-state">No learner feedback for {ratingMentor} yet{hasActiveFilter ? " in the selected filters" : ""}.</div>
+                  <div className="empty-state">No poll ratings for {ratingMentor} yet{hasActiveFilter ? " in the selected filters" : ""} — import a Zoom poll on Log Live Session Report.</div>
                 ) : (
                   <div className="mentor-rating-detail">
                     <div className="mentor-rating-summary">
                       <div className="mentor-rating-score">{fmt1(selectedRatingMentor.overall)}<span> / 5</span></div>
                       <div className="mentor-rating-meta">
-                        Overall rating from {selectedRatingMentor.responses} response{selectedRatingMentor.responses === 1 ? "" : "s"}
+                        Overall poll rating across {selectedRatingMentor.responses} session{selectedRatingMentor.responses === 1 ? "" : "s"}
                       </div>
                     </div>
-                    <BarRow label="Teaching Method" value={fmt1(selectedRatingMentor.teaching)} max={5} color="#3b82f6" rawValue={selectedRatingMentor.teaching} />
+                    <BarRow label="Teaching Style" value={fmt1(selectedRatingMentor.teaching)} max={5} color="#3b82f6" rawValue={selectedRatingMentor.teaching} />
                     <BarRow label="Doubt Handling" value={fmt1(selectedRatingMentor.doubt)} max={5} color="#8b5cf6" rawValue={selectedRatingMentor.doubt} />
-                    <BarRow label="Overall Experience" value={fmt1(selectedRatingMentor.experience)} max={5} color="#f59e0b" rawValue={selectedRatingMentor.experience} />
+                    <BarRow label="Session Effectiveness" value={fmt1(selectedRatingMentor.experience)} max={5} color="#f59e0b" rawValue={selectedRatingMentor.experience} />
                     <BarRow label="Overall" value={fmt1(selectedRatingMentor.overall)} max={5} color="#22c55e" rawValue={selectedRatingMentor.overall} />
                   </div>
                 )}
@@ -587,7 +586,7 @@ export default function Analytics() {
             <Card title="Mentor Performance">
               <div className="table-wrap">
                 <table className="styled-table">
-                  <thead><tr><th>Mentor</th><th>Sessions</th><th>Hours</th><th>Attendance</th><th>Teaching</th><th>Doubt</th><th>Overall</th><th>SLA</th></tr></thead>
+                  <thead><tr><th>Mentor</th><th>Sessions</th><th>Hours</th><th>Attendance</th><th>Teaching</th><th>Doubt</th><th>Effectiveness</th><th>Overall</th><th>SLA</th></tr></thead>
                   <tbody>
                     {mentorStats.map((m) => (
                       <tr key={m.name}>
@@ -597,6 +596,7 @@ export default function Analytics() {
                         <td>{fmtPct(m.attendance)}</td>
                         <td>{fmt1(m.teaching)}</td>
                         <td>{fmt1(m.doubt)}</td>
+                        <td>{fmt1(m.experience)}</td>
                         <td>{fmt1(m.overall)}</td>
                         <td>{fmtPct(m.sla)}</td>
                       </tr>

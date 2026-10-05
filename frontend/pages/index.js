@@ -294,15 +294,27 @@ export default function Home() {
       byMentor[s.mentor_name].sessions += 1;
       byMentor[s.mentor_name].minutes += Number(s.duration) || 0;
     });
-    const ratingByMentor = {};
+    // Rating: learner NPS when available, otherwise the sessions' imported poll ratings.
+    const key = (name) => (name || "").trim().toLowerCase();
+    const npsByMentor = {};
     nps.forEach((n) => {
       if (!n.mentor_name) return;
       const r = (Number(n.instructor_rating) + Number(n.doubt_rating) + Number(n.website_rating)) / 3;
-      ratingByMentor[n.mentor_name] = ratingByMentor[n.mentor_name] || [];
-      ratingByMentor[n.mentor_name].push(r);
+      (npsByMentor[key(n.mentor_name)] = npsByMentor[key(n.mentor_name)] || []).push(r);
     });
+    const pollByMentor = {};
+    sessions.forEach((s) => {
+      if (!s.mentor_name || !(Number(s.feedback_score) > 0)) return;
+      (pollByMentor[key(s.mentor_name)] = pollByMentor[key(s.mentor_name)] || []).push(Number(s.feedback_score));
+    });
+    const ratingFor = (name) => {
+      const fromNps = npsByMentor[key(name)] || [];
+      if (fromNps.length) return avg(fromNps);
+      const fromPolls = pollByMentor[key(name)] || [];
+      return fromPolls.length ? avg(fromPolls) : null;
+    };
     return Object.entries(byMentor)
-      .map(([name, v]) => ({ name, sessions: v.sessions, hours: Math.round(v.minutes / 60), rating: avg(ratingByMentor[name] || []) }))
+      .map(([name, v]) => ({ name, sessions: v.sessions, hours: Math.round(v.minutes / 60), rating: ratingFor(name) }))
       .sort((a, b) => b.sessions - a.sessions)
       .slice(0, 5);
   }, [sessions, nps]);
@@ -314,7 +326,13 @@ export default function Home() {
       const daySessions = sessions.filter((s) => s.session_date === d && Number(s.registered_students) > 0);
       attendance.push(daySessions.length ? Math.round(avg(daySessions.map((s) => Number(s.attendance_percentage) || 0))) : 0);
       const dayNps = nps.filter((n) => n.created_at && n.created_at.slice(0, 10) === d);
-      rating.push(dayNps.length ? avg(dayNps.map((n) => (Number(n.instructor_rating) + Number(n.doubt_rating) + Number(n.website_rating)) / 3)) : null);
+      // Learner NPS for the day when available, otherwise that day's sessions' poll ratings.
+      const dayPolls = sessions.filter((s) => s.session_date === d && Number(s.feedback_score) > 0).map((s) => Number(s.feedback_score));
+      rating.push(
+        dayNps.length
+          ? avg(dayNps.map((n) => (Number(n.instructor_rating) + Number(n.doubt_rating) + Number(n.website_rating)) / 3))
+          : dayPolls.length ? avg(dayPolls) : null
+      );
     });
     return { attendance, rating };
   }, [sessions, nps, last7Dates]);

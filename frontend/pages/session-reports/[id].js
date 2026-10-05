@@ -447,6 +447,7 @@ export default function SessionReportDetail() {
             {importMsg.attendance && <div className={`import-msg ${importMsg.attendance.ok ? "import-msg-ok" : "import-msg-err"}`}>{importMsg.attendance.text}</div>}
             {attendance && (
               <div className="kpi-grid" style={{ marginBottom: "18px" }}>
+                <KPICard label="Unique Joiners" value={attendance.unique_joiners} color="#2563eb" icon={UserCheck} />
                 <KPICard label="Total Learners" value={attendance.total_learners} icon={Users} />
                 <KPICard label="Present" value={attendance.present} color="#16a34a" icon={UserCheck} />
                 <KPICard label="Absent" value={attendance.absent} color="#dc2626" icon={UserX} />

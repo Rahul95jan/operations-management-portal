@@ -2,6 +2,7 @@ import json
 import io
 import re
 import csv
+import math
 import uuid
 import pandas as pd
 from datetime import datetime, timedelta
@@ -3970,7 +3971,7 @@ def delete_webinar_attendance(session_id: int, db: Session = Depends(get_db)):
 # Attendee/Attendance report) and by Zoom account settings, so we normalize
 # headers and match against every alias we've seen rather than one fixed name.
 ZOOM_COLUMN_ALIASES = {
-    "learner_name": ["name", "name_original_name", "attendee_name", "full_name", "user_name"],
+    "learner_name": ["name", "name_original_name", "user_name_original_name", "attendee_name", "full_name", "user_name"],
     "first_name": ["first_name"],
     "last_name": ["last_name"],
     "learner_email": ["email", "user_email", "email_address"],
@@ -4113,10 +4114,13 @@ def zoom_dt(value):
         return None
 
 
-def aggregate_zoom_learners(df):
-    """Collapses a Zoom registration/attendance table to one entry per email.
-    Returns (aggregated, skipped, not_approved); aggregated is None when the
-    file has no email column. Shared by the webinar and session-report imports."""
+def aggregate_zoom_learners(df, allow_name_key=False):
+    """Collapses a Zoom registration/attendance table to one entry per learner
+    (unique joiner). Learners are keyed by email; with allow_name_key, rows
+    without an email (Zoom guests) are keyed by their name instead, keyed as
+    "name:<lowercased name>". Returns (aggregated, skipped, not_approved);
+    aggregated is None when no usable identity column exists. Shared by the
+    webinar and session-report imports."""
     df.columns = [normalize_header(c) for c in df.columns]
 
     def col_for(field):
@@ -4126,12 +4130,11 @@ def aggregate_zoom_learners(df):
         return None
 
     email_col = col_for("learner_email")
-    if not email_col:
-        return None, 0, 0
-
     name_col = col_for("learner_name")
     first_col = col_for("first_name")
     last_col = col_for("last_name")
+    if not email_col and not (allow_name_key and (name_col or first_col)):
+        return None, 0, 0
     registered_col = col_for("registered_at")
     join_col = col_for("join_time")
     leave_col = col_for("leave_time")
@@ -4156,10 +4159,7 @@ def aggregate_zoom_learners(df):
     skipped, not_approved = 0, 0
 
     for _, row in df.iterrows():
-        email = clean_cell(row.get(email_col))
-        if not email:
-            skipped += 1
-            continue
+        email = clean_cell(row.get(email_col)) if email_col else ""
 
         # Only approved registrations are real registered learners for our
         # purposes — a cancelled/denied signup shouldn't inflate the count
@@ -4177,6 +4177,12 @@ def aggregate_zoom_learners(df):
         else:
             name = ""
         name = " ".join(name.split())
+
+        if not email:
+            if not (allow_name_key and name):
+                skipped += 1
+                continue
+            email = f"name:{name.lower()}"  # Zoom guest: one learner per name
 
         join_time = clean_cell(row.get(join_col)) if join_col else ""
         leave_time = clean_cell(row.get(leave_col)) if leave_col else ""
@@ -4207,7 +4213,7 @@ def aggregate_zoom_learners(df):
             "name": "", "phone": "", "registered_at": "",
             "join_time": None, "leave_time": None, "duration": 0, "attended": False,
         })
-        entry["name"] = name or entry["name"]
+        entry["name"] = entry["name"] or name  # keep the first spelling seen
         entry["phone"] = phone or entry["phone"]
         entry["registered_at"] = registered_at or entry["registered_at"]
         entry["attended"] = entry["attended"] or attended
@@ -4221,6 +4227,15 @@ def aggregate_zoom_learners(df):
             existing_dt, new_dt = parse_dt(entry["leave_time"]) if entry["leave_time"] else None, parse_dt(leave_time)
             if not entry["leave_time"] or (existing_dt and new_dt and new_dt > existing_dt):
                 entry["leave_time"] = leave_time
+
+    # Rejoins are summed, but overlapping rows (two devices at once) can add up
+    # to more than the learner was actually present — cap at first join .. last leave.
+    for entry in aggregated.values():
+        if entry["join_time"] and entry["leave_time"]:
+            first, last = parse_dt(entry["join_time"]), parse_dt(entry["leave_time"])
+            if first and last and last > first:
+                # round up, as Zoom does, so a full-session attendee isn't shown a minute short
+                entry["duration"] = min(entry["duration"], math.ceil((last - first).total_seconds() / 60))
 
     return aggregated, skipped, not_approved
 
@@ -6768,9 +6783,11 @@ async def import_session_attendance(session_id: int, file: UploadFile = File(...
     except Exception:
         raise HTTPException(status_code=400, detail="Couldn't read this file. Upload Zoom's attendance report as CSV or Excel.")
 
-    aggregated, skipped, not_approved = aggregate_zoom_learners(df)
+    # Zoom guests often have no email — identify them by name so every unique
+    # joiner is counted once.
+    aggregated, skipped, not_approved = aggregate_zoom_learners(df, allow_name_key=True)
     if aggregated is None:
-        raise HTTPException(status_code=400, detail="Couldn't find an Email column. Upload Zoom's attendance / participants report.")
+        raise HTTPException(status_code=400, detail="Couldn't find a Name or Email column. Upload Zoom's attendance / participants report.")
 
     # The mentor shows up in Zoom's participant list as host — leave them out.
     mentor = None
@@ -6782,7 +6799,8 @@ async def import_session_attendance(session_id: int, file: UploadFile = File(...
     start_dt = zoom_dt(f"{session.session_date} {session.session_time}") if session.session_date and session.session_time else None
 
     entries, host_rows = [], 0
-    for email, e in aggregated.items():
+    for key, e in aggregated.items():
+        email = "" if key.startswith("name:") else key
         if (mentor_email and email.strip().lower() == mentor_email) or (mentor_name and (e["name"] or "").strip().lower() == mentor_name):
             host_rows += 1
             continue
@@ -6794,7 +6812,7 @@ async def import_session_attendance(session_id: int, file: UploadFile = File(...
             status = "Late" if late else "Present"
         entries.append({
             "learner_name": e["name"] or email.split("@")[0],
-            "learner_email": email,
+            "learner_email": email or None,
             "join_time": e["join_time"],
             "leave_time": e["leave_time"],
             "duration_minutes": e["duration"] or None,
@@ -6820,14 +6838,17 @@ async def import_session_attendance(session_id: int, file: UploadFile = File(...
 
     totals = session_reports.replace_attendance(db, session_id, entries, expected)
 
-    message = f"Imported {len(entries)} learner(s): {totals['attended']} attended out of {totals['total']}"
+    message = f"{totals['attended']} unique joiner(s) from {len(df)} Zoom row(s); attendance {totals['attended']} of {totals['total']}"
     if expected_source and totals["total"] > len(entries):
         message += f" (total from {expected_source})"
     message += "."
+    zoom_unique = (meeting_summary or {}).get("total_participants")
+    if zoom_unique:
+        message += f" Zoom reports {zoom_unique} unique viewers (Zoom counts devices, so it can differ slightly)."
     if host_rows:
         message += " Mentor/host row excluded."
     if skipped:
-        message += f" Skipped {skipped} row(s) without an email."
+        message += f" Skipped {skipped} row(s) with no name or email."
     return {"success": True, "message": message, "total": totals["total"], "attended": totals["attended"]}
 
 

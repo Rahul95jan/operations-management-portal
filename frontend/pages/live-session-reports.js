@@ -134,6 +134,7 @@ export default function LiveSessionReports() {
 
                 {hasAttendance ? (
                   <div className="kpi-grid">
+                    <Kpi icon={UserCheck} label="Unique Joiners" value={attendance.unique_joiners} color="#2563eb" />
                     <Kpi icon={Users} label="Total Learners" value={attendance.total_learners} />
                     <Kpi icon={UserCheck} label="Present" value={attendance.present} color="#16a34a" />
                     <Kpi icon={Clock3} label="Late" value={attendance.late} color="#f59e0b" />

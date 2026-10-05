@@ -457,6 +457,8 @@ def attendance_bundle(db, session_id):
         "present": present,
         "absent": absent,
         "late": late,
+        # Unique people who joined (repeat joins already merged on import).
+        "unique_joiners": present + late,
         "attendance_percentage": attendance_percentage,
         "average_join_time": average_join_time,
         "average_leave_time": average_leave_time,

@@ -577,8 +577,33 @@ def save_poll_summary(db, session_id, summary):
     if not report:
         report = SessionReport(session_id=session_id, report_status="Pending")
         db.add(report)
+    previous = _poll_summary(report)
     report.poll_summary = json.dumps(summary) if summary else None
+
+    # The session's rating (feedback_score) is what Session Reports, Mentor 360
+    # and Analytics average — keep it in step with the imported poll rating.
+    session = _get_session(db, session_id)
+    if session:
+        if summary and summary.get("poll_average_rating"):
+            session.feedback_score = summary["poll_average_rating"]
+        elif previous and session.feedback_score == previous.get("poll_average_rating"):
+            session.feedback_score = 0  # clearing the poll removes the rating it set
     db.commit()
+
+
+def backfill_poll_ratings(db):
+    """Sessions whose polls were imported before ratings were synced: copy the
+    poll average into the session rating if it has none. Safe to re-run."""
+    updated = 0
+    for report in db.query(SessionReport).filter(SessionReport.poll_summary.isnot(None)).all():
+        poll = _poll_summary(report)
+        session = _get_session(db, report.session_id)
+        if poll and poll.get("poll_average_rating") and session and not session.feedback_score:
+            session.feedback_score = poll["poll_average_rating"]
+            updated += 1
+    if updated:
+        db.commit()
+    return updated
 
 
 def upsert_report(db, session_id, data: dict):

@@ -239,7 +239,9 @@ export default function Analytics() {
       const teaching = avg(npsForMentor.map((n) => n.instructor_rating));
       const doubt = avg(npsForMentor.map((n) => n.doubt_rating));
       const experience = avg(npsForMentor.map((n) => n.website_rating));
-      const overall = avg(npsForMentor.map((n) => (n.instructor_rating + n.doubt_rating + n.website_rating) / 3));
+      // Overall: learner NPS when available, otherwise the sessions' poll ratings.
+      const sessionRatings = mSessions.map((s) => Number(s.feedback_score)).filter((v) => v > 0);
+      const overall = avg(npsForMentor.map((n) => (n.instructor_rating + n.doubt_rating + n.website_rating) / 3)) ?? avg(sessionRatings);
       const nonCancelled = mSessions.filter((s) => s.status !== "Cancelled").length;
       const sla = mSessions.length ? (nonCancelled / mSessions.length) * 100 : null;
       return {
@@ -287,7 +289,10 @@ export default function Analytics() {
           : null;
         const health = withReg.length === 0 ? "Not Enough Data" : attendance >= 75 ? "Healthy" : "At Risk";
         const npsForCourse = filteredNps.filter((n) => sameCourse(courseOf(n, courseByBatch), course));
-        const rating = avg(npsForCourse.map((n) => (n.instructor_rating + n.doubt_rating + n.website_rating) / 3));
+        // Learner NPS when available, otherwise the sessions' poll ratings.
+        const rating =
+          avg(npsForCourse.map((n) => (n.instructor_rating + n.doubt_rating + n.website_rating) / 3)) ??
+          avg(bSessions.map((s) => Number(s.feedback_score)).filter((v) => v > 0));
         const completedCount = bSessions.filter((s) => s.status === "Completed").length;
         const allDone = bSessions.length > 0 && bSessions.every((s) => s.status !== "Scheduled");
         const anyActive = records.some((b) => b.status !== "Inactive");

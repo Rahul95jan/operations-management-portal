@@ -153,6 +153,16 @@ def _ensure_startup_columns():
         except Exception as exc:  # never block startup; the affected feature will report the error
             print(f"Startup migration failed ({stmt}): {exc}")
 
+    db = SessionLocal()
+    try:
+        filled = session_reports.backfill_poll_ratings(db)
+        if filled:
+            print(f"Backfilled poll ratings for {filled} session(s).")
+    except Exception as exc:
+        print(f"Poll rating backfill failed: {exc}")
+    finally:
+        db.close()
+
 
 @app.on_event("startup")
 def _start_resource_scheduler():

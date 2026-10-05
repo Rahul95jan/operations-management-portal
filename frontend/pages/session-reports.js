@@ -18,7 +18,6 @@ import {
 } from "chart.js";
 import { Chart, Doughnut, Bubble } from "react-chartjs-2";
 import {
-  Video,
   Users,
   CalendarClock,
   CheckCircle2,
@@ -60,11 +59,6 @@ const STATUS_STYLES = {
   "No Show": { bg: "#fee2e2", color: "#991b1b", dot: "#dc2626" },
 };
 
-const RECORDING_STYLES = {
-  Available: { bg: "#dcfce7", color: "#15803d", dot: "#22c55e" },
-  "Not Available": { bg: "#f1f5f9", color: "#64748b", dot: "#94a3b8" },
-};
-
 const REPORT_STYLES = {
   Pending: { bg: "#fef3c7", color: "#b45309", dot: "#f59e0b" },
   Submitted: { bg: "#dbeafe", color: "#1d4ed8", dot: "#3b82f6" },
@@ -96,7 +90,6 @@ function classifySessionHealth(r) {
       return { tier: "attention", reason: `Low Rating (${r.rating} / 5)` };
     }
     if (r.report_status === "Pending") return { tier: "needsReview", reason: "Report Pending" };
-    if (r.recording_status === "Not Available") return { tier: "needsReview", reason: "Recording Missing" };
   }
   return { tier: "healthy", reason: null };
 }
@@ -123,7 +116,7 @@ function buildOpsMatrix(allRows, keyField) {
       groups[key] = {
         key, sessions: 0, completed: 0, cancelled: 0, learners: 0,
         attendanceSum: 0, attendanceN: 0, ratingSum: 0, ratingN: 0,
-        recordingAvailable: 0, recordingEligible: 0, reportDone: 0, reportEligible: 0,
+        reportDone: 0, reportEligible: 0,
         completedRows: [],
       };
     }
@@ -138,8 +131,6 @@ function buildOpsMatrix(allRows, keyField) {
         g.completedRows.push(r);
       }
       if (r.rating) { g.ratingSum += r.rating; g.ratingN += 1; }
-      g.recordingEligible += 1;
-      if (r.recording_status === "Available") g.recordingAvailable += 1;
       g.reportEligible += 1;
       if (r.report_status === "Submitted" || r.report_status === "Reviewed") g.reportDone += 1;
     }
@@ -150,7 +141,6 @@ function buildOpsMatrix(allRows, keyField) {
     .map((g) => {
       const avgAttendance = g.attendanceN ? Math.round(g.attendanceSum / g.attendanceN) : null;
       const avgRating = g.ratingN ? Math.round((g.ratingSum / g.ratingN) * 10) / 10 : null;
-      const recordingPct = g.recordingEligible ? Math.round((g.recordingAvailable / g.recordingEligible) * 100) : null;
       const reportPct = g.reportEligible ? Math.round((g.reportDone / g.reportEligible) * 100) : null;
       const cancelRate = g.sessions ? Math.round((g.cancelled / g.sessions) * 100) : 0;
       let risk = "Good";
@@ -160,10 +150,7 @@ function buildOpsMatrix(allRows, keyField) {
         cancelRate >= HEALTH_THRESHOLDS.highCancellationPct
       ) {
         risk = "Critical";
-      } else if (
-        (recordingPct !== null && recordingPct < HEALTH_THRESHOLDS.lowCompliancePct) ||
-        (reportPct !== null && reportPct < HEALTH_THRESHOLDS.lowCompliancePct)
-      ) {
+      } else if (reportPct !== null && reportPct < HEALTH_THRESHOLDS.lowCompliancePct) {
         risk = "Watch";
       }
 
@@ -183,7 +170,7 @@ function buildOpsMatrix(allRows, keyField) {
 
       return {
         name: g.key, sessions: g.sessions, completed: g.completed, learners: g.learners,
-        avgAttendance, avgRating, recordingPct, reportPct, cancelRate, risk, trend,
+        avgAttendance, avgRating, reportPct, cancelRate, risk, trend,
       };
     })
     .sort((a, b) => b.sessions - a.sessions);
@@ -402,7 +389,6 @@ const emptyFilters = {
   mentor_name: "",
   course_name: "",
   session_type: "",
-  recording_status: "",
   report_status: "",
   attendance_tier: "",
   rating_tier: "",
@@ -548,15 +534,6 @@ function SessionDrawer({ session, onClose }) {
               <DrawerField label="Session Rating" value={feedback?.average_rating ? `${feedback.average_rating} / 5` : "Not Available"} />
               <DrawerField label="Course/Mentor NPS (avg)" value={feedback?.nps?.average_score ?? "Not Available"} />
               {feedback?.nps?.note && <div className="drawer-note">ℹ️ {feedback.nps.note}</div>}
-            </div>
-
-            <div className="drawer-section-title">Recording</div>
-            <div className="drawer-grid">
-              <DrawerField label="Recording Status" value={<Badge label={session.recording_status} styles={RECORDING_STYLES} />} />
-              <DrawerField
-                label="Recording Link"
-                value={content?.recording_link ? <a href={content.recording_link} target="_blank" rel="noreferrer">Open Recording</a> : "Not Available"}
-              />
             </div>
 
             <div className="drawer-section-title">Report</div>
@@ -724,7 +701,7 @@ export default function SessionReports() {
   };
 
   const courseOptions = useMemo(() => courseOptionsFromBatches(batches), [batches]);
-  const advancedFilterActive = !!(filters.session_type || filters.recording_status || filters.report_status || filters.attendance_tier || filters.rating_tier);
+  const advancedFilterActive = !!(filters.session_type || filters.report_status || filters.attendance_tier || filters.rating_tier);
 
   const viewBatch = (batchName) => {
     const next = { ...emptyFilters, course_name: batchName }; // batchName holds a course name
@@ -858,10 +835,8 @@ export default function SessionReports() {
     const complianceOf = (list) => {
       const completed = list.filter((r) => r.status === "Completed");
       if (!completed.length) return null;
-      const recordingAvail = completed.filter((r) => r.recording_status === "Available").length;
       const reportDone = completed.filter((r) => r.report_status === "Submitted" || r.report_status === "Reviewed").length;
       return {
-        recordingPct: Math.round((recordingAvail / completed.length) * 100),
         reportPct: Math.round((reportDone / completed.length) * 100),
         n: completed.length,
       };
@@ -873,14 +848,8 @@ export default function SessionReports() {
     return { ...overall, current, previous };
   }, [filteredAllRows]);
 
-  const overallCompliancePct = opCompliance ? Math.round((opCompliance.recordingPct + opCompliance.reportPct) / 2) : null;
-
-  const recordingHealth = useMemo(() => {
-    const completed = filteredAllRows.filter((r) => r.status === "Completed");
-    if (!completed.length) return null;
-    const available = completed.filter((r) => r.recording_status === "Available").length;
-    return { available, notAvailable: completed.length - available, total: completed.length };
-  }, [filteredAllRows]);
+  // Recording upload isn't tracked, so compliance is report completion only.
+  const overallCompliancePct = opCompliance ? opCompliance.reportPct : null;
 
   const reportHealth = useMemo(() => {
     const completed = filteredAllRows.filter((r) => r.status === "Completed");
@@ -895,7 +864,7 @@ export default function SessionReports() {
     return filteredAllRows
       .filter((r) => r.status === "Completed" && r.attendance_percentage !== null && r.attendance_percentage !== undefined && r.rating)
       .map((r) => {
-        const compliant = r.recording_status === "Available" && (r.report_status === "Submitted" || r.report_status === "Reviewed");
+        const compliant = r.report_status === "Submitted" || r.report_status === "Reviewed";
         return {
           x: r.attendance_percentage,
           y: r.rating,
@@ -967,9 +936,8 @@ export default function SessionReports() {
     if (!curr.length || !prev.length) return null;
     const statOf = (list) => {
       const completed = list.filter((r) => r.status === "Completed");
-      const recordingAvail = completed.filter((r) => r.recording_status === "Available").length;
       const reportDone = completed.filter((r) => r.report_status === "Submitted" || r.report_status === "Reviewed").length;
-      const compliancePct = completed.length ? Math.round(((recordingAvail / completed.length) + (reportDone / completed.length)) / 2 * 100) : null;
+      const compliancePct = completed.length ? Math.round((reportDone / completed.length) * 100) : null;
       return {
         sessions: list.length,
         completedPct: list.length ? Math.round((completed.length / list.length) * 100) : null,
@@ -1004,7 +972,7 @@ export default function SessionReports() {
           issue: "Session rating declining", priority: "High", metric: "Rating",
           evidence: `Avg rating dropped ${Math.abs(signals.ratingDelta)} (${signals.previous.avgRating} → ${signals.current.avgRating})`,
           affected: `${signals.current.count} sessions in the last 30 days`,
-          recommendation: "Review recent learner feedback and session recordings to identify a potential signal.",
+          recommendation: "Review recent learner feedback and session reports to identify a potential signal.",
         });
       }
       if (signals.cancelDelta !== null && signals.cancelDelta >= 5) {
@@ -1045,12 +1013,10 @@ export default function SessionReports() {
 
   const criticalOperationalItems = useMemo(() => {
     return filteredAllRows
-      .filter((r) => r.status === "Completed" && (r.recording_status === "Not Available" || r.report_status === "Pending"))
+      .filter((r) => r.status === "Completed" && r.report_status === "Pending")
       .map((r) => ({
         ...r,
-        issue: r.recording_status === "Not Available" && r.report_status === "Pending"
-          ? "Missing Recording + Report Pending"
-          : r.recording_status === "Not Available" ? "Missing Recording" : "Report Pending",
+        issue: "Report Pending",
         age: daysBetween(r.session_date),
       }))
       .sort((a, b) => (b.age ?? 0) - (a.age ?? 0));
@@ -1150,14 +1116,6 @@ export default function SessionReports() {
                   <input placeholder="e.g. GenAI" style={inputStyle} value={filters.session_type} onChange={(e) => setFilters({ ...filters, session_type: e.target.value })} />
                 </div>
                 <div className="fbar-field">
-                  <label className="field-label">Recording Status</label>
-                  <select style={inputStyle} value={filters.recording_status} onChange={(e) => setFilters({ ...filters, recording_status: e.target.value })}>
-                    <option value="">All</option>
-                    <option value="Available">Available</option>
-                    <option value="Not Available">Not Available</option>
-                  </select>
-                </div>
-                <div className="fbar-field">
                   <label className="field-label">Report Status</label>
                   <select style={inputStyle} value={filters.report_status} onChange={(e) => setFilters({ ...filters, report_status: e.target.value })}>
                     <option value="">All</option>
@@ -1200,7 +1158,7 @@ export default function SessionReports() {
               <KPICard icon={Users} label="Total Learners" value={summary.total_learners_attended} sub="Attended, all sessions" color="#2563eb" trend={kpiTrends ? kpiTrends.learnersDelta : undefined} />
               <KPICard icon={Percent} label="Avg Attendance" value={`${summary.average_attendance_percentage}%`} sub="Across all sessions" color="#0891b2" trend={signals ? signals.attendanceDelta : undefined} trendSuffix=" pts" />
               <KPICard icon={Star} label="Avg Rating" value={summary.average_rating ? `${summary.average_rating} / 5` : "Not Available"} sub="Based on feedback" color="#a855f7" trend={signals ? signals.ratingDelta : undefined} trendSuffix="" />
-              <KPICard icon={ShieldCheck} label="Operational Compliance" value={overallCompliancePct !== null ? `${overallCompliancePct}%` : "N/A"} sub="Recording + report avg" color="#f59e0b" trend={kpiTrends ? kpiTrends.complianceDelta : undefined} trendSuffix=" pts" />
+              <KPICard icon={ShieldCheck} label="Operational Compliance" value={overallCompliancePct !== null ? `${overallCompliancePct}%` : "N/A"} sub="Report completion" color="#f59e0b" trend={kpiTrends ? kpiTrends.complianceDelta : undefined} trendSuffix=" pts" />
             </div>
           ) : (
             <div className="kpi-grid">{[...Array(6)].map((_, i) => <KPISkeleton key={i} />)}</div>
@@ -1229,7 +1187,6 @@ export default function SessionReports() {
                   <div><span className="legend-dot" style={{ background: "#ef4444" }} /> Attention <b>{health.buckets.attention}</b></div>
                 </div>
                 <div className="health-legend" style={{ borderLeft: "1px solid #f1f5f9", paddingLeft: "24px" }}>
-                  <div>Recording Compliance <b>{opCompliance ? `${opCompliance.recordingPct}%` : "N/A"}</b></div>
                   <div>Report Completion <b>{opCompliance ? `${opCompliance.reportPct}%` : "N/A"}</b></div>
                   <div>Cancellation Rate <b>{cancellation.rate}%</b></div>
                 </div>
@@ -1333,7 +1290,7 @@ export default function SessionReports() {
                   <thead>
                     <tr>
                       <th>Course</th><th>Sessions</th><th>Learners</th><th>Attendance</th><th>Rating</th>
-                      <th>Recording</th><th>Reports</th><th>SLA</th><th>Cancellation</th><th>Risk</th><th>Trend</th>
+                      <th>Reports</th><th>SLA</th><th>Cancellation</th><th>Risk</th><th>Trend</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1344,7 +1301,6 @@ export default function SessionReports() {
                         <td className="muted">{b.learners}</td>
                         <td className="muted">{b.avgAttendance !== null ? `${b.avgAttendance}%` : "N/A"}</td>
                         <td className="muted">{b.avgRating !== null ? `★ ${b.avgRating}` : "N/A"}</td>
-                        <td className="muted">{b.recordingPct !== null ? `${b.recordingPct}%` : "N/A"}</td>
                         <td className="muted">{b.reportPct !== null ? `${b.reportPct}%` : "N/A"}</td>
                         <td className="muted">N/A</td>
                         <td className="muted">{b.cancelRate}%</td>
@@ -1385,7 +1341,6 @@ export default function SessionReports() {
                       <th className="sortable" onClick={() => toggleMentorSort("learners")}>Learners</th>
                       <th className="sortable" onClick={() => toggleMentorSort("avgAttendance")}>Attendance</th>
                       <th className="sortable" onClick={() => toggleMentorSort("avgRating")}>Rating</th>
-                      <th className="sortable" onClick={() => toggleMentorSort("recordingPct")}>Recording</th>
                       <th className="sortable" onClick={() => toggleMentorSort("reportPct")}>Reports</th>
                       <th>SLA</th>
                       <th className="sortable" onClick={() => toggleMentorSort("risk")}>Status</th>
@@ -1400,7 +1355,6 @@ export default function SessionReports() {
                         <td className="muted">{m.learners}</td>
                         <td className="muted">{m.avgAttendance !== null ? `${m.avgAttendance}%` : "N/A"}</td>
                         <td className="muted">{m.avgRating !== null ? `★ ${m.avgRating}` : "N/A"}</td>
-                        <td className="muted">{m.recordingPct !== null ? `${m.recordingPct}%` : "N/A"}</td>
                         <td className="muted">{m.reportPct !== null ? `${m.reportPct}%` : "N/A"}</td>
                         <td className="muted">N/A</td>
                         <td><Badge label={m.risk} styles={RISK_STYLES} /></td>
@@ -1504,11 +1458,6 @@ export default function SessionReports() {
             <div className="card">
               <SectionTitle icon={ClipboardList} iconColor="#f59e0b" title="Operational Compliance" sub="Only metrics with real underlying data are shown" />
               <OpBar
-                label="Recording Compliance"
-                pct={opCompliance ? opCompliance.recordingPct : null}
-                note={opCompliance?.current && opCompliance?.previous ? `${opCompliance.current.recordingPct}% now vs ${opCompliance.previous.recordingPct}% prior 30 days` : (opCompliance ? `${opCompliance.n} completed sessions` : undefined)}
-              />
-              <OpBar
                 label="Report Completion"
                 pct={opCompliance ? opCompliance.reportPct : null}
                 note={opCompliance?.current && opCompliance?.previous ? `${opCompliance.current.reportPct}% now vs ${opCompliance.previous.reportPct}% prior 30 days` : (opCompliance ? `${opCompliance.n} completed sessions` : undefined)}
@@ -1519,29 +1468,8 @@ export default function SessionReports() {
             </div>
           </div>
 
-          {/* Recording Health + Report Health */}
-          <div className="grid-2a" style={{ gridTemplateColumns: "1fr 1fr" }}>
-            <div className="card">
-              <SectionTitle icon={Video} iconColor="#16a34a" title="Recording Health" sub="Completed sessions only" />
-              {!recordingHealth ? (
-                <div className="empty-state" style={{ padding: "20px 0" }}>No data yet.</div>
-              ) : (
-                <div className="health-row-wide">
-                  <div style={{ position: "relative", width: "110px", flexShrink: 0 }}>
-                    <Doughnut
-                      data={{ labels: ["Available", "Missing"], datasets: [{ data: [recordingHealth.available, recordingHealth.notAvailable], backgroundColor: ["#22c55e", "#94a3b8"], borderWidth: 0 }] }}
-                      options={{ plugins: { legend: { display: false } }, cutout: "70%" }}
-                    />
-                    <div className="health-center" style={{ fontSize: "16px" }}>{recordingHealth.total}<br /><span>Sessions</span></div>
-                  </div>
-                  <div className="health-legend">
-                    <div><span className="legend-dot" style={{ background: "#22c55e" }} /> Available <b>{recordingHealth.available}</b></div>
-                    <div><span className="legend-dot" style={{ background: "#94a3b8" }} /> Missing <b>{recordingHealth.notAvailable}</b></div>
-                  </div>
-                </div>
-              )}
-            </div>
-
+          {/* Report Health */}
+          <div className="grid-2a" style={{ gridTemplateColumns: "1fr" }}>
             <div className="card">
               <SectionTitle icon={FileText} iconColor="#2563eb" title="Report Health" sub="Completed sessions only" />
               {!reportHealth ? (
@@ -1567,7 +1495,7 @@ export default function SessionReports() {
 
           {/* Critical Operational Items */}
           <div className="card" style={{ marginTop: "16px" }}>
-            <SectionTitle icon={AlertTriangle} iconColor="#b91c1c" title="Critical Operational Items" sub="Completed sessions with a missing recording or a pending report" />
+            <SectionTitle icon={AlertTriangle} iconColor="#b91c1c" title="Critical Operational Items" sub="Completed sessions with a pending report" />
             {criticalOperationalItems.length === 0 ? (
               <div className="empty-state" style={{ padding: "16px 0" }}>No critical operational items right now.</div>
             ) : (
@@ -1624,7 +1552,7 @@ export default function SessionReports() {
           {/* Requires Attention (sessions) + At-Risk Courses */}
           <div className="grid-2a">
             <div className="card">
-              <SectionTitle icon={AlertTriangle} iconColor="#f59e0b" title="Sessions Requiring Attention" sub="Rule-based on attendance, rating, recording and report compliance" />
+              <SectionTitle icon={AlertTriangle} iconColor="#f59e0b" title="Sessions Requiring Attention" sub="Rule-based on attendance, rating and report completion" />
               {health.flagged.length === 0 ? (
                 <div className="empty-state" style={{ padding: "16px 0" }}>Nothing needs attention right now.</div>
               ) : (
@@ -1663,7 +1591,7 @@ export default function SessionReports() {
                           <td className="strong">{b.name}</td>
                           <td className="muted">{b.avgAttendance !== null ? `${b.avgAttendance}%` : "N/A"}</td>
                           <td className="muted">{b.avgRating !== null ? `★ ${b.avgRating}` : "N/A"}</td>
-                          <td className="muted">{b.recordingPct !== null && b.reportPct !== null ? `${Math.round((b.recordingPct + b.reportPct) / 2)}%` : "N/A"}</td>
+                          <td className="muted">{b.reportPct !== null ? `${b.reportPct}%` : "N/A"}</td>
                           <td className="muted">{b.sessions}</td>
                           <td><Badge label={b.risk} styles={RISK_STYLES} /></td>
                           <td><TrendArrow trend={b.trend} /></td>
@@ -1698,9 +1626,6 @@ export default function SessionReports() {
                     change: signals.cancelDelta, suffix: "%", sample: signals.current.count, invert: true,
                   },
                   ...(opCompliance?.current && opCompliance?.previous ? [{
-                    metric: "Recording Compliance", current: opCompliance.current.recordingPct, previous: opCompliance.previous.recordingPct,
-                    change: opCompliance.current.recordingPct - opCompliance.previous.recordingPct, suffix: "%", sample: opCompliance.current.n, invert: false,
-                  }, {
                     metric: "Report Completion", current: opCompliance.current.reportPct, previous: opCompliance.previous.reportPct,
                     change: opCompliance.current.reportPct - opCompliance.previous.reportPct, suffix: "%", sample: opCompliance.current.n, invert: false,
                   }] : []),
@@ -1783,7 +1708,6 @@ export default function SessionReports() {
                         <th>Status</th>
                         <th>Attendance</th>
                         <th>Rating</th>
-                        <th>Recording</th>
                         <th>Report</th>
                         <th>SLA</th>
                         <th>Actions</th>
@@ -1821,7 +1745,6 @@ export default function SessionReports() {
                               </div>
                             </td>
                             <td className="muted">{r.rating ? `★ ${r.rating}` : "—"}</td>
-                            <td><Badge label={r.recording_status} styles={RECORDING_STYLES} /></td>
                             <td><Badge label={r.report_status} styles={REPORT_STYLES} /></td>
                             <td className="muted">N/A</td>
                             <td>

@@ -13,7 +13,6 @@ import {
   CalendarClock,
   TrendingUp,
   Gauge,
-  Video,
   Link2,
   BookOpen,
   ClipboardList,
@@ -420,9 +419,6 @@ export default function SessionReportDetail() {
               <Field label="Actual Duration" value={liveDetails?.actual_duration ? `${liveDetails.actual_duration} min` : null} />
               <Field label="Scheduled Duration" value={liveDetails?.scheduled_duration ? `${liveDetails.scheduled_duration} min` : null} />
               <Field label="Duration Variance" value={liveDetails?.duration_variance !== null && liveDetails?.duration_variance !== undefined ? `${liveDetails.duration_variance} min` : null} />
-              <Field label="Recording Available" value={liveDetails?.recording_available ? "Yes" : "No"} />
-              <Field label="Recording Link" value={liveDetails?.recording_link} />
-              <Field label="Recording Status" value={liveDetails?.recording_status} />
               <Field label="Session Link Status" value={liveDetails?.session_link_status} />
             </div>
             {!liveDetails?.session_started_at && (
@@ -544,7 +540,6 @@ export default function SessionReportDetail() {
               <KPICard label="Attendance %" value={`${performance.attendance_percentage}%`} color="#16a34a" icon={TrendingUp} percent={performance.attendance_percentage} />
               <KPICard label="Completion %" value={performance.completion_percentage !== null ? `${performance.completion_percentage}%` : null} color="#3b82f6" icon={CheckCircle2} percent={performance.completion_percentage ?? undefined} />
               <KPICard label="Session SLA Status" value={<StatusPill label={performance.sla_status} tone={performance.sla_status === "Breached" ? "negative" : performance.sla_status === "Met" ? "positive" : "neutral"} icon={performance.sla_status === "Breached" ? XCircle : CheckCircle2} />} />
-              <KPICard label="Recording Available" value={boolPill(performance.recording_available)} />
               <KPICard label="Report Submitted" value={boolPill(performance.report_submitted)} />
               <KPICard label="Mentor Feedback Submitted" value={boolPill(performance.mentor_feedback_submitted)} />
             </div>
@@ -566,7 +561,6 @@ export default function SessionReportDetail() {
               <LinkChip label="LMS Content" url={content.lms_content_link} icon={BookOpen} />
               <LinkChip label="Presentation" url={content.presentation_link} icon={Presentation} />
               <LinkChip label="Assignment" url={content.assignment_link} icon={ClipboardList} />
-              <LinkChip label="Recording" url={content.recording_link} icon={Video} />
             </div>
 
             {content.resources?.length > 0 && (

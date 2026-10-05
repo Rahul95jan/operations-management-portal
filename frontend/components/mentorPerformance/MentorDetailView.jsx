@@ -70,10 +70,6 @@ const STATUS_STYLES = {
   Completed: { bg: "#dcfce7", color: "#15803d", dot: "#22c55e" },
   Cancelled: { bg: "#f1f5f9", color: "#475569", dot: "#94a3b8" },
 };
-const RECORDING_STYLES = {
-  Available: { bg: "#dcfce7", color: "#15803d", dot: "#22c55e" },
-  "Not Available": { bg: "#f1f5f9", color: "#64748b", dot: "#94a3b8" },
-};
 const REPORT_STYLES = {
   Pending: { bg: "#fef3c7", color: "#b45309", dot: "#f59e0b" },
   Submitted: { bg: "#dbeafe", color: "#1d4ed8", dot: "#3b82f6" },
@@ -132,7 +128,6 @@ function classifySessionHealth(r) {
       return { tier: "attention", reason: `Low Rating (${r.rating} / 5)` };
     }
     if (r.report_status === "Pending") return { tier: "needsReview", reason: "Report Pending" };
-    if (r.recording_status === "Not Available") return { tier: "needsReview", reason: "Recording Missing" };
   }
   return { tier: "healthy", reason: null };
 }
@@ -283,11 +278,6 @@ function SessionDrawer({ session, onClose }) {
             </div>
             {feedback?.nps?.note && <div className="drawer-note">ℹ️ {feedback.nps.note}</div>}
 
-            <div className="drawer-section-title">Recording</div>
-            <div className="drawer-grid">
-              <DrawerField label="Recording Status" value={<Badge label={session.recording_status} styles={RECORDING_STYLES} />} />
-              <DrawerField label="Recording Link" value={content?.recording_link ? <a href={content.recording_link} target="_blank" rel="noreferrer">Open Recording</a> : "Not Available"} />
-            </div>
 
             <div className="drawer-section-title">Report</div>
             <div className="drawer-grid">
@@ -697,9 +687,8 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
     const relevant = sessionRows.filter((r) => r.status !== "Cancelled" && (r.status === "Completed" || r.status === "Scheduled" || r.status === "Live"));
     const n = relevant.length;
     if (!n) return null;
-    const recordingOk = relevant.filter((r) => r.recording_status === "Available").length;
     const reportOk = relevant.filter((r) => r.report_status !== "Pending").length;
-    return { recordingCompliance: Math.round((recordingOk / n) * 100), reportCompletion: Math.round((reportOk / n) * 100), n };
+    return { reportCompletion: Math.round((reportOk / n) * 100), n };
   }, [sessionRows]);
 
   const filteredSessionRows = useMemo(() => {
@@ -1092,7 +1081,6 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                           <div className="empty-state" style={{ padding: "16px 0" }}>Not enough session data yet.</div>
                         ) : (
                           <>
-                            <OpBar label="Recording Compliance" value={opStats.recordingCompliance} />
                             <OpBar label="Report Completion" value={opStats.reportCompletion} />
                           </>
                         )}
@@ -1167,7 +1155,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                         <thead>
                           <tr>
                             <th>Session</th><th>Date &amp; Time</th><th>Course</th><th>Type</th>
-                            <th>Learners</th><th>Attendance</th><th>Attendance %</th><th>Rating</th><th>Recording</th><th>Report</th><th>Status</th><th>Actions</th>
+                            <th>Learners</th><th>Attendance</th><th>Attendance %</th><th>Rating</th><th>Report</th><th>Status</th><th>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1188,7 +1176,6 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                                   </div>
                                 </td>
                                 <td className="muted">{r.rating ? `★ ${r.rating}` : "—"}</td>
-                                <td><Badge label={r.recording_status} styles={RECORDING_STYLES} /></td>
                                 <td><Badge label={r.report_status} styles={REPORT_STYLES} /></td>
                                 <td><Badge label={r.status} styles={STATUS_STYLES} /></td>
                                 <td>
@@ -1390,7 +1377,6 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                       <div className="empty-state">Not enough session data to compute operational metrics.</div>
                     ) : (
                       <>
-                        <OpBar label="Recording Compliance" value={opStats.recordingCompliance} />
                         <OpBar label="Report Completion" value={opStats.reportCompletion} />
                       </>
                     )}
@@ -1539,7 +1525,7 @@ export default function MentorDetailView({ mentorName, filters: scope = {}, embe
                     <DrawerField label="NPS Summary" value={npsStats ? `${npsStats.npsScore > 0 ? "+" : ""}${npsStats.npsScore} (${npsStats.total} responses)` : "Not Available"} />
                     <DrawerField label="Learner Feedback" value={`${recentFeedback.length} written responses`} />
                     <DrawerField label="Course Performance" value={`${courseStats.length} courses`} />
-                    <DrawerField label="Operational Performance" value={opStats ? `Recording ${opStats.recordingCompliance}% · Report ${opStats.reportCompletion}%` : "Not Available"} />
+                    <DrawerField label="Operational Performance" value={opStats ? `Report ${opStats.reportCompletion}%` : "Not Available"} />
                     <DrawerField label="Issues Requiring Attention" value={`${health.flagged.length} sessions flagged`} />
                   </div>
 

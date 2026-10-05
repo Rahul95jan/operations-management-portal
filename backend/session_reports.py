@@ -680,7 +680,7 @@ def build_csv(db, filters, search=None):
     writer.writerow([
         "Session ID", "Date", "Time", "Duration (min)", "Topic", "Mentor",
         "Course", "Session Type", "Status", "Learner Count",
-        "Attendance", "Attendance %", "Recording Status", "Report Status",
+        "Attendance", "Attendance %", "Report Status",
     ])
 
     for r in rows:
@@ -688,7 +688,7 @@ def build_csv(db, filters, search=None):
             r["id"], r["session_date"], r["session_time"], r["duration"],
             r["topic"], r["mentor_name"], r["course_name"],
             r["session_type"], r["status"], r["learner_count"], r["attendance"],
-            r["attendance_percentage"], r["recording_status"], r["report_status"],
+            r["attendance_percentage"], r["report_status"],
         ])
 
     buffer.seek(0)

@@ -2017,7 +2017,6 @@ def generate_session_report_pdf(bundle, attendance, feedback):
         ("Attendance %", f"{perf['attendance_percentage']}%"),
         ("SLA Status", perf["sla_status"]),
         ("Completion %", f"{perf['completion_percentage']}%" if perf["completion_percentage"] is not None else "N/A"),
-        ("Recording", "Available" if perf["recording_available"] else "Not Available"),
         ("Report Status", bundle["report"]["report_status"]),
         ("Mentor Feedback", "Submitted" if perf["mentor_feedback_submitted"] else "Pending"),
     ]))
@@ -2054,12 +2053,6 @@ def generate_session_report_pdf(bundle, attendance, feedback):
         "No individual attendance records captured for this session yet.",
     ))
     elements.append(Spacer(1, 10))
-
-    # Recording
-    elements.append(bullet("Recording"))
-    elements.append(field("Platform", info.get("platform")))
-    elements.append(field("Recording Link", bundle["content"]["recording_link"]))
-    elements.append(Spacer(1, 8))
 
     # Feedback
     elements.append(bullet("Feedback"))

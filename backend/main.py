@@ -3204,7 +3204,6 @@ def _gather_analytics_data(db, batch_name=None, mentor_name=None, session_type=N
         {"label": "Sessions without mentor", "value": len([s for s in sessions if not s.mentor_name])},
         {"label": "Low attendance (< 50%)", "value": len([s for s in sessions if (s.registered_students or 0) > 0 and (s.attendance_percentage or 0) < 50])},
         {"label": "Low rating (< 3.0)", "value": len([s for s in sessions if (s.feedback_score or 0) > 0 and s.feedback_score < 3])},
-        {"label": "Missing recording", "value": len([s for s in sessions if s.status == "Completed" and not s.recording_link])},
         {"label": "Missing feedback", "value": len([s for s in sessions if s.status == "Completed" and not ((s.feedback_score or 0) > 0)])},
     ]
     session_issues = [i for i in session_issues if i["value"] > 0]

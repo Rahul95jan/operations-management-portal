@@ -13,6 +13,9 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 export default function LiveSessionReports() {
   const [sessions, setSessions] = useState([]);
   const [sessionId, setSessionId] = useState("");
+  // Date filter for the session list: edited in draftDate, applied on "Apply Filter".
+  const [draftDate, setDraftDate] = useState("");
+  const [filterDate, setFilterDate] = useState("");
   const [attendance, setAttendance] = useState(null);
   const [polls, setPolls] = useState(null);
   const [importing, setImporting] = useState(null); // "attendance" | "polls" | null
@@ -32,7 +35,24 @@ export default function LiveSessionReports() {
         .sort((a, b) => String(b.session_date || "").localeCompare(String(a.session_date || ""))),
     [sessions]
   );
-  const selected = liveSessions.find((s) => String(s.id) === String(sessionId)) || null;
+  const filteredSessions = useMemo(
+    () => (filterDate ? liveSessions.filter((s) => s.session_date === filterDate) : liveSessions),
+    [liveSessions, filterDate]
+  );
+  const selected = filteredSessions.find((s) => String(s.id) === String(sessionId)) || null;
+
+  const applyFilter = () => {
+    setFilterDate(draftDate);
+    // Drop a selection that the new date no longer includes.
+    if (sessionId && draftDate && !liveSessions.some((s) => String(s.id) === String(sessionId) && s.session_date === draftDate)) {
+      setSessionId("");
+    }
+  };
+  const clearFilter = () => {
+    setDraftDate("");
+    setFilterDate("");
+  };
+  const fmtDate = (d) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 
   const loadSession = (id) => {
     if (!id) {
@@ -91,10 +111,24 @@ export default function LiveSessionReports() {
           </div>
 
           <div className="card">
+            <div className="filter-row">
+              <div className="filter-field">
+                <label className="field-label">Date</label>
+                <input type="date" className="date-input" value={draftDate} onChange={(e) => setDraftDate(e.target.value)} />
+              </div>
+              <button className="btn-apply" onClick={applyFilter} disabled={draftDate === filterDate}>Apply Filter</button>
+              <button className="btn-clear" onClick={clearFilter} disabled={!draftDate && !filterDate}>Clear Filter</button>
+              {filterDate && (
+                <span className="filter-note">
+                  Showing {filteredSessions.length} live session{filteredSessions.length === 1 ? "" : "s"} on {fmtDate(filterDate)}
+                </span>
+              )}
+            </div>
+
             <label className="field-label">Live Session</label>
-            <select className="select" value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
-              <option value="">Select a live session</option>
-              {liveSessions.map((s) => (
+            <select className="select" value={selected ? sessionId : ""} onChange={(e) => setSessionId(e.target.value)}>
+              <option value="">{filterDate && filteredSessions.length === 0 ? "No live sessions on this date" : "Select a live session"}</option>
+              {filteredSessions.map((s) => (
                 <option key={s.id} value={s.id}>
                   {`${(s.topic || "Untitled").trim()} | ${s.mentor_name || "—"} | ${s.session_date || "—"}${s.session_time ? ` ${s.session_time}` : ""}`}
                 </option>
@@ -201,6 +235,15 @@ export default function LiveSessionReports() {
           .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
           .card-title { margin: 0 0 4px; font-size: 16px; color: #1e293b; }
           .field-label { display: block; font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 6px; }
+          .filter-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px solid #f1f5f9; }
+          .filter-field { display: flex; flex-direction: column; }
+          .date-input { padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 10px; font-size: 14px; background: #f8fafc; outline: none; min-width: 180px; }
+          .date-input:focus { border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15); }
+          .btn-apply { border: none; border-radius: 10px; padding: 10px 16px; font-size: 13px; font-weight: 700; color: #0f172a; cursor: pointer; background: linear-gradient(120deg, #f59e0b, #fbbf24); }
+          .btn-clear { border: 1px solid #e2e8f0; border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 700; color: #334155; cursor: pointer; background: #fff; }
+          .btn-clear:hover:not(:disabled) { background: #f1f5f9; }
+          .btn-apply:disabled, .btn-clear:disabled { opacity: 0.5; cursor: not-allowed; }
+          .filter-note { font-size: 12.5px; color: #64748b; font-weight: 600; margin-left: 4px; padding-bottom: 10px; }
           .select { width: 100%; max-width: 640px; padding: 11px 14px; border: 1px solid #e2e8f0; border-radius: 10px; font-size: 14px; background: #f8fafc; outline: none; }
           .select:focus { border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15); }
           .hint { font-size: 12.5px; color: #64748b; margin: 8px 0 0; line-height: 1.5; max-width: 720px; }

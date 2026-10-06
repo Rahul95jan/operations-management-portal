@@ -10,8 +10,9 @@ from dateutil import parser as date_parser
 from fastapi.responses import FileResponse, Response
 
 from fastapi import FastAPI, Depends, Form, File, UploadFile
-from typing import Optional
-from pydantic import BaseModel
+from typing import Optional, Union
+from pydantic import BaseModel, field_validator
+from duration_utils import is_valid_duration, parse_duration_minutes
 from fastapi.middleware.cors import CORSMiddleware
 from models.operations import OperationsAnalytics
 
@@ -794,6 +795,9 @@ def create_session(session: SessionCreate, _user: User = Depends(require_permiss
         course_name=course_name,
         session_date=session.session_date,
         session_time=session.session_time,
+        duration=(
+            parsed if (parsed := parse_duration_minutes(session.duration)) > 0 else None
+        ) if session.duration is not None else None,
         status=session.status,
         session_type=session.session_type,
         webinar_id=session.webinar_id,
@@ -861,6 +865,9 @@ def update_session(session_id: int, session: SessionCreate, _user: User = Depend
     existing_session.course_name = course_name
     existing_session.session_date = session.session_date
     existing_session.session_time = session.session_time
+    if "duration" in session.model_fields_set:
+        parsed = parse_duration_minutes(session.duration) if session.duration is not None else 0
+        existing_session.duration = parsed if parsed > 0 else None
     existing_session.status = session.status
     existing_session.session_type = session.session_type
     existing_session.webinar_id = session.webinar_id
@@ -6138,7 +6145,7 @@ class WebinarCreate(BaseModel):
     mentor_name: str
     session_date: str
     session_time: Optional[str] = None
-    duration: Optional[int] = None
+    duration: Optional[Union[int, float, str]] = None
     platform: Optional[str] = None
     webinar_status: Optional[str] = "Scheduled"
     description: Optional[str] = None
@@ -6147,6 +6154,14 @@ class WebinarCreate(BaseModel):
     project_name: Optional[str] = None
     batch_name: Optional[str] = None
     course_name: Optional[str] = None
+
+    @field_validator("duration", mode="before")
+    @classmethod
+    def normalize_duration(cls, value):
+        if value is None or value == "":
+            return None
+        minutes = parse_duration_minutes(value)
+        return minutes if minutes > 0 else None
 
 
 class ParticipantCreate(BaseModel):
@@ -6178,7 +6193,7 @@ class WebinarReportUpdate(BaseModel):
 
 
 def _webinar_validation_error(data: WebinarCreate):
-    if data.duration is not None and data.duration <= 0:
+    if data.duration is not None and not is_valid_duration(data.duration):
         return "Duration must be greater than 0."
     if data.webinar_status and data.webinar_status not in webinar_ops.VALID_STATUSES:
         return f"Status must be one of: {', '.join(webinar_ops.VALID_STATUSES)}"
@@ -6583,13 +6598,14 @@ def webinars_payout_preview(webinar_id: int):
         if not mentor or not mentor.hourly_rate:
             return {"success": False, "message": "No hourly rate on file for this mentor."}
 
-        amount = webinar_ops.calculate_payout(mentor.hourly_rate, webinar.duration)
+        duration_minutes = parse_duration_minutes(webinar.duration)
+        amount = webinar_ops.calculate_payout(mentor.hourly_rate, duration_minutes)
         existing = db.query(Invoice).filter(Invoice.webinar_id == webinar_id, Invoice.source_type == "webinar").first()
 
         return {
             "success": True,
             "mentor_name": webinar.mentor_name,
-            "duration_minutes": webinar.duration,
+            "duration_minutes": duration_minutes,
             "hourly_rate": mentor.hourly_rate,
             "estimated_amount": amount,
             "already_invoiced": existing is not None,

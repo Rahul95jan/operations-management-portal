@@ -24,7 +24,7 @@ class Session(Base):
     # Session Schedule
     session_date = Column(String)
     session_time = Column(String)
-    duration = Column(Integer)          # Minutes
+    duration = Column(Float)            # Minutes (supports fractional values from HH:MM:SS)
 
     # Meeting Details
     platform = Column(String)           # Zoom / Google Meet

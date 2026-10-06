@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
+import { formatDuration, isValidDuration, parseDurationToMinutes } from "../lib/duration";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -263,11 +264,22 @@ const EMPTY_FORM = {
   batch_name: "", // internal link to the course's record; resolved by the backend when empty
   session_date: "",
   session_time: "",
+  duration: "",
   status: "Scheduled",
   session_type: "Live Session",
   webinar_id: "",
   zoom_id: "",
 };
+
+function buildSessionPayload(form) {
+  const payload = { ...form };
+  if (form.session_type === "Webinar Session") {
+    payload.duration = form.duration ? parseDurationToMinutes(form.duration) : null;
+  } else {
+    delete payload.duration;
+  }
+  return payload;
+}
 
 const TABS = ["All", "Today", "Upcoming", "Completed", "Cancelled"];
 const ROWS_PER_PAGE_OPTIONS = [5, 10, 25, 50];
@@ -562,11 +574,15 @@ export default function Sessions() {
   };
 
   const createSession = async () => {
+    if (form.session_type === "Webinar Session" && form.duration && !isValidDuration(form.duration)) {
+      showToast("Duration must be a valid time like 1:20:30.");
+      return;
+    }
     try {
       const res = await fetch(`${API}/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(buildSessionPayload(form)),
       });
       if (!res.ok) throw new Error("bad status");
       const data = await res.json();
@@ -580,11 +596,15 @@ export default function Sessions() {
   };
 
   const updateSession = async () => {
+    if (form.session_type === "Webinar Session" && form.duration && !isValidDuration(form.duration)) {
+      showToast("Duration must be a valid time like 1:20:30.");
+      return;
+    }
     try {
       const res = await fetch(`${API}/sessions/${editId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(buildSessionPayload(form)),
       });
       if (!res.ok) throw new Error("bad status");
       const data = await res.json();
@@ -623,6 +643,7 @@ export default function Sessions() {
       batch_name: session.batch_name,
       session_date: session.session_date,
       session_time: session.session_time,
+      duration: formatDuration(session.duration) || "",
       status: session.status,
       session_type: session.session_type || "Live Session",
       webinar_id: session.webinar_id || "",
@@ -644,6 +665,7 @@ export default function Sessions() {
       batch_name: session.batch_name,
       session_date: "",
       session_time: "",
+      duration: formatDuration(session.duration) || "",
       status: session.status,
       session_type: session.session_type || "Live Session",
       webinar_id: "",
@@ -1176,6 +1198,19 @@ export default function Sessions() {
               />
             </Field>
 
+            {form.session_type === "Webinar Session" && (
+              <Field label="Duration (H:MM:SS)">
+                <input
+                  type="text"
+                  placeholder="1:20:30"
+                  className="styled-input"
+                  style={inputStyle}
+                  value={form.duration}
+                  onChange={(e) => setForm({ ...form, duration: e.target.value })}
+                />
+              </Field>
+            )}
+
             <Field label="Status">
               <select
                 className="styled-input"
@@ -1661,6 +1696,9 @@ export default function Sessions() {
               <div className="info-chip"><div className="info-chip-label">Course</div><div className="info-chip-value">{courseOf(viewSession) || "Not Assigned"}</div></div>
               <div className="info-chip"><div className="info-chip-label">Date</div><div className="info-chip-value">{viewSession.session_date || "—"}</div></div>
               <div className="info-chip"><div className="info-chip-label">Time</div><div className="info-chip-value">{viewSession.session_time || "—"}</div></div>
+              {viewSession.session_type === "Webinar Session" && (
+                <div className="info-chip"><div className="info-chip-label">Duration</div><div className="info-chip-value">{formatDuration(viewSession.duration) || "—"}</div></div>
+              )}
               <div className="info-chip"><div className="info-chip-label">Status</div><div className="info-chip-value"><StatusBadge status={viewSession.status} /></div></div>
               <div className="info-chip"><div className="info-chip-label">Webinar ID</div><div className="info-chip-value">{viewSession.webinar_id || "—"}</div></div>
               <div className="info-chip"><div className="info-chip-label">Zoom ID</div><div className="info-chip-value">{viewSession.zoom_id || "—"}</div></div>

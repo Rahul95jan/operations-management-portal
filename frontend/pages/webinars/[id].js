@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import Link from "next/link";
 import Sidebar from "../../components/Sidebar";
 import ProtectedRoute from "../../components/ProtectedRoute";
+import { formatDuration } from "../../lib/duration";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -163,7 +164,7 @@ export default function WebinarDetailPage() {
               <div>
                 <h1 style={{ margin: "0 0 8px", fontSize: "22px", color: "#0f172a" }}>{webinar.webinar_title}</h1>
                 <div style={{ color: "#64748b", fontSize: "14px" }}>
-                  {webinar.mentor_name} · {webinar.session_date} {webinar.session_time || ""} · {webinar.duration || "—"} min · {webinar.webinar_status}
+                  {webinar.mentor_name} · {webinar.session_date} {webinar.session_time || ""} · {formatDuration(webinar.duration) || "—"} · {webinar.webinar_status}
                 </div>
               </div>
             </div>
@@ -194,7 +195,7 @@ export default function WebinarDetailPage() {
             <h2 className="card-title">💰 Mentor Payout</h2>
             {payout?.success ? (
               <div style={{ display: "flex", alignItems: "center", gap: "24px", flexWrap: "wrap" }}>
-                <div><div className="mini-label">Duration</div><div className="mini-value">{payout.duration_minutes} min</div></div>
+                <div><div className="mini-label">Duration</div><div className="mini-value">{formatDuration(payout.duration_minutes) || "—"}</div></div>
                 <div><div className="mini-label">Hourly Rate</div><div className="mini-value">₹{payout.hourly_rate}</div></div>
                 <div><div className="mini-label">Estimated Payout</div><div className="mini-value">₹{payout.estimated_amount}</div></div>
                 {payout.already_invoiced ? (

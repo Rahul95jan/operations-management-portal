@@ -8,6 +8,7 @@ counts)."""
 from datetime import datetime
 from collections import defaultdict, Counter
 
+from duration_utils import duration_to_billable_hours, parse_duration_minutes
 from models.zoom_analytics import ZoomAnalytics
 from models.webinar_participant import WebinarParticipant
 from models.nps import NPSFeedback
@@ -272,10 +273,10 @@ def lead_profile(db, email):
     }
 
 
-def calculate_payout(mentor_hourly_rate, duration_minutes):
+def calculate_payout(mentor_hourly_rate, duration):
     rate = _to_float(mentor_hourly_rate, 0) or 0
-    minutes = duration_minutes or 0
-    return round((minutes / 60) * rate, 2)
+    hours = duration_to_billable_hours(duration)
+    return round(hours * rate, 2)
 
 
 def compute_mentor_webinar_performance(db, mentor_name):
@@ -354,6 +355,7 @@ def create_webinar_payout(db, webinar_id):
         return {"success": False, "message": "No hourly rate on file for this mentor — cannot calculate payout."}
 
     amount = calculate_payout(hourly_rate, webinar.duration)
+    billable_hours = duration_to_billable_hours(webinar.duration)
 
     invoice = Invoice(
         mentor_name=webinar.mentor_name,
@@ -361,7 +363,7 @@ def create_webinar_payout(db, webinar_id):
         batch_name=f"Webinar: {webinar.webinar_title}",
         month=_to_month(webinar.session_date),
         total_sessions=1,
-        total_hours=str(round((webinar.duration or 0) / 60, 2)),
+        total_hours=str(billable_hours),
         hourly_rate=str(hourly_rate),
         total_amount=str(amount),
         payment_status="Pending",

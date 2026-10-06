@@ -1,7 +1,18 @@
 /**
- * Parse a session duration into minutes.
- * Supports HH:MM:SS ("1:20:30"), H:MM ("1:30"), and plain minutes ("90", 90).
+ * Shared duration helpers for webinars, sessions, and invoice generation.
+ * Supports HH:MM:SS ("1:20:30"), H:MM ("1:30"), plain minutes ("90", 90, 80.5).
  */
+
+function formatMinutesToHms(minutes) {
+  const totalSeconds = Math.round(minutes * 60);
+  const hours = Math.floor(totalSeconds / 3600);
+  const remainder = totalSeconds % 3600;
+  const mins = Math.floor(remainder / 60);
+  const secs = remainder % 60;
+  return `${hours}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+/** Parse a duration value into decimal minutes. */
 export function parseDurationToMinutes(value) {
   if (value === null || value === undefined || value === "") return 0;
 
@@ -34,6 +45,20 @@ export function parseDurationToHours(value) {
   return parseDurationToMinutes(value) / 60;
 }
 
+/** Format minutes or a raw time string as H:MM:SS (e.g. 80.5 → 1:20:30). */
+export function formatDuration(value) {
+  const minutes = parseDurationToMinutes(value);
+  if (!minutes) return null;
+  return formatMinutesToHms(minutes);
+}
+
+/** Empty values are allowed; non-empty values must parse to > 0 minutes. */
+export function isValidDuration(value) {
+  if (value === null || value === undefined || value === "") return true;
+  return parseDurationToMinutes(value) > 0;
+}
+
+/** True when a duration is present and greater than zero. */
 export function hasDuration(value) {
   return parseDurationToMinutes(value) > 0;
 }
@@ -44,14 +69,7 @@ export function roundHours(hours) {
   return Math.round(hours * 100) / 100;
 }
 
-/** Display label: keep time strings as-is, append "min" for plain minute values. */
+/** Display label for session lists/drawers. */
 export function formatSessionDuration(value) {
-  if (value === null || value === undefined || value === "") return null;
-
-  const raw = String(value).trim();
-  if (!raw) return null;
-  if (raw.includes(":")) return raw;
-
-  const minutes = parseDurationToMinutes(raw);
-  return minutes ? `${minutes} min` : null;
+  return formatDuration(value);
 }

@@ -6756,6 +6756,22 @@ def get_course_health_summary(
     return {"success": True, "items": session_reports.course_health_summary(db, date_from, date_to)}
 
 
+@app.get("/course-health/mentors")
+def get_course_health_mentors(
+    course_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    if not course_name and not batch_name:
+        return {"success": False, "detail": "Provide course_name or batch_name"}
+    detail = session_reports.course_health_mentors(db, course_name, batch_name, date_from, date_to)
+    if not detail:
+        return {"success": False, "detail": "No completed sessions found for this filter"}
+    return {"success": True, **detail}
+
+
 @app.get("/course-health/alerts")
 def get_course_health_alerts(db: Session = Depends(get_db)):
     return {"success": True, "items": session_reports.course_health_alerts(db)}

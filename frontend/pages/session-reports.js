@@ -71,6 +71,13 @@ const RISK_STYLES = {
   Good: { bg: "#dcfce7", color: "#15803d", dot: "#22c55e" },
 };
 
+const COURSE_HEALTH_STYLES = {
+  Healthy: { bg: "#dcfce7", color: "#15803d" },
+  Watch: { bg: "#fef3c7", color: "#b45309" },
+  Critical: { bg: "#fee2e2", color: "#b91c1c" },
+  "No data": { bg: "#f1f5f9", color: "#64748b" },
+};
+
 // Session health uses backend scoring when health_label is present on list rows.
 function classifySessionHealth(r) {
   if (r.health_label === "No data") {
@@ -622,6 +629,7 @@ export default function SessionReports() {
   const [rowMenu, setRowMenu] = useState(null); // { id, top, left }
   const [drawerSession, setDrawerSession] = useState(null);
   const [courseHealthAlerts, setCourseHealthAlerts] = useState([]);
+  const [courseMentors, setCourseMentors] = useState([]);
 
   useEffect(() => {
     fetch(`${API}/mentors`).then((r) => r.json()).then(setMentors).catch(() => {});
@@ -654,6 +662,20 @@ export default function SessionReports() {
   };
 
   useEffect(load, [appliedFilters, search, sortBy, sortDir]);
+
+  useEffect(() => {
+    if (!appliedFilters.course_name) {
+      setCourseMentors([]);
+      return;
+    }
+    const params = new URLSearchParams({ course_name: appliedFilters.course_name });
+    if (appliedFilters.date_from) params.set("date_from", appliedFilters.date_from);
+    if (appliedFilters.date_to) params.set("date_to", appliedFilters.date_to);
+    fetch(`${API}/course-health/mentors?${params}`)
+      .then((r) => r.json())
+      .then((d) => setCourseMentors(d.success ? d.mentors || [] : []))
+      .catch(() => setCourseMentors([]));
+  }, [appliedFilters.course_name, appliedFilters.date_from, appliedFilters.date_to]);
 
   useEffect(() => {
     const onClick = (e) => {
@@ -1147,6 +1169,36 @@ export default function SessionReports() {
             )}
             {appliedFilterCount > 0 && <div className="filter-count-chip fbar-count">{appliedFilterCount} filter{appliedFilterCount > 1 ? "s" : ""} applied</div>}
           </div>
+
+          {appliedFilters.course_name && courseMentors.length > 0 && (
+            <div className="card mentors-strip" style={{ marginTop: "12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", marginBottom: "12px" }}>
+                <div style={{ fontSize: "12px", fontWeight: 800, color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                  Mentors in this course
+                </div>
+                <Link
+                  href={`/course-health?course_name=${encodeURIComponent(appliedFilters.course_name)}&tab=mentors`}
+                  style={{ color: "#1d4ed8", fontWeight: 700, fontSize: "12px", textDecoration: "none" }}
+                >
+                  View in Course Health →
+                </Link>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
+                {courseMentors.map((m) => {
+                  const hs = COURSE_HEALTH_STYLES[m.health_label] || COURSE_HEALTH_STYLES["No data"];
+                  return (
+                    <div key={m.mentor_name} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#fff" }}>
+                      <span style={{ fontWeight: 700, fontSize: "13px", color: "#0f172a" }}>{m.mentor_name}</span>
+                      <span style={{ fontSize: "12px", color: "#64748b" }}>{m.session_count} session{m.session_count === 1 ? "" : "s"}</span>
+                      <span style={{ background: hs.bg, color: hs.color, fontWeight: 800, fontSize: "11px", padding: "3px 8px", borderRadius: "999px" }}>
+                        {m.health_label || "No data"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* KPI cards */}
           <div className="kpi-section-label">Executive Overview</div>

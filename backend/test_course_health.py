@@ -6,7 +6,12 @@ from types import SimpleNamespace
 
 sys.path.insert(0, "/workspace/backend")
 
-from session_reports import compute_session_health, _score_course_health, _coverage_confidence
+from session_reports import (
+    compute_session_health,
+    _score_course_health,
+    _coverage_confidence,
+    _rollup_health_metrics,
+)
 
 
 def ns(**kwargs):
@@ -119,10 +124,46 @@ def test_course_health_scoring():
     assert label == "No data"
 
 
+def test_mentor_rollup_groups_sessions():
+    rows = [
+        {"id": 1, "session_date": "2026-01-01", "topic": "Intro", "mentor_name": "Alice"},
+        {"id": 2, "session_date": "2026-01-08", "topic": "Advanced", "mentor_name": "Bob"},
+    ]
+    sessions = {
+        1: ns(status="Completed", duration=60, recording_link="https://example.com", attended_students=50),
+        2: ns(status="Completed", duration=60, recording_link="https://example.com", attended_students=40),
+    }
+    imp = ns(
+        unique_viewers=50,
+        median_stay_minutes=40,
+        actual_duration_minutes=60,
+        hold_rate=80.0,
+        pct_under_15_min=5.0,
+        has_registrant_total=False,
+    )
+    poll = ns(
+        overall_avg=4.5,
+        poll_responses=10,
+        teaching_style_avg=4.5,
+        doubts_avg=4.4,
+        effectiveness_avg=4.6,
+    )
+    imports = {1: imp, 2: imp}
+    polls = {1: poll, 2: poll}
+    reports = {1: ns(report_status="Reviewed"), 2: ns(report_status="Reviewed")}
+
+    rollup = _rollup_health_metrics(rows, sessions, imports, polls, reports)
+    assert rollup["completed_sessions"] == 2
+    assert rollup["coverage_pct"] == 100.0
+    assert rollup["health_label"] == "Healthy"
+    assert len(rollup["sessions"]) == 2
+
+
 if __name__ == "__main__":
     test_no_data_without_imports()
     test_healthy_session()
     test_critical_low_stay_and_poll()
     test_watch_pending_report()
     test_course_health_scoring()
+    test_mentor_rollup_groups_sessions()
     print("All course health tests passed.")

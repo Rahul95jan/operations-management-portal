@@ -58,6 +58,7 @@ class SessionCreate(BaseModel):
     course_name: str | None = None  # the portal picks a course; batch_name is resolved from it
     session_date: str
     session_time: str
+    duration: float | None = None
     status: str
     session_type: str = "Live Session"
     webinar_id: str | None = None

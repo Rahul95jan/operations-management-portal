@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import Sidebar from "../../components/Sidebar";
 import ProtectedRoute from "../../components/ProtectedRoute";
+import { formatDuration, isValidDuration, parseDurationToMinutes } from "../../lib/duration";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -134,7 +135,7 @@ export default function WebinarsPage() {
     if (!form.webinar_title.trim()) return "Webinar title is required.";
     if (!form.mentor_name) return "Mentor is required.";
     if (!form.session_date) return "Date is required.";
-    if (form.duration && Number(form.duration) <= 0) return "Duration must be greater than 0.";
+    if (form.duration && !isValidDuration(form.duration)) return "Duration must be a valid time like 1:20:30.";
     return "";
   };
 
@@ -149,7 +150,7 @@ export default function WebinarsPage() {
 
     const payload = {
       ...form,
-      duration: form.duration ? Number(form.duration) : null,
+      duration: form.duration ? parseDurationToMinutes(form.duration) : null,
     };
 
     try {
@@ -182,7 +183,7 @@ export default function WebinarsPage() {
       category: full.category || "",
       session_date: full.session_date || "",
       session_time: full.session_time || "",
-      duration: full.duration || "",
+      duration: formatDuration(full.duration) || "",
       platform: full.platform || "Zoom",
       target_audience: full.target_audience || "",
       description: full.description || "",
@@ -199,7 +200,7 @@ export default function WebinarsPage() {
       category: w.category || "",
       session_date: "",
       session_time: w.session_time || "",
-      duration: w.duration || "",
+      duration: formatDuration(w.duration) || "",
       platform: w.platform || "Zoom",
       target_audience: "",
       description: "",
@@ -339,8 +340,8 @@ export default function WebinarsPage() {
                   <Field label="Time">
                     <input type="time" style={inputStyle} value={form.session_time} onChange={(e) => setForm({ ...form, session_time: e.target.value })} />
                   </Field>
-                  <Field label="Duration (minutes)">
-                    <input type="number" min="1" style={inputStyle} value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} />
+                  <Field label="Duration (H:MM:SS)">
+                    <input type="text" placeholder="1:20:30" style={inputStyle} value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} />
                   </Field>
                   <Field label="Platform">
                     <select style={inputStyle} value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value })}>
@@ -414,7 +415,7 @@ export default function WebinarsPage() {
                   {filtered.map((w) => (
                     <tr key={w.id}>
                       <td className="strong"><Link href={`/webinars/${w.id}`}>{w.title}</Link></td>
-                      <td className="muted">{w.session_date}{w.session_time ? ` · ${w.session_time}` : ""}</td>
+                      <td className="muted">{w.session_date}{w.session_time ? ` · ${w.session_time}` : ""}{w.duration ? ` · ${formatDuration(w.duration)}` : ""}</td>
                       <td>{w.mentor_name}</td>
                       <td><StatusBadge status={w.status} /></td>
                       <td>{w.registered}</td>

@@ -32,7 +32,7 @@ class ZoomAnalytics(Base):
     session_date = Column(String)
     session_time = Column(String)
 
-    duration = Column(Integer)  # Minutes
+    duration = Column(Float)  # Minutes (supports fractional values from HH:MM:SS)
 
     # =====================================================
     # Registration Analytics

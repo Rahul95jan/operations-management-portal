@@ -12,12 +12,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi import FastAPI, Depends, Form, File, UploadFile
 from typing import Optional, Union
 from pydantic import BaseModel, field_validator
-from duration_utils import (
-    duration_to_billable_hours,
-    format_duration,
-    is_valid_duration,
-    parse_duration_minutes,
-)
+from duration_utils import is_valid_duration, parse_duration_minutes
 from fastapi.middleware.cors import CORSMiddleware
 from models.operations import OperationsAnalytics
 
@@ -765,76 +760,6 @@ def _course_lookup(db):
         for b in db.query(Batch).all() if b.batch_name
     }
     return lambda batch_name: mapping.get((batch_name or "").strip().lower()) or (batch_name or "")
-
-
-WEBINAR_SESSION_TYPE = "Webinar Session"
-
-
-def _webinar_payout_batch_name(month: str) -> str:
-    y, mo = month.split("-")
-    dt = datetime(int(y), int(mo), 1)
-    return f"Webinar Payout — {dt.strftime('%B %Y')}"
-
-
-def _session_billing_month_key(session_date: str | None) -> str:
-    raw = (session_date or "").strip()
-    if not raw:
-        return ""
-    if len(raw) >= 7 and raw[4] == "-":
-        return raw[:7]
-    dmy = re.match(r"^(\d{2})[-/](\d{2})[-/](\d{4})", raw)
-    if dmy:
-        return f"{dmy.group(3)}-{dmy.group(2)}"
-    return ""
-
-
-def _webinar_sessions_for_month(db, mentor_name: str, month: str):
-    rows = (
-        db.query(SessionModel)
-        .filter(
-            SessionModel.mentor_name == mentor_name,
-            SessionModel.session_type == WEBINAR_SESSION_TYPE,
-        )
-        .all()
-    )
-    matched = [s for s in rows if _session_billing_month_key(s.session_date) == month]
-    matched.sort(key=lambda s: s.session_date or "")
-    return matched
-
-
-def _webinar_invoice_session_lines(db, invoice: Invoice):
-    rate = float(invoice.hourly_rate or 0)
-    lines = []
-    for session in _webinar_sessions_for_month(db, invoice.mentor_name, invoice.month):
-        hours = duration_to_billable_hours(session.duration)
-        lines.append(
-            {
-                "date": session.session_date or "—",
-                "topic": (session.topic or "Webinar").strip(),
-                "duration": format_duration(session.duration) or "—",
-                "hours": hours,
-                "amount": round(hours * rate, 2),
-            }
-        )
-    return lines
-
-
-def _invoice_pdf_args(db, invoice: Invoice):
-    source = invoice.source_type or "batch"
-    if source == "webinar":
-        return invoice.batch_name, _webinar_invoice_session_lines(db, invoice)
-    return _course_lookup(db)(invoice.batch_name), None
-
-
-def _find_webinar_monthly_invoice(db, mentor_name: str, month: str, exclude_id: int | None = None):
-    query = db.query(Invoice).filter(
-        Invoice.mentor_name == mentor_name,
-        Invoice.month == month,
-        Invoice.source_type == "webinar",
-    )
-    if exclude_id is not None:
-        query = query.filter(Invoice.id != exclude_id)
-    return query.first()
 
 
 def _resolve_course_batch(db, course_name=None, batch_name=None):
@@ -1749,14 +1674,6 @@ def create_invoice(invoice: InvoiceCreate):
     db = SessionLocal()
 
     try:
-        source_type = invoice.source_type or "batch"
-        batch_name = invoice.batch_name
-        if source_type == "webinar":
-            if _find_webinar_monthly_invoice(db, invoice.mentor_name, invoice.month):
-                return {"error": "A webinar invoice already exists for this mentor and billing month."}
-            if not batch_name:
-                batch_name = _webinar_payout_batch_name(invoice.month)
-
         # =====================================
         # Get the next invoice number
         # =====================================
@@ -1782,7 +1699,7 @@ def create_invoice(invoice: InvoiceCreate):
             invoice_number=invoice_number,
             mentor_name=invoice.mentor_name,
             mentor_email=invoice.mentor_email,
-            batch_name=batch_name,
+            batch_name=invoice.batch_name,
             month=invoice.month,
             total_sessions=invoice.total_sessions,
             total_hours=invoice.total_hours,
@@ -1791,7 +1708,7 @@ def create_invoice(invoice: InvoiceCreate):
             payment_status="Pending",
             due_date=due_date,
             notes=invoice.notes,
-            source_type=source_type,
+            source_type=invoice.source_type or "batch",
             webinar_id=invoice.webinar_id,
         )
 
@@ -1814,8 +1731,7 @@ def create_invoice(invoice: InvoiceCreate):
         # Generate PDF
         # =====================================
 
-        course_name, session_lines = _invoice_pdf_args(db, new_invoice)
-        pdf_path = generate_invoice(new_invoice, course_name=course_name, session_lines=session_lines)
+        pdf_path = generate_invoice(new_invoice, course_name=_course_lookup(db)(new_invoice.batch_name))
 
         print("PDF Generated:", pdf_path)
 
@@ -1863,8 +1779,7 @@ def download_invoice(invoice_id: int):
         print("=" * 60)
 
         # Always regenerate PDF using latest database values
-        course_name, session_lines = _invoice_pdf_args(db, invoice)
-        pdf_path = generate_invoice(invoice, course_name=course_name, session_lines=session_lines)
+        pdf_path = generate_invoice(invoice, course_name=_course_lookup(db)(invoice.batch_name))
 
         return FileResponse(
             path=pdf_path,
@@ -1934,8 +1849,7 @@ def send_invoice(invoice_id: int):
             invoice.mentor_email = mentor_email
             db.commit()
 
-        course_name, session_lines = _invoice_pdf_args(db, invoice)
-        pdf_path = generate_invoice(invoice, course_name=course_name, session_lines=session_lines)
+        pdf_path = f"pdfs/invoice_{invoice_id}.pdf"
 
         if not os.path.exists(pdf_path):
             return {
@@ -2112,23 +2026,9 @@ def update_invoice(invoice_id: int, updated_invoice: InvoiceCreate):
         db.close()
         return {"message": "Invoice not found"}
 
-    source_type = updated_invoice.source_type or invoice.source_type or "batch"
-    batch_name = updated_invoice.batch_name
-    if source_type == "webinar":
-        if _find_webinar_monthly_invoice(
-            db,
-            updated_invoice.mentor_name,
-            updated_invoice.month,
-            exclude_id=invoice_id,
-        ):
-            db.close()
-            return {"error": "A webinar invoice already exists for this mentor and billing month."}
-        if not batch_name:
-            batch_name = _webinar_payout_batch_name(updated_invoice.month)
-
     invoice.mentor_name = updated_invoice.mentor_name
     invoice.mentor_email = updated_invoice.mentor_email
-    invoice.batch_name = batch_name
+    invoice.batch_name = updated_invoice.batch_name
     invoice.month = updated_invoice.month
     invoice.total_sessions = updated_invoice.total_sessions
     invoice.total_hours = updated_invoice.total_hours
@@ -2145,9 +2045,6 @@ def update_invoice(invoice_id: int, updated_invoice: InvoiceCreate):
 
     db.commit()
     db.refresh(invoice)
-
-    course_name, session_lines = _invoice_pdf_args(db, invoice)
-    generate_invoice(invoice, course_name=course_name, session_lines=session_lines)
 
     db.close()
 

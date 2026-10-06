@@ -58,6 +58,17 @@ def _line_duration_minutes(line):
     return hours * 60 if hours > 0 else 0.0
 
 
+def _kn_logo_flowable(kn_logo_path, size_mm=14):
+    """KN emblem only — never the full banner logo with academy text."""
+    if kn_logo_path and os.path.exists(kn_logo_path):
+        return Image(kn_logo_path, width=size_mm * mm, height=size_mm * mm)
+    side = size_mm * mm
+    badge = Drawing(side, side)
+    badge.add(Rect(0, 0, side, side, fillColor=HexColor("#0f172a"), strokeColor=HexColor("#f59e0b"), strokeWidth=1.5))
+    badge.add(String(side * 0.5, side * 0.38, "KN", fontName="Helvetica-Bold", fontSize=size_mm * 1.6, fillColor=HexColor("#f59e0b"), textAnchor="middle"))
+    return badge
+
+
 def generate_invoice(invoice, course_name=None, session_lines=None):
     if not os.path.exists("pdfs"):
         os.makedirs("pdfs")
@@ -115,11 +126,7 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
     # =====================================================
     # Header banner — KN logo left, academy name centered, invoice right
     # =====================================================
-    kn_logo_path = KN_LOGO_PATH if os.path.exists(KN_LOGO_PATH) else LOGO_PATH
-    if os.path.exists(kn_logo_path):
-        logo_cell = Image(kn_logo_path, width=14 * mm, height=14 * mm)
-    else:
-        logo_cell = ""
+    logo_cell = _kn_logo_flowable(KN_LOGO_PATH if os.path.exists(KN_LOGO_PATH) else None)
 
     brand_text = Paragraph(
         "<font color='#ffffff' size='16'><b>Krish Naik Academy</b></font><br/>"

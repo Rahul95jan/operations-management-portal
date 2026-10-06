@@ -322,6 +322,17 @@ function webinarSessionLabel(session) {
   return duration ? `${topic} — ${date} (${duration})` : `${topic} — ${date}`;
 }
 
+function webinarInvoiceForSession(session, invoiceList) {
+  if (!session) return null;
+  const key = webinarBatchName(session);
+  return invoiceList.find(
+    (inv) =>
+      inv.source_type === "webinar" &&
+      inv.mentor_name === session.mentor_name &&
+      (inv.batch_name || "").trim() === key,
+  ) || null;
+}
+
 function invoiceLabel(inv, courseByBatch) {
   if (inv?.source_type === "webinar") return webinarTopicOf(inv) || inv.batch_name || "—";
   return courseOfBatch(inv.batch_name, courseByBatch);
@@ -354,6 +365,7 @@ export default function InvoiceGenerator() {
   const [editId, setEditId] = useState(null);
   const [validated, setValidated] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [generatingSessionId, setGeneratingSessionId] = useState(null);
 
   const [search, setSearch] = useState("");
   const [batchFilter, setBatchFilter] = useState("All"); // holds a course name
@@ -529,6 +541,30 @@ export default function InvoiceGenerator() {
       .sort((a, b) => (b.session_date || "").localeCompare(a.session_date || ""));
   }, [sessions, form.mentor_name, form.month]);
 
+  const monthlyWebinarSessions = useMemo(() => {
+    if (!form.mentor_name || !form.month) return [];
+    return sessions
+      .filter(
+        (s) =>
+          s.mentor_name === form.mentor_name &&
+          s.session_type === WEBINAR_SESSION_TYPE &&
+          (s.session_date || "").startsWith(form.month),
+      )
+      .sort((a, b) => (a.session_date || "").localeCompare(b.session_date || ""))
+      .map((s) => {
+        const existing = webinarInvoiceForSession(s, invoices);
+        const billableHours = roundHours(parseDurationToMinutes(s.duration) / 60);
+        const rate = Number(mentorByName(form.mentor_name)?.hourly_rate || form.rate || 0);
+        return {
+          session: s,
+          invoice: existing,
+          durationLabel: formatSessionDuration(s.duration) || "—",
+          amount: billableHours && rate ? roundHours(billableHours * rate) : null,
+          invoiced: !!existing,
+        };
+      });
+  }, [sessions, invoices, form.mentor_name, form.month, form.rate, mentors]);
+
   const matchingSessions = useMemo(() => {
     if (!form.mentor_name) return [];
     if (formIsWebinar) {
@@ -625,6 +661,69 @@ export default function InvoiceGenerator() {
     });
     setOpenMenuId(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const selectWebinarSessionForInvoice = (session) => {
+    const durationLabel = formatSessionDuration(session.duration) || "";
+    const billableHours = parseDurationInputToHours(durationLabel);
+    const rate = Number(form.rate || mentorByName(form.mentor_name)?.hourly_rate || 0);
+    setForm((f) => ({
+      ...f,
+      webinar_session_id: String(session.id),
+      month: session.session_date ? session.session_date.slice(0, 7) : f.month,
+      sessions: 1,
+      hours: durationLabel,
+      amount: billableHours * rate,
+    }));
+    setValidated(false);
+  };
+
+  const quickGenerateWebinarInvoice = async (session) => {
+    const existing = webinarInvoiceForSession(session, invoices);
+    if (existing) {
+      showToast(`Invoice already exists for this session (#${existing.invoice_number || existing.id}).`);
+      return;
+    }
+    const durationMinutes = parseDurationToMinutes(session.duration);
+    if (!durationMinutes) {
+      showToast("Add duration (e.g. 1:20:40) to this session before invoicing.");
+      return;
+    }
+    const mentor = mentorByName(form.mentor_name);
+    const rate = Number(mentor?.hourly_rate || form.rate || 0);
+    if (!rate) {
+      showToast("Set hourly rate on the mentor profile first.");
+      return;
+    }
+    const billableHours = roundHours(durationMinutes / 60);
+    setGeneratingSessionId(session.id);
+    const payload = {
+      mentor_name: session.mentor_name,
+      mentor_email: mentor?.email || form.mentor_email,
+      batch_name: webinarBatchName(session),
+      month: (session.session_date || "").slice(0, 7) || form.month,
+      total_sessions: 1,
+      total_hours: String(billableHours),
+      hourly_rate: String(rate),
+      total_amount: String(roundHours(billableHours * rate)),
+      payment_status: "Pending",
+      source_type: "webinar",
+      webinar_id: zoomAnalytics.find((z) => z.session_id === session.id)?.id || null,
+    };
+    try {
+      const res = await fetch(`${API}/invoices`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        showToast(data.detail || data.error || "Failed to generate invoice.");
+        return;
+      }
+      showToast(`Invoice generated for ${session.topic || "webinar session"}.`, "success");
+      await load();
+    } catch {
+      showToast("Server error while saving invoice.");
+    } finally {
+      setGeneratingSessionId(null);
+    }
   };
 
   const resolveWebinarId = () => {
@@ -1073,6 +1172,73 @@ export default function InvoiceGenerator() {
             {editId && (
               <div style={{ marginTop: "14px" }}>
                 <button className="btn btn-ghost" onClick={resetForm}>Cancel Edit</button>
+              </div>
+            )}
+
+            {formIsWebinar && form.mentor_name && form.month && (
+              <div style={{ marginTop: "24px", paddingTop: "20px", borderTop: "1px solid #e2e8f0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap", marginBottom: "12px" }}>
+                  <div>
+                    <h3 style={{ margin: "0 0 6px", fontSize: "15px", color: "#1e293b" }}>
+                      Webinar sessions in {monthLabel(form.month)}
+                    </h3>
+                    <p style={{ margin: 0, fontSize: "13px", color: "#64748b" }}>
+                      One invoice per weekly session. Generate each session below, then share all invoices with the mentor at month end.
+                    </p>
+                  </div>
+                  <div style={{ fontSize: "12px", fontWeight: 700, color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "999px", padding: "6px 12px" }}>
+                    {monthlyWebinarSessions.filter((r) => r.invoiced).length} / {monthlyWebinarSessions.length} invoiced
+                  </div>
+                </div>
+
+                {monthlyWebinarSessions.length === 0 ? (
+                  <div className="hint-text">
+                    No webinar sessions for {form.mentor_name} in {monthLabel(form.month)}. Add them in <a href="/sessions">Sessions</a> with type <strong>Webinar Session</strong>.
+                  </div>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="styled-table" style={{ minWidth: "720px" }}>
+                      <thead>
+                        <tr>
+                          {["Date", "Topic", "Duration", "Amount", "Status", "Action"].map((h) => <th key={h}>{h}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {monthlyWebinarSessions.map(({ session, invoice, durationLabel, amount, invoiced }) => (
+                          <tr key={session.id} style={String(form.webinar_session_id) === String(session.id) ? { background: "#f8fafc" } : undefined}>
+                            <td className="muted">{fmtDate(session.session_date)}</td>
+                            <td className="strong">{session.topic || "Webinar"}</td>
+                            <td className="muted">{durationLabel}</td>
+                            <td className="num">{amount ? money(amount) : "—"}</td>
+                            <td>
+                              {invoiced ? (
+                                <span style={{ color: "#15803d", fontWeight: 700, fontSize: "12px" }}>✓ Invoiced #{invoice.invoice_number || invoice.id}</span>
+                              ) : (
+                                <span style={{ color: "#b45309", fontWeight: 700, fontSize: "12px" }}>Pending</span>
+                              )}
+                            </td>
+                            <td style={{ whiteSpace: "nowrap" }}>
+                              <button type="button" className="btn btn-ghost btn-sm" onClick={() => selectWebinarSessionForInvoice(session)}>
+                                Select
+                              </button>
+                              {!invoiced && (
+                                <button
+                                  type="button"
+                                  className="btn btn-primary btn-sm"
+                                  style={{ marginLeft: "6px" }}
+                                  disabled={generatingSessionId === session.id}
+                                  onClick={() => quickGenerateWebinarInvoice(session)}
+                                >
+                                  {generatingSessionId === session.id ? "…" : "Generate"}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </div>

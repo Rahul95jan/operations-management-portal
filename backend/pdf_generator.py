@@ -19,6 +19,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.graphics.shapes import Drawing, Rect, String, Circle, Line
 from reportlab.graphics.charts.piecharts import Pie
 from reportlab.pdfbase.ttfonts import TTFont
+from duration_utils import format_duration, parse_duration_minutes
 
 # Helvetica (the default base-14 PDF font) has no glyph for the Rupee sign
 # (U+20B9) and silently renders it as a tofu box. DejaVu Sans does, so it's
@@ -34,7 +35,7 @@ except Exception:
 # Invoice PDF
 # =====================================================
 
-def generate_invoice(invoice, course_name=None):
+def generate_invoice(invoice, course_name=None, session_lines=None):
     if not os.path.exists("pdfs"):
         os.makedirs("pdfs")
 
@@ -162,7 +163,7 @@ def generate_invoice(invoice, course_name=None):
     details_cell = [
         Paragraph("INVOICE DETAILS", section_label_style),
         kv("Date Issued", datetime.now().strftime("%d %b %Y"), value_size=10.5),
-        kv("Course", course_name or invoice.batch_name, value_size=10.5),
+        kv("Description", course_name or invoice.batch_name, value_size=10.5),
         kv("Billing Month", invoice.month, value_size=10.5),
         status_badge,
     ]
@@ -186,37 +187,87 @@ def generate_invoice(invoice, course_name=None):
     # =====================================================
     rate_val = float(invoice.hourly_rate or 0)
     amount_val = float(invoice.total_amount or 0)
+    hours_val = float(invoice.total_hours or 0)
 
     item_header_style = ParagraphStyle("ItemHeader", parent=styles["Normal"], textColor=colors.white, fontSize=9, fontName="Helvetica-Bold")
     item_desc_style = ParagraphStyle("ItemDesc", parent=styles["Normal"], textColor=NAVY, fontSize=10.5, fontName="Helvetica-Bold", leading=14)
     item_value_style = ParagraphStyle("ItemValue", parent=styles["Normal"], textColor=SLATE, fontSize=10.5, fontName="DejaVuSans", alignment=2)
+    item_text_style = ParagraphStyle("ItemText", parent=styles["Normal"], textColor=SLATE, fontSize=9.5, leading=12)
+    item_total_style = ParagraphStyle("ItemTotal", parent=styles["Normal"], textColor=NAVY, fontSize=10, fontName="Helvetica-Bold", leading=13)
 
-    items_data = [
-        [
-            Paragraph("DESCRIPTION", item_header_style),
-            Paragraph("SESSIONS", item_header_style),
+    if session_lines:
+        total_minutes = sum(parse_duration_minutes(line.get("duration")) for line in session_lines)
+        total_duration_label = format_duration(total_minutes) or f"{hours_val:.2f} hrs"
+
+        items_data = [[
+            Paragraph("DATE", item_header_style),
+            Paragraph("TOPIC", item_header_style),
+            Paragraph("DURATION", item_header_style),
             Paragraph("HOURS", item_header_style),
-            Paragraph("RATE", item_header_style),
             Paragraph("AMOUNT", ParagraphStyle("ItemHeaderR", parent=item_header_style, alignment=2)),
-        ],
-        [
-            Paragraph(f"Mentoring Services — {course_name or invoice.batch_name} ({invoice.month})", item_desc_style),
-            Paragraph(str(invoice.total_sessions), item_value_style),
-            Paragraph(f"{invoice.total_hours} hrs", item_value_style),
-            Paragraph(f"₹ {rate_val:,.2f}", item_value_style),
-            Paragraph(f"₹ {amount_val:,.2f}", ParagraphStyle("ItemAmount", parent=item_value_style, fontName="DejaVuSans-Bold", textColor=NAVY)),
-        ],
-    ]
+        ]]
 
-    items_table = Table(items_data, colWidths=[56 * mm, 26 * mm, 22 * mm, 30 * mm, 44 * mm])
-    items_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-        ("LINEBELOW", (0, 1), (-1, 1), 0.75, BORDER),
-        ("TOPPADDING", (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-        ("LEFTPADDING", (0, 0), (0, -1), 10),
-        ("RIGHTPADDING", (-1, 0), (-1, -1), 10),
-    ]))
+        for line in session_lines:
+            line_hours = float(line.get("hours") or 0)
+            line_amount = float(line.get("amount") or 0)
+            items_data.append([
+                Paragraph(str(line.get("date") or "—"), item_text_style),
+                Paragraph(str(line.get("topic") or "Webinar"), item_desc_style),
+                Paragraph(str(line.get("duration") or "—"), item_value_style),
+                Paragraph(f"{line_hours:.2f}", item_value_style),
+                Paragraph(f"₹ {line_amount:,.2f}", ParagraphStyle("ItemAmount", parent=item_value_style, fontName="DejaVuSans-Bold", textColor=NAVY)),
+            ])
+
+        items_data.append([
+            Paragraph("TOTAL", item_total_style),
+            Paragraph("", item_total_style),
+            Paragraph(total_duration_label, item_total_style),
+            Paragraph(f"{hours_val:.2f}", item_total_style),
+            Paragraph(
+                f"₹ {amount_val:,.2f}",
+                ParagraphStyle("ItemTotalAmount", parent=item_value_style, fontName="DejaVuSans-Bold", textColor=NAVY, alignment=2),
+            ),
+        ])
+
+        items_table = Table(items_data, colWidths=[28 * mm, 62 * mm, 28 * mm, 22 * mm, 38 * mm])
+        items_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("BACKGROUND", (0, -1), (-1, -1), BG_ALT),
+            ("LINEBELOW", (0, 0), (-1, -2), 0.5, BORDER),
+            ("LINEABOVE", (0, -1), (-1, -1), 1, BORDER),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (0, -1), 8),
+            ("RIGHTPADDING", (-1, 0), (-1, -1), 8),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ]))
+    else:
+        items_data = [
+            [
+                Paragraph("DESCRIPTION", item_header_style),
+                Paragraph("SESSIONS", item_header_style),
+                Paragraph("HOURS", item_header_style),
+                Paragraph("RATE", item_header_style),
+                Paragraph("AMOUNT", ParagraphStyle("ItemHeaderR", parent=item_header_style, alignment=2)),
+            ],
+            [
+                Paragraph(f"Mentoring Services — {course_name or invoice.batch_name} ({invoice.month})", item_desc_style),
+                Paragraph(str(invoice.total_sessions), item_value_style),
+                Paragraph(f"{invoice.total_hours} hrs", item_value_style),
+                Paragraph(f"₹ {rate_val:,.2f}", item_value_style),
+                Paragraph(f"₹ {amount_val:,.2f}", ParagraphStyle("ItemAmount", parent=item_value_style, fontName="DejaVuSans-Bold", textColor=NAVY)),
+            ],
+        ]
+
+        items_table = Table(items_data, colWidths=[56 * mm, 26 * mm, 22 * mm, 30 * mm, 44 * mm])
+        items_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("LINEBELOW", (0, 1), (-1, 1), 0.75, BORDER),
+            ("TOPPADDING", (0, 0), (-1, -1), 10),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ("LEFTPADDING", (0, 0), (0, -1), 10),
+            ("RIGHTPADDING", (-1, 0), (-1, -1), 10),
+        ]))
     elements.append(items_table)
     elements.append(Spacer(1, 14))
 

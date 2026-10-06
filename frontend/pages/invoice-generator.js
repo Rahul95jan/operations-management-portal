@@ -1016,12 +1016,13 @@ export default function InvoiceGenerator() {
   };
 
   const downloadInvoiceUrl = (inv) => {
+    const cacheBust = `t=${Date.now()}`;
     const anchor = monthlyReportAnchorInvoice(inv);
-    if (anchor?.id) return `${API}/download-invoice/${anchor.id}`;
+    if (anchor?.id) return `${API}/download-invoice/${anchor.id}?${cacheBust}`;
     if (isMonthlyWebinarReport(inv)) {
-      return `${API}/download-mentor-monthly-report?mentor_name=${encodeURIComponent(inv.mentor_name)}&month=${encodeURIComponent(inv.month)}`;
+      return `${API}/download-mentor-monthly-report?mentor_name=${encodeURIComponent(inv.mentor_name)}&month=${encodeURIComponent(inv.month)}&${cacheBust}`;
     }
-    return `${API}/download-invoice/${inv.id}`;
+    return `${API}/download-invoice/${inv.id}?${cacheBust}`;
   };
 
   const mentorPayoutSummary = useMemo(() => {

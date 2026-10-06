@@ -35,6 +35,29 @@ except Exception:
 # Invoice PDF
 # =====================================================
 
+def _fmt_invoice_line_date(raw):
+    if not raw or raw == "—":
+        return "—"
+    text = str(raw).strip()[:10]
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%d %b %Y")
+        except ValueError:
+            continue
+    return str(raw)
+
+
+def _line_duration_minutes(line):
+    minutes = float(line.get("duration_minutes") or 0)
+    if minutes > 0:
+        return minutes
+    parsed = parse_duration_minutes(line.get("duration"))
+    if parsed > 0:
+        return parsed
+    hours = float(line.get("hours") or 0)
+    return hours * 60 if hours > 0 else 0.0
+
+
 def generate_invoice(invoice, course_name=None, session_lines=None):
     if not os.path.exists("pdfs"):
         os.makedirs("pdfs")
@@ -189,56 +212,65 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
     amount_val = float(invoice.total_amount or 0)
     hours_val = float(invoice.total_hours or 0)
 
-    item_header_style = ParagraphStyle("ItemHeader", parent=styles["Normal"], textColor=colors.white, fontSize=9, fontName="Helvetica-Bold")
-    item_desc_style = ParagraphStyle("ItemDesc", parent=styles["Normal"], textColor=NAVY, fontSize=10.5, fontName="Helvetica-Bold", leading=14)
-    item_value_style = ParagraphStyle("ItemValue", parent=styles["Normal"], textColor=SLATE, fontSize=10.5, fontName="DejaVuSans", alignment=2)
-    item_text_style = ParagraphStyle("ItemText", parent=styles["Normal"], textColor=SLATE, fontSize=9.5, leading=12)
+    item_header_style = ParagraphStyle("ItemHeader", parent=styles["Normal"], textColor=colors.white, fontSize=8.5, fontName="Helvetica-Bold", leading=11)
+    item_header_center = ParagraphStyle("ItemHeaderC", parent=item_header_style, alignment=1)
+    item_header_right = ParagraphStyle("ItemHeaderR", parent=item_header_style, alignment=2)
+    item_topic_style = ParagraphStyle("ItemTopic", parent=styles["Normal"], textColor=NAVY, fontSize=9.5, fontName="Helvetica", leading=13)
+    item_value_style = ParagraphStyle("ItemValue", parent=styles["Normal"], textColor=SLATE, fontSize=9.5, fontName="DejaVuSans", alignment=1)
+    item_value_right = ParagraphStyle("ItemValueR", parent=item_value_style, alignment=2)
+    item_date_style = ParagraphStyle("ItemDate", parent=styles["Normal"], textColor=SLATE, fontSize=9.5, leading=12)
     item_total_style = ParagraphStyle("ItemTotal", parent=styles["Normal"], textColor=NAVY, fontSize=10, fontName="Helvetica-Bold", leading=13)
+    item_total_right = ParagraphStyle("ItemTotalR", parent=item_total_style, alignment=2, fontName="DejaVuSans-Bold")
 
     if session_lines:
-        total_minutes = sum(parse_duration_minutes(line.get("duration")) for line in session_lines)
-        total_duration_label = format_duration(total_minutes) or f"{hours_val:.2f} hrs"
+        total_minutes = sum(_line_duration_minutes(line) for line in session_lines)
+        total_duration_label = format_duration(total_minutes) or (f"{hours_val:.2f} hrs" if hours_val else "—")
 
         items_data = [[
             Paragraph("DATE", item_header_style),
             Paragraph("TOPIC", item_header_style),
-            Paragraph("DURATION", item_header_style),
-            Paragraph("PER HR PAY", item_header_style),
-            Paragraph("AMOUNT", ParagraphStyle("ItemHeaderR", parent=item_header_style, alignment=2)),
+            Paragraph("DURATION", item_header_center),
+            Paragraph("PER HR PAY", item_header_center),
+            Paragraph("AMOUNT", item_header_right),
         ]]
 
         for line in session_lines:
             line_rate = float(line.get("rate") or rate_val or 0)
             line_amount = float(line.get("amount") or 0)
+            line_minutes = _line_duration_minutes(line)
+            duration_text = line.get("duration") or (format_duration(line_minutes) if line_minutes else "—")
             items_data.append([
-                Paragraph(str(line.get("date") or "—"), item_text_style),
-                Paragraph(str(line.get("topic") or "Webinar"), item_desc_style),
-                Paragraph(str(line.get("duration") or "—"), item_value_style),
+                Paragraph(_fmt_invoice_line_date(line.get("date")), item_date_style),
+                Paragraph(str(line.get("topic") or "Webinar"), item_topic_style),
+                Paragraph(str(duration_text), item_value_style),
                 Paragraph(f"₹ {line_rate:,.0f}", item_value_style),
-                Paragraph(f"₹ {line_amount:,.2f}", ParagraphStyle("ItemAmount", parent=item_value_style, fontName="DejaVuSans-Bold", textColor=NAVY)),
+                Paragraph(f"₹ {line_amount:,.2f}", ParagraphStyle("ItemAmount", parent=item_value_right, fontName="DejaVuSans-Bold", textColor=NAVY)),
             ])
 
         items_data.append([
-            Paragraph("TOTAL", item_total_style),
+            Paragraph("<b>TOTAL</b>", item_total_style),
             Paragraph("", item_total_style),
-            Paragraph(total_duration_label, item_total_style),
+            Paragraph(f"<b>{total_duration_label}</b>", ParagraphStyle("ItemTotalC", parent=item_total_style, alignment=1)),
             Paragraph("", item_total_style),
             Paragraph(
-                f"₹ {amount_val:,.2f}",
-                ParagraphStyle("ItemTotalAmount", parent=item_value_style, fontName="DejaVuSans-Bold", textColor=NAVY, alignment=2),
+                f"<b>₹ {amount_val:,.2f}</b>",
+                item_total_right,
             ),
         ])
 
-        items_table = Table(items_data, colWidths=[26 * mm, 64 * mm, 28 * mm, 32 * mm, 36 * mm])
+        items_table = Table(items_data, colWidths=[24 * mm, 68 * mm, 26 * mm, 30 * mm, 36 * mm])
         items_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), NAVY),
             ("BACKGROUND", (0, -1), (-1, -1), BG_ALT),
             ("LINEBELOW", (0, 0), (-1, -2), 0.5, BORDER),
             ("LINEABOVE", (0, -1), (-1, -1), 1, BORDER),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ("LEFTPADDING", (0, 0), (0, -1), 8),
-            ("RIGHTPADDING", (-1, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (2, 0), (3, -1), "CENTER"),
+            ("ALIGN", (4, 0), (4, -1), "RIGHT"),
+            ("TOPPADDING", (0, 0), (-1, -1), 9),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
             ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
         ]))
     else:

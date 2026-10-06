@@ -203,6 +203,7 @@ export default function Home() {
   const [mentors, setMentors] = useState([]);
   const [batches, setBatches] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [webinars, setWebinars] = useState([]);
   const [nps, setNps] = useState([]);
   const [resourceTracking, setResourceTracking] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -219,13 +220,15 @@ export default function Home() {
       fetch(`${API}/mentors`).then((r) => r.json()).catch(() => []),
       fetch(`${API}/batches`).then((r) => r.json()).catch(() => []),
       fetch(`${API}/invoices`).then((r) => r.json()).catch(() => []),
+      fetch(`${API}/webinars?stats=true`).then((r) => r.json()).catch(() => []),
       fetch(`${API}/nps`).then((r) => r.json()).catch(() => []),
       fetch(`${API}/resource-tracking`).then((r) => r.json()).catch(() => []),
-    ]).then(([s, m, b, i, n, rt]) => {
+    ]).then(([s, m, b, i, w, n, rt]) => {
       setSessions(Array.isArray(s) ? s : []);
       setMentors(Array.isArray(m) ? m : []);
       setBatches(Array.isArray(b) ? b : []);
       setInvoices(Array.isArray(i) ? i : []);
+      setWebinars(Array.isArray(w) ? w : []);
       setNps(Array.isArray(n) ? n : []);
       setResourceTracking(Array.isArray(rt) ? rt : []);
       setLoading(false);
@@ -340,8 +343,20 @@ export default function Home() {
   }, [invoices, resourceTracking, nps]);
 
   // ---- Attention Required: real derived alerts ----
+  const webinarsNeedingPayout = useMemo(
+    () => webinars.filter((w) => w.status === "Completed" && w.payout_status === "Not Invoiced"),
+    [webinars],
+  );
+
   const attentionItems = useMemo(() => {
     const items = [];
+    if (webinarsNeedingPayout.length > 0) {
+      items.push({
+        text: `${webinarsNeedingPayout.length} completed webinar${webinarsNeedingPayout.length === 1 ? "" : "s"} need payout invoice${webinarsNeedingPayout.length === 1 ? "" : "s"}`,
+        when: webinarsNeedingPayout[0]?.session_date,
+        href: "/webinars?needs_payout=1",
+      });
+    }
     resourceTracking.filter((r) => r.missing_count > 0).forEach((r) => {
       items.push({ text: `${r.missing_count} resource${r.missing_count === 1 ? "" : "s"} pending — ${r.session_topic || courseOf(r, courseByBatch)}`, when: r.session_date });
     });
@@ -352,16 +367,17 @@ export default function Home() {
       items.push({ text: `Low attendance (${Math.round(s.attendance_percentage)}%) — ${courseOf(s, courseByBatch) || s.topic}`, when: s.session_date });
     });
     return items.sort((a, b) => (b.when || "").localeCompare(a.when || "")).slice(0, 5);
-  }, [resourceTracking, sessions]);
+  }, [resourceTracking, sessions, webinarsNeedingPayout]);
 
   const notifications = useMemo(() => attentionItems.map((a) => ({ text: a.text, level: "orange" })), [attentionItems]);
-  const notifCount = pendingResourceSessions + sessionsMissingAttendance + pendingInvoices;
+  const notifCount = pendingResourceSessions + sessionsMissingAttendance + pendingInvoices + webinarsNeedingPayout.length;
 
   const quickActions = [
     { icon: Plus, label: "Create Session", href: "/sessions", accent: "#60a5fa" },
     { icon: UserPlus, label: "Add Mentor", href: "/mentors", accent: "#4ade80" },
     { icon: Settings2, label: "Manage Courses", href: "/batches", accent: "#a78bfa" },
     { icon: Receipt, label: "Generate Invoice", href: "/invoice-generator", accent: "#f0c75e" },
+    { icon: Video, label: "Webinar Payouts", href: "/webinars?needs_payout=1", accent: "#c084fc" },
   ];
 
   const lineData = {
@@ -577,18 +593,26 @@ export default function Home() {
             <div className="card card-attention">
               <div className="card-header">
                 <div className="card-title"><AlertTriangle size={16} strokeWidth={2.2} color="#f87171" /> Attention Required</div>
-                <Link href="/resources/pending" className="view-all">View All →</Link>
+                <Link href={webinarsNeedingPayout.length > 0 ? "/webinars?needs_payout=1" : "/resources/pending"} className="view-all">View All →</Link>
               </div>
               {attentionItems.length === 0 ? (
                 <div className="empty-state">✅ Nothing needs attention right now.</div>
               ) : (
                 <div className="activity-list">
                   {attentionItems.map((a, i) => (
-                    <div key={i} className="activity-row">
-                      <div className="activity-icon activity-icon-warn"><AlertTriangle size={13} strokeWidth={2.2} /></div>
-                      <div style={{ flex: 1, minWidth: 0 }} className="strong">{a.text}</div>
-                      <div className="muted" style={{ fontSize: "11px" }}>{fmtDate(a.when)}</div>
-                    </div>
+                    a.href ? (
+                      <Link key={i} href={a.href} className="activity-row" style={{ textDecoration: "none", color: "inherit" }}>
+                        <div className="activity-icon activity-icon-warn"><AlertTriangle size={13} strokeWidth={2.2} /></div>
+                        <div style={{ flex: 1, minWidth: 0 }} className="strong">{a.text}</div>
+                        <div className="muted" style={{ fontSize: "11px" }}>{fmtDate(a.when)}</div>
+                      </Link>
+                    ) : (
+                      <div key={i} className="activity-row">
+                        <div className="activity-icon activity-icon-warn"><AlertTriangle size={13} strokeWidth={2.2} /></div>
+                        <div style={{ flex: 1, minWidth: 0 }} className="strong">{a.text}</div>
+                        <div className="muted" style={{ fontSize: "11px" }}>{fmtDate(a.when)}</div>
+                      </div>
+                    )
                   ))}
                 </div>
               )}

@@ -933,6 +933,13 @@ export default function InvoiceGenerator() {
                   </Field>
                 )}
                 {formIsWebinar && (
+                  <div style={{ gridColumn: "1 / -1", padding: "12px 14px", borderRadius: "10px", background: "#ede9fe", border: "1px solid #c4b5fd", color: "#5b21b6", fontSize: "13px", lineHeight: 1.5 }}>
+                    For <strong>weekly webinar payouts</strong> (one invoice per session), use{" "}
+                    <a href="/webinars" style={{ color: "#6d28d9", fontWeight: 700 }}>Webinar Scheduler</a>
+                    {" "}→ open the webinar → <strong>Create Payout Invoice</strong>. Use this form only for monthly rollup by topic.
+                  </div>
+                )}
+                {formIsWebinar && (
                   <Field label="Webinar Topic" required>
                     <select
                       className="styled-input"

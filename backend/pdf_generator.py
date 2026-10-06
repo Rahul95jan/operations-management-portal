@@ -66,6 +66,7 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+    KN_LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo-kn.png")
 
     # ---- Brand palette (matches the portal's navy/gold design system) ----
     NAVY = HexColor("#0f172a")
@@ -112,17 +113,18 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
     elements = []
 
     # =====================================================
-    # Header banner
+    # Header banner — KN logo left, academy name centered, invoice right
     # =====================================================
-    if os.path.exists(LOGO_PATH):
-        logo_cell = Image(LOGO_PATH, width=32 * mm, height=12.5 * mm)
+    kn_logo_path = KN_LOGO_PATH if os.path.exists(KN_LOGO_PATH) else LOGO_PATH
+    if os.path.exists(kn_logo_path):
+        logo_cell = Image(kn_logo_path, width=14 * mm, height=14 * mm)
     else:
         logo_cell = ""
 
     brand_text = Paragraph(
         "<font color='#ffffff' size='16'><b>Krish Naik Academy</b></font><br/>"
         "<font color='#fbbf24' size='8.5'>Operations Management Portal</font>",
-        ParagraphStyle("Brand", parent=styles["Normal"], leading=16),
+        ParagraphStyle("Brand", parent=styles["Normal"], alignment=1, leading=18),
     )
 
     invoice_no_text = invoice.invoice_number or "DRAFT — PENDING"
@@ -132,20 +134,13 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
         ParagraphStyle("DocTitle", parent=styles["Normal"], alignment=2, leading=23),
     )
 
-    header_left = Table([[logo_cell, brand_text]], colWidths=[36 * mm, 82 * mm])
-    header_left.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-
-    header = Table([[header_left, doc_title]], colWidths=[118 * mm, 60 * mm])
+    header = Table([[logo_cell, brand_text, doc_title]], colWidths=[20 * mm, 108 * mm, 50 * mm])
     header.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), NAVY),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (1, 0), (1, 0), "CENTER"),
         ("LEFTPADDING", (0, 0), (0, 0), 16 * mm),
-        ("RIGHTPADDING", (1, 0), (1, 0), 12 * mm),
+        ("RIGHTPADDING", (2, 0), (2, 0), 12 * mm),
         ("TOPPADDING", (0, 0), (-1, -1), 16),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
     ]))
@@ -213,10 +208,10 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
     hours_val = float(invoice.total_hours or 0)
 
     item_header_style = ParagraphStyle("ItemHeader", parent=styles["Normal"], textColor=colors.white, fontSize=8.5, fontName="Helvetica-Bold", leading=11)
-    item_header_center = ParagraphStyle("ItemHeaderC", parent=item_header_style, alignment=1)
     item_header_right = ParagraphStyle("ItemHeaderR", parent=item_header_style, alignment=2)
+    item_desc_style = ParagraphStyle("ItemDesc", parent=styles["Normal"], textColor=NAVY, fontSize=10.5, fontName="Helvetica-Bold", leading=14)
     item_topic_style = ParagraphStyle("ItemTopic", parent=styles["Normal"], textColor=NAVY, fontSize=9.5, fontName="Helvetica", leading=13)
-    item_value_style = ParagraphStyle("ItemValue", parent=styles["Normal"], textColor=SLATE, fontSize=9.5, fontName="DejaVuSans", alignment=1)
+    item_value_style = ParagraphStyle("ItemValue", parent=styles["Normal"], textColor=SLATE, fontSize=10.5, fontName="DejaVuSans", alignment=2)
     item_value_right = ParagraphStyle("ItemValueR", parent=item_value_style, alignment=2)
     item_date_style = ParagraphStyle("ItemDate", parent=styles["Normal"], textColor=SLATE, fontSize=9.5, leading=12)
     item_total_style = ParagraphStyle("ItemTotal", parent=styles["Normal"], textColor=NAVY, fontSize=10, fontName="Helvetica-Bold", leading=13)
@@ -229,8 +224,8 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
         items_data = [[
             Paragraph("DATE", item_header_style),
             Paragraph("TOPIC", item_header_style),
-            Paragraph("DURATION", item_header_center),
-            Paragraph("PER HR PAY", item_header_center),
+            Paragraph("DURATION", item_header_right),
+            Paragraph("PER HR PAY", item_header_right),
             Paragraph("AMOUNT", item_header_right),
         ]]
 
@@ -242,15 +237,15 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
             items_data.append([
                 Paragraph(_fmt_invoice_line_date(line.get("date")), item_date_style),
                 Paragraph(str(line.get("topic") or "Webinar"), item_topic_style),
-                Paragraph(str(duration_text), item_value_style),
-                Paragraph(f"₹ {line_rate:,.0f}", item_value_style),
+                Paragraph(str(duration_text), item_value_right),
+                Paragraph(f"₹ {line_rate:,.0f}", item_value_right),
                 Paragraph(f"₹ {line_amount:,.2f}", ParagraphStyle("ItemAmount", parent=item_value_right, fontName="DejaVuSans-Bold", textColor=NAVY)),
             ])
 
         items_data.append([
             Paragraph("<b>TOTAL</b>", item_total_style),
             Paragraph("", item_total_style),
-            Paragraph(f"<b>{total_duration_label}</b>", ParagraphStyle("ItemTotalC", parent=item_total_style, alignment=1)),
+            Paragraph(f"<b>{total_duration_label}</b>", item_total_right),
             Paragraph("", item_total_style),
             Paragraph(
                 f"<b>₹ {amount_val:,.2f}</b>",
@@ -258,19 +253,19 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
             ),
         ])
 
-        items_table = Table(items_data, colWidths=[24 * mm, 68 * mm, 26 * mm, 30 * mm, 36 * mm])
+        items_table = Table(items_data, colWidths=[26 * mm, 66 * mm, 26 * mm, 30 * mm, 36 * mm])
         items_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), NAVY),
             ("BACKGROUND", (0, -1), (-1, -1), BG_ALT),
             ("LINEBELOW", (0, 0), (-1, -2), 0.5, BORDER),
             ("LINEABOVE", (0, -1), (-1, -1), 1, BORDER),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("ALIGN", (2, 0), (3, -1), "CENTER"),
-            ("ALIGN", (4, 0), (4, -1), "RIGHT"),
-            ("TOPPADDING", (0, 0), (-1, -1), 9),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (1, -1), "LEFT"),
+            ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+            ("TOPPADDING", (0, 0), (-1, -1), 10),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ("LEFTPADDING", (0, 0), (1, -1), 10),
+            ("RIGHTPADDING", (2, 0), (-1, -1), 10),
             ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
         ]))
     else:

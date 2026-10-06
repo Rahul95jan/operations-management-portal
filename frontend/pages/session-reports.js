@@ -71,27 +71,24 @@ const RISK_STYLES = {
   Good: { bg: "#dcfce7", color: "#15803d", dot: "#22c55e" },
 };
 
-// Frontend-only thresholds for the Session Health / risk rollups — no backend
-// business logic changes; tune these if operations wants different cutoffs.
-const HEALTH_THRESHOLDS = {
-  lowAttendancePct: 60,
-  lowRating: 3,
-  highCancellationPct: 10,
-  lowCompliancePct: 80,
-};
-
+// Session health uses backend scoring when health_label is present on list rows.
 function classifySessionHealth(r) {
+  if (r.health_label === "No data") {
+    return { tier: "noData", reason: (r.health_reasons && r.health_reasons[0]) || "Upload attendee and poll CSV files" };
+  }
+  if (r.health_label) {
+    const tierMap = { Healthy: "healthy", Watch: "needsReview", Critical: "attention" };
+    return {
+      tier: r.health_tier || tierMap[r.health_label] || "healthy",
+      reason: (r.health_reasons && r.health_reasons[0]) || null,
+      label: r.health_label,
+    };
+  }
   if (r.status === "Cancelled") return { tier: "attention", reason: "Cancelled Session" };
   if (r.status === "Completed") {
-    if (r.attendance_percentage && r.attendance_percentage < HEALTH_THRESHOLDS.lowAttendancePct) {
-      return { tier: "attention", reason: `Low Attendance (${r.attendance_percentage}%)` };
-    }
-    if (r.rating && r.rating < HEALTH_THRESHOLDS.lowRating) {
-      return { tier: "attention", reason: `Low Rating (${r.rating} / 5)` };
-    }
     if (r.report_status === "Pending") return { tier: "needsReview", reason: "Report Pending" };
   }
-  return { tier: "healthy", reason: null };
+  return { tier: "noData", reason: "No import data" };
 }
 
 function daysBetween(dateStr) {
@@ -624,11 +621,13 @@ export default function SessionReports() {
   const [exportMenu, setExportMenu] = useState(null); // { top, left } when open
   const [rowMenu, setRowMenu] = useState(null); // { id, top, left }
   const [drawerSession, setDrawerSession] = useState(null);
+  const [courseHealthAlerts, setCourseHealthAlerts] = useState([]);
 
   useEffect(() => {
     fetch(`${API}/mentors`).then((r) => r.json()).then(setMentors).catch(() => {});
     fetch(`${API}/batches`).then((r) => r.json()).then(setBatches).catch(() => {});
     fetch(`${API}/nps`).then((r) => r.json()).then((d) => setNpsFeedback(Array.isArray(d) ? d : [])).catch(() => {});
+    fetch(`${API}/course-health/alerts`).then((r) => r.json()).then((d) => setCourseHealthAlerts(d.items || [])).catch(() => {});
   }, []);
 
   const load = () => {
@@ -757,12 +756,12 @@ export default function SessionReports() {
   }, [npsFeedback]);
 
   const health = useMemo(() => {
-    const buckets = { healthy: 0, needsReview: 0, attention: 0 };
+    const buckets = { healthy: 0, needsReview: 0, attention: 0, noData: 0 };
     const flagged = [];
     filteredAllRows.forEach((r) => {
       const c = classifySessionHealth(r);
-      buckets[c.tier] += 1;
-      if (c.tier !== "healthy") flagged.push({ ...r, reason: c.reason, tier: c.tier });
+      buckets[c.tier] = (buckets[c.tier] || 0) + 1;
+      if (c.tier !== "healthy" && c.tier !== "noData") flagged.push({ ...r, reason: c.reason, tier: c.tier, label: c.label });
     });
     flagged.sort((a, b) => (a.tier === b.tier ? 0 : a.tier === "attention" ? -1 : 1));
     return { buckets, flagged };
@@ -1166,7 +1165,7 @@ export default function SessionReports() {
 
           {/* Session Health — standalone */}
           <div className="card" style={{ marginTop: "20px" }}>
-            <SectionTitle icon={Activity} iconColor="#ef4444" title="Session Health" sub="Rollup across all sessions matching current filters" />
+            <SectionTitle icon={Activity} iconColor="#ef4444" title="Session Health" sub="Scored from uploaded attendee + poll CSVs (not seed attendance %)" />
             {filteredAllRows.length === 0 ? (
               <div className="empty-state" style={{ padding: "20px 0" }}>No data yet.</div>
             ) : (
@@ -1174,21 +1173,29 @@ export default function SessionReports() {
                 <div style={{ position: "relative", width: "130px", flexShrink: 0 }}>
                   <Doughnut
                     data={{
-                      labels: ["Healthy", "Needs Review", "Attention"],
-                      datasets: [{ data: [health.buckets.healthy, health.buckets.needsReview, health.buckets.attention], backgroundColor: ["#22c55e", "#f59e0b", "#ef4444"], borderWidth: 0 }],
+                      labels: ["Healthy", "Needs Review", "Attention", "No data"],
+                      datasets: [{ data: [health.buckets.healthy, health.buckets.needsReview, health.buckets.attention, health.buckets.noData], backgroundColor: ["#22c55e", "#f59e0b", "#ef4444", "#cbd5e1"], borderWidth: 0 }],
                     }}
                     options={{ plugins: { legend: { display: false } }, cutout: "72%" }}
                   />
-                  <div className="health-center">{filteredAllRows.length}<br /><span>Total Sessions</span></div>
+                  <div className="health-center">{filteredAllRows.length - health.buckets.noData}<br /><span>Scored</span></div>
                 </div>
                 <div className="health-legend">
                   <div><span className="legend-dot" style={{ background: "#22c55e" }} /> Healthy <b>{health.buckets.healthy}</b></div>
                   <div><span className="legend-dot" style={{ background: "#f59e0b" }} /> Needs Review <b>{health.buckets.needsReview}</b></div>
                   <div><span className="legend-dot" style={{ background: "#ef4444" }} /> Attention <b>{health.buckets.attention}</b></div>
+                  <div><span className="legend-dot" style={{ background: "#cbd5e1" }} /> No data <b>{health.buckets.noData}</b></div>
                 </div>
                 <div className="health-legend" style={{ borderLeft: "1px solid #f1f5f9", paddingLeft: "24px" }}>
                   <div>Report Completion <b>{opCompliance ? `${opCompliance.reportPct}%` : "N/A"}</b></div>
                   <div>Cancellation Rate <b>{cancellation.rate}%</b></div>
+                  {courseHealthAlerts.length > 0 && (
+                    <div style={{ marginTop: "8px" }}>
+                      <Link href="/course-health" style={{ color: "#b45309", fontWeight: 700, fontSize: "12px", textDecoration: "none" }}>
+                        {courseHealthAlerts.length} course{courseHealthAlerts.length === 1 ? "" : "s"} in Watch/Critical →
+                      </Link>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

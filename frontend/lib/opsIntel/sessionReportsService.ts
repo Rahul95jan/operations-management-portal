@@ -234,6 +234,24 @@ export async function getKPIs(filters: Filters): Promise<KPI[]> {
 // ---- Session Health -------------------------------------------------
 
 export async function getSessionHealth(filters: Filters): Promise<HealthDonut> {
+  try {
+    const res = await fetch(`${API}/session-reports/ops-intel/health?${filtersToQuery(filters)}`);
+    const data = await res.json();
+    if (data.success && data.total > 0) {
+      return {
+        total: data.total - (data.no_data || 0),
+        segments: data.segments.map((s: { label: string; count: number; pct: number; color: string }) => ({
+          label: s.label,
+          count: s.count,
+          pct: s.pct,
+          color: s.color,
+        })),
+      };
+    }
+  } catch {
+    // fall through to mock
+  }
+
   const { current } = splitWindows(filters);
   const c = completedOf(current);
   const healthy = c.filter((s) => s.risk === "Healthy").length;

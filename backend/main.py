@@ -6714,6 +6714,67 @@ def get_ops_intel_quality(
     return {"success": True, **session_reports.ops_intel_quality(db, filters)}
 
 
+@app.get("/session-reports/ops-intel/health")
+def get_ops_intel_health(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    course_name: Optional[str] = None,
+    session_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    filters = _session_report_filters(
+        date_from, date_to, None, mentor_name, batch_name,
+        course_name, session_type, None, None,
+    )
+    return {"success": True, **session_reports.ops_intel_health(db, filters)}
+
+
+@app.get("/course-health")
+def get_course_health(
+    course_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    if not course_name and not batch_name:
+        return {"success": False, "detail": "Provide course_name or batch_name"}
+    detail = session_reports.course_health_detail(db, course_name, batch_name, date_from, date_to)
+    if not detail:
+        return {"success": False, "detail": "No completed sessions found for this filter"}
+    return {"success": True, **detail}
+
+
+@app.get("/course-health/summary")
+def get_course_health_summary(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    return {"success": True, "items": session_reports.course_health_summary(db, date_from, date_to)}
+
+
+@app.get("/course-health/alerts")
+def get_course_health_alerts(db: Session = Depends(get_db)):
+    return {"success": True, "items": session_reports.course_health_alerts(db)}
+
+
+@app.get("/course-health/export")
+def export_course_health(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    csv_data = session_reports.build_course_health_csv(db, date_from, date_to)
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=course-health-summary.csv"},
+    )
+
+
 @app.get("/session-reports/export")
 def export_session_reports(
     date_from: Optional[str] = None,

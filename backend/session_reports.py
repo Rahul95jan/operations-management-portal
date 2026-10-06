@@ -82,10 +82,161 @@ def _course_by_batch(db):
     }
 
 
+POLL_GOOD_THRESHOLD = 4.3
+POLL_WATCH_LOW = 3.5
+STAY_HEALTHY_PCT = 50
+STAY_WATCH_LOW_PCT = 25
+EARLY_BOUNCE_CRITICAL_PCT = 20
+RESPONSE_RATE_HEALTHY_PCT = 15
+POLL_GAP_WATCH = 0.3
+POLL_GAP_HEALTHY = 0.4
+
+
+def _session_response_rate(session, imp, poll):
+    unique_viewers = None
+    if imp and imp.unique_viewers:
+        unique_viewers = imp.unique_viewers
+    elif session.attended_students:
+        unique_viewers = session.attended_students
+    if not poll or not poll.poll_responses or not unique_viewers:
+        return None
+    return round(poll.poll_responses / unique_viewers * 100, 1)
+
+
+def _median_stay_pct(imp, session):
+    class_minutes = (imp.actual_duration_minutes if imp else None) or session.duration
+    if not imp or not imp.median_stay_minutes or not class_minutes:
+        return None
+    return round(imp.median_stay_minutes / class_minutes * 100, 1)
+
+
+def compute_session_health(session, imp, poll, report):
+    """Score one session from attendance import, poll snapshot, and ops status."""
+    metrics = {
+        "median_stay_pct": _median_stay_pct(imp, session) if imp else None,
+        "hold_rate": imp.hold_rate if imp else None,
+        "early_bounce_pct": imp.pct_under_15_min if imp else None,
+        "poll_overall": poll.overall_avg if poll else None,
+        "response_rate": _session_response_rate(session, imp, poll),
+        "teaching_style_avg": poll.teaching_style_avg if poll else None,
+        "doubts_avg": poll.doubts_avg if poll else None,
+        "effectiveness_avg": poll.effectiveness_avg if poll else None,
+        "report_pending": (report.report_status if report else "Pending") == "Pending",
+        "recording_missing": not bool(session.recording_link),
+    }
+
+    if session.status == "Cancelled":
+        return {
+            "label": "Critical",
+            "list_tier": "attention",
+            "reasons": ["Session was cancelled"],
+            "metrics": metrics,
+        }
+
+    if session.status != "Completed":
+        return {
+            "label": "No data",
+            "list_tier": "noData",
+            "reasons": ["Session is not completed yet"],
+            "metrics": metrics,
+        }
+
+    if not imp or not poll:
+        return {
+            "label": "No data",
+            "list_tier": "noData",
+            "reasons": ["Upload attendee and poll CSV files to score session health"],
+            "metrics": metrics,
+        }
+
+    reasons = []
+    delivery_weak = False
+    delivery_critical = False
+    experience_weak = False
+    experience_critical = False
+    ops_weak = False
+
+    median_stay_pct = metrics["median_stay_pct"]
+    if median_stay_pct is not None:
+        if median_stay_pct < STAY_WATCH_LOW_PCT:
+            delivery_critical = True
+            reasons.append(f"Median stay is only {median_stay_pct}% of class length")
+        elif median_stay_pct < STAY_HEALTHY_PCT:
+            delivery_weak = True
+            reasons.append(f"Median stay is {median_stay_pct}% of class length (below 50%)")
+
+    early_bounce = metrics["early_bounce_pct"]
+    if early_bounce is not None and early_bounce > EARLY_BOUNCE_CRITICAL_PCT:
+        delivery_critical = True
+        reasons.append(f"{early_bounce}% of viewers left within the first 15 minutes")
+
+    overall = metrics["poll_overall"]
+    if overall is not None:
+        if overall < POLL_WATCH_LOW:
+            experience_critical = True
+            reasons.append(f"Overall poll score is {overall} (below 3.5)")
+        elif overall < POLL_GOOD_THRESHOLD:
+            experience_weak = True
+            reasons.append(f"Overall poll score is {overall} (below 4.3 target)")
+
+    response_rate = metrics["response_rate"]
+    if response_rate is not None and response_rate < RESPONSE_RATE_HEALTHY_PCT:
+        experience_weak = True
+        reasons.append(f"Poll response rate is {response_rate}% (below 15%)")
+
+    poll_dims = {
+        "Teaching style": poll.teaching_style_avg,
+        "Doubts and queries": poll.doubts_avg,
+        "Session effectiveness": poll.effectiveness_avg,
+    }
+    valid_dims = [(name, val) for name, val in poll_dims.items() if val is not None]
+    if valid_dims and overall is not None:
+        sorted_dims = sorted(valid_dims, key=lambda item: item[1])
+        lowest_name, lowest_val = sorted_dims[0]
+        if len(sorted_dims) >= 2:
+            others_avg = sum(val for _, val in sorted_dims[1:]) / (len(sorted_dims) - 1)
+            if others_avg - lowest_val >= POLL_GAP_WATCH:
+                experience_weak = True
+                reasons.append(f"{lowest_name} scored {lowest_val}, notably lower than other poll questions")
+        if overall - lowest_val > POLL_GAP_HEALTHY:
+            experience_weak = True
+            reasons.append(f"{lowest_name} is more than 0.4 below the session overall poll score")
+
+    if metrics["recording_missing"]:
+        ops_weak = True
+        reasons.append("Recording is not available")
+    if metrics["report_pending"]:
+        ops_weak = True
+        reasons.append("Written report is still pending")
+
+    delivery_bad = delivery_weak or delivery_critical
+    experience_bad = experience_weak or experience_critical
+    weak_pillars = sum([delivery_bad, experience_bad, ops_weak])
+
+    if delivery_critical or experience_critical or (delivery_bad and experience_bad):
+        label = "Critical"
+        list_tier = "attention"
+    elif weak_pillars >= 1:
+        label = "Watch"
+        list_tier = "needsReview"
+    else:
+        label = "Healthy"
+        list_tier = "healthy"
+        reasons = []
+
+    return {
+        "label": label,
+        "list_tier": list_tier,
+        "reasons": reasons,
+        "metrics": metrics,
+    }
+
+
 def _row_dict(session, report_map, course_map=None, import_map=None, poll_map=None):
     report = report_map.get(session.id)
     imp = (import_map or {}).get(session.id)
     poll = (poll_map or {}).get(session.id)
+    health = compute_session_health(session, imp, poll, report)
 
     attendance_pct = session.attendance_percentage or 0
     if imp and not imp.has_registrant_total:
@@ -110,6 +261,11 @@ def _row_dict(session, report_map, course_map=None, import_map=None, poll_map=No
         "rating": session.feedback_score or None,
         "poll_average_rating": poll.overall_avg if poll else None,
         "poll_health_status": poll.poll_health if poll else None,
+        "health_label": health["label"],
+        "health_tier": health["list_tier"],
+        "health_reasons": health["reasons"],
+        "median_stay_pct": health["metrics"]["median_stay_pct"],
+        "poll_response_rate": health["metrics"]["response_rate"],
     }
 
 
@@ -983,6 +1139,333 @@ def ops_intel_quality(db, filters):
         "total_responses": total_responses,
         "response_rate": response_rate,
     }
+
+
+def ops_intel_health(db, filters):
+    rows = _filtered_rows(db, status="Completed", **{k: v for k, v in filters.items() if k != "status"})
+    buckets = {"Healthy": 0, "Watch": 0, "Critical": 0}
+    no_data = 0
+    for row in rows:
+        label = row.get("health_label") or "No data"
+        if label == "No data":
+            no_data += 1
+        elif label in buckets:
+            buckets[label] += 1
+
+    total_scored = sum(buckets.values()) or 1
+    return {
+        "total": len(rows),
+        "no_data": no_data,
+        "segments": [
+            {"label": "Healthy", "count": buckets["Healthy"], "pct": round(buckets["Healthy"] / total_scored * 100, 1), "color": "#16A34A"},
+            {"label": "At Risk", "count": buckets["Watch"], "pct": round(buckets["Watch"] / total_scored * 100, 1), "color": "#F59E0B"},
+            {"label": "Critical", "count": buckets["Critical"], "pct": round(buckets["Critical"] / total_scored * 100, 1), "color": "#DC2626"},
+        ],
+    }
+
+
+def _course_health_sessions(db, course_name=None, batch_name=None, date_from=None, date_to=None):
+    filters = {
+        "date_from": date_from,
+        "date_to": date_to,
+        "course_name": course_name,
+        "batch_name": batch_name,
+    }
+    rows = _filtered_rows(db, status="Completed", **filters)
+    if not rows:
+        return rows, {}, {}, {}
+
+    session_ids = [r["id"] for r in rows]
+    imports = {
+        i.session_id: i
+        for i in db.query(SessionAttendanceImport).filter(SessionAttendanceImport.session_id.in_(session_ids)).all()
+    }
+    polls = {
+        p.session_id: p
+        for p in db.query(SessionPollSnapshot).filter(SessionPollSnapshot.session_id.in_(session_ids)).all()
+    }
+    reports = {
+        r.session_id: r
+        for r in db.query(SessionReport).filter(SessionReport.session_id.in_(session_ids)).all()
+    }
+    sessions = {
+        s.id: s
+        for s in db.query(SessionModel).filter(SessionModel.id.in_(session_ids)).all()
+    }
+    return rows, sessions, imports, polls, reports
+
+
+def _weighted_poll_avg(polls, field):
+    total_weight = 0
+    weighted_sum = 0.0
+    for poll in polls:
+        val = getattr(poll, field, None)
+        weight = poll.poll_responses or 0
+        if val is None or not weight:
+            continue
+        weighted_sum += val * weight
+        total_weight += weight
+    return round(weighted_sum / total_weight, 2) if total_weight else None
+
+
+def _coverage_confidence(coverage_pct):
+    if coverage_pct >= 80:
+        return "High"
+    if coverage_pct >= 50:
+        return "Medium"
+    return "Low"
+
+
+def _score_course_health(delivery_metrics, experience_metrics, coverage_confidence):
+    if coverage_confidence == "Low":
+        return "No data", ["Upload attendee and poll files on at least half of completed sessions before scoring course health"]
+
+    reasons = []
+    delivery_weak = False
+    delivery_critical = False
+    experience_weak = False
+    experience_critical = False
+
+    median_stay = delivery_metrics.get("median_stay_pct")
+    if median_stay is not None:
+        if median_stay < STAY_WATCH_LOW_PCT:
+            delivery_critical = True
+            reasons.append(f"Course average median stay is only {median_stay}% of class length")
+        elif median_stay < STAY_HEALTHY_PCT:
+            delivery_weak = True
+            reasons.append(f"Course average median stay is {median_stay}% (below 50%)")
+
+    early_bounce = delivery_metrics.get("early_bounce_pct")
+    if early_bounce is not None and early_bounce > EARLY_BOUNCE_CRITICAL_PCT:
+        delivery_critical = True
+        reasons.append(f"{early_bounce}% of viewers leave within 15 minutes on average")
+
+    overall = experience_metrics.get("overall_avg")
+    if overall is not None:
+        if overall < POLL_WATCH_LOW:
+            experience_critical = True
+            reasons.append(f"Course weighted poll score is {overall} (below 3.5)")
+        elif overall < POLL_GOOD_THRESHOLD:
+            experience_weak = True
+            reasons.append(f"Course weighted poll score is {overall} (below 4.3 target)")
+
+    response_rate = experience_metrics.get("response_rate")
+    if response_rate is not None and response_rate < RESPONSE_RATE_HEALTHY_PCT:
+        experience_weak = True
+        reasons.append(f"Course average poll response rate is {response_rate}% (below 15%)")
+
+    dim_fields = [
+        ("Teaching style", "teaching_style_avg"),
+        ("Doubts and queries", "doubts_avg"),
+        ("Session effectiveness", "effectiveness_avg"),
+    ]
+    dim_values = [(name, experience_metrics.get(field)) for name, field in dim_fields if experience_metrics.get(field) is not None]
+    if dim_values and overall is not None:
+        sorted_dims = sorted(dim_values, key=lambda item: item[1])
+        lowest_name, lowest_val = sorted_dims[0]
+        if len(sorted_dims) >= 2:
+            others_avg = sum(val for _, val in sorted_dims[1:]) / (len(sorted_dims) - 1)
+            if others_avg - lowest_val >= POLL_GAP_WATCH:
+                experience_weak = True
+                reasons.append(f"{lowest_name} is the weakest poll pillar at {lowest_val}")
+        if overall - lowest_val > POLL_GAP_HEALTHY:
+            experience_weak = True
+            reasons.append(f"{lowest_name} is more than 0.4 below the course overall poll score")
+
+    delivery_bad = delivery_weak or delivery_critical
+    experience_bad = experience_weak or experience_critical
+    if delivery_critical or experience_critical or (delivery_bad and experience_bad):
+        return "Critical", reasons
+    if delivery_bad or experience_bad:
+        return "Watch", reasons
+    return "Healthy", []
+
+
+def course_health_detail(db, course_name=None, batch_name=None, date_from=None, date_to=None):
+    bundle = _course_health_sessions(db, course_name, batch_name, date_from, date_to)
+    if not bundle[0]:
+        return None
+
+    rows, sessions, imports, polls, reports = bundle
+    completed_count = len(rows)
+    with_attendance = 0
+    with_poll = 0
+    with_both = 0
+
+    stay_values = []
+    hold_values = []
+    bounce_values = []
+    response_rates = []
+    poll_objects = []
+    session_breakdown = []
+
+    for row in rows:
+        session = sessions[row["id"]]
+        imp = imports.get(row["id"])
+        poll = polls.get(row["id"])
+        report = reports.get(row["id"])
+        health = compute_session_health(session, imp, poll, report)
+
+        if imp:
+            with_attendance += 1
+            if health["metrics"]["median_stay_pct"] is not None:
+                stay_values.append(health["metrics"]["median_stay_pct"])
+            if imp.hold_rate is not None:
+                hold_values.append(imp.hold_rate)
+            if imp.pct_under_15_min is not None:
+                bounce_values.append(imp.pct_under_15_min)
+        if poll:
+            with_poll += 1
+            poll_objects.append(poll)
+            if health["metrics"]["response_rate"] is not None:
+                response_rates.append(health["metrics"]["response_rate"])
+        if imp and poll:
+            with_both += 1
+
+        session_breakdown.append({
+            "session_id": row["id"],
+            "session_date": row["session_date"],
+            "topic": row["topic"],
+            "mentor_name": row["mentor_name"],
+            "median_stay_pct": health["metrics"]["median_stay_pct"],
+            "poll_overall": health["metrics"]["poll_overall"],
+            "response_rate": health["metrics"]["response_rate"],
+            "health_label": health["label"],
+            "health_reasons": health["reasons"],
+        })
+
+    coverage_pct = round(with_both / completed_count * 100, 1) if completed_count else 0
+    coverage_confidence = _coverage_confidence(coverage_pct)
+
+    delivery_metrics = {
+        "median_stay_pct": round(sum(stay_values) / len(stay_values), 1) if stay_values else None,
+        "hold_rate": round(sum(hold_values) / len(hold_values), 1) if hold_values else None,
+        "early_bounce_pct": round(sum(bounce_values) / len(bounce_values), 1) if bounce_values else None,
+        "sessions_with_attendance_import": with_attendance,
+    }
+    experience_metrics = {
+        "teaching_style_avg": _weighted_poll_avg(poll_objects, "teaching_style_avg"),
+        "doubts_avg": _weighted_poll_avg(poll_objects, "doubts_avg"),
+        "effectiveness_avg": _weighted_poll_avg(poll_objects, "effectiveness_avg"),
+        "overall_avg": _weighted_poll_avg(poll_objects, "overall_avg"),
+        "response_rate": round(sum(response_rates) / len(response_rates), 1) if response_rates else None,
+        "sessions_with_poll_import": with_poll,
+    }
+
+    health_label, health_reasons = _score_course_health(delivery_metrics, experience_metrics, coverage_confidence)
+
+    resolved_course = course_name or (rows[0]["course_name"] if rows else None)
+    resolved_batch = batch_name or (rows[0]["batch_name"] if rows else None)
+
+    return {
+        "course_name": resolved_course,
+        "batch_name": resolved_batch,
+        "completed_sessions": completed_count,
+        "coverage_pct": coverage_pct,
+        "coverage_confidence": coverage_confidence,
+        "delivery_metrics": delivery_metrics,
+        "experience_metrics": experience_metrics,
+        "delivery_score": delivery_metrics["median_stay_pct"],
+        "experience_score": experience_metrics["overall_avg"],
+        "health_label": health_label,
+        "health_reasons": health_reasons,
+        "sessions": sorted(session_breakdown, key=lambda s: s["session_date"] or ""),
+        "trend": [
+            {
+                "session_date": s["session_date"],
+                "median_stay_pct": s["median_stay_pct"],
+                "poll_overall": s["poll_overall"],
+            }
+            for s in sorted(session_breakdown, key=lambda s: s["session_date"] or "")
+        ],
+    }
+
+
+def course_health_summary(db, date_from=None, date_to=None):
+    rows = _filtered_rows(db, status="Completed", date_from=date_from, date_to=date_to)
+    if not rows:
+        return []
+
+    session_ids = [r["id"] for r in rows]
+    import_ids = {
+        sid for (sid,) in db.query(SessionAttendanceImport.session_id).filter(SessionAttendanceImport.session_id.in_(session_ids)).all()
+    }
+    poll_ids = {
+        sid for (sid,) in db.query(SessionPollSnapshot.session_id).filter(SessionPollSnapshot.session_id.in_(session_ids)).all()
+    }
+
+    groups = {}
+    for row in rows:
+        key = (row.get("course_name") or "Unknown", row.get("batch_name") or "Unknown")
+        groups.setdefault(key, []).append(row)
+
+    summaries = []
+    for (course, batch), group_rows in groups.items():
+        group_ids = {r["id"] for r in group_rows}
+        if not (group_ids & import_ids or group_ids & poll_ids):
+            continue
+
+        detail = course_health_detail(
+            db,
+            course_name=course if course != "Unknown" else None,
+            batch_name=batch if batch != "Unknown" else None,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        if not detail:
+            continue
+        summaries.append({
+            "course_name": detail["course_name"],
+            "batch_name": detail["batch_name"],
+            "completed_sessions": detail["completed_sessions"],
+            "coverage_pct": detail["coverage_pct"],
+            "coverage_confidence": detail["coverage_confidence"],
+            "delivery_score": detail["delivery_score"],
+            "experience_score": detail["experience_score"],
+            "health_label": detail["health_label"],
+            "health_reasons": detail["health_reasons"],
+        })
+
+    summaries.sort(key=lambda s: (s["health_label"] != "Critical", s["health_label"] != "Watch", -(s["coverage_pct"] or 0)))
+    return summaries
+
+
+def course_health_alerts(db, min_coverage_pct=50):
+    alerts = []
+    for item in course_health_summary(db):
+        if item["health_label"] in ("Watch", "Critical") and (item["coverage_pct"] or 0) >= min_coverage_pct:
+            alerts.append({
+                "course_name": item["course_name"],
+                "batch_name": item["batch_name"],
+                "health_label": item["health_label"],
+                "coverage_pct": item["coverage_pct"],
+                "primary_reason": (item["health_reasons"] or ["Course health needs review"])[0],
+            })
+    return alerts
+
+
+def build_course_health_csv(db, date_from=None, date_to=None):
+    summaries = course_health_summary(db, date_from=date_from, date_to=date_to)
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([
+        "Course", "Batch", "Completed Sessions", "Coverage %", "Coverage Confidence",
+        "Median Stay %", "Poll Overall", "Health", "Primary Reason",
+    ])
+    for item in summaries:
+        writer.writerow([
+            item["course_name"],
+            item["batch_name"],
+            item["completed_sessions"],
+            item["coverage_pct"],
+            item["coverage_confidence"],
+            item["delivery_score"] if item["delivery_score"] is not None else "",
+            item["experience_score"] if item["experience_score"] is not None else "",
+            item["health_label"],
+            (item["health_reasons"] or [""])[0],
+        ])
+    buffer.seek(0)
+    return buffer.getvalue()
 
 
 # =========================================================

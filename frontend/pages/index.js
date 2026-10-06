@@ -205,6 +205,7 @@ export default function Home() {
   const [invoices, setInvoices] = useState([]);
   const [nps, setNps] = useState([]);
   const [resourceTracking, setResourceTracking] = useState([]);
+  const [courseHealthAlerts, setCourseHealthAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -221,13 +222,15 @@ export default function Home() {
       fetch(`${API}/invoices`).then((r) => r.json()).catch(() => []),
       fetch(`${API}/nps`).then((r) => r.json()).catch(() => []),
       fetch(`${API}/resource-tracking`).then((r) => r.json()).catch(() => []),
-    ]).then(([s, m, b, i, n, rt]) => {
+      fetch(`${API}/course-health/alerts`).then((r) => r.json()).catch(() => ({ items: [] })),
+    ]).then(([s, m, b, i, n, rt, alerts]) => {
       setSessions(Array.isArray(s) ? s : []);
       setMentors(Array.isArray(m) ? m : []);
       setBatches(Array.isArray(b) ? b : []);
       setInvoices(Array.isArray(i) ? i : []);
       setNps(Array.isArray(n) ? n : []);
       setResourceTracking(Array.isArray(rt) ? rt : []);
+      setCourseHealthAlerts(alerts.items || []);
       setLoading(false);
     });
   }, []);
@@ -342,6 +345,13 @@ export default function Home() {
   // ---- Attention Required: real derived alerts ----
   const attentionItems = useMemo(() => {
     const items = [];
+    courseHealthAlerts.forEach((a) => {
+      items.push({
+        text: `${a.health_label} course health — ${a.course_name || a.batch_name}: ${a.primary_reason}`,
+        when: null,
+        href: "/course-health",
+      });
+    });
     resourceTracking.filter((r) => r.missing_count > 0).forEach((r) => {
       items.push({ text: `${r.missing_count} resource${r.missing_count === 1 ? "" : "s"} pending — ${r.session_topic || courseOf(r, courseByBatch)}`, when: r.session_date });
     });
@@ -352,7 +362,7 @@ export default function Home() {
       items.push({ text: `Low attendance (${Math.round(s.attendance_percentage)}%) — ${courseOf(s, courseByBatch) || s.topic}`, when: s.session_date });
     });
     return items.sort((a, b) => (b.when || "").localeCompare(a.when || "")).slice(0, 5);
-  }, [resourceTracking, sessions]);
+  }, [resourceTracking, sessions, courseHealthAlerts, courseByBatch]);
 
   const notifications = useMemo(() => attentionItems.map((a) => ({ text: a.text, level: "orange" })), [attentionItems]);
   const notifCount = pendingResourceSessions + sessionsMissingAttendance + pendingInvoices;

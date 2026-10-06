@@ -75,7 +75,7 @@ export default function LiveSessionReports() {
     try {
       const body = new FormData();
       body.append("file", file);
-      const path = kind === "attendance" ? "attendance/import" : "polls/import";
+      const path = kind === "attendance" ? "import-attendance" : "import-polls";
       const res = await fetch(`${API}/session-reports/${sessionId}/${path}`, { method: "POST", body });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Import failed. Please check the file and try again.");

@@ -22,6 +22,8 @@ from models.app_settings import AppSettings
 from models.webinar_participant import WebinarParticipant
 from models.session_report import SessionReport
 from models.session_attendance import SessionAttendance
+from models.session_attendance_import import SessionAttendanceImport
+from models.session_poll_snapshot import SessionPollSnapshot
 
 # Create all database tables
 Base.metadata.create_all(bind=engine)

@@ -1707,6 +1707,7 @@ export default function SessionReports() {
                         <th>Type / Duration</th>
                         <th>Status</th>
                         <th>Attendance</th>
+                        <th>Poll Avg</th>
                         <th>Rating</th>
                         <th>Report</th>
                         <th>SLA</th>
@@ -1738,11 +1739,25 @@ export default function SessionReports() {
                             <td>
                               <div className="attendance-cell">
                                 <span>
-                                  {r.attendance_percentage}%
-                                  <span className="muted-sm"> · {r.attendance} / {r.learner_count || 0}</span>
+                                  {r.attendance_percentage != null ? `${r.attendance_percentage}%` : "—"}
+                                  <span className="muted-sm"> · {r.attendance}{r.attendance_percentage != null ? ` / ${r.learner_count || 0}` : ""}</span>
                                 </span>
-                                <div className="attendance-track"><div className="attendance-fill" style={{ width: `${Math.min(100, r.attendance_percentage || 0)}%` }} /></div>
+                                {r.attendance_percentage != null && (
+                                  <div className="attendance-track"><div className="attendance-fill" style={{ width: `${Math.min(100, r.attendance_percentage || 0)}%` }} /></div>
+                                )}
                               </div>
+                            </td>
+                            <td className="muted">
+                              {r.poll_average_rating ? (
+                                <>
+                                  ★ {r.poll_average_rating}
+                                  {r.poll_health_status && (
+                                    <span className="muted-sm" style={{ color: r.poll_health_status === "Good" ? "#15803d" : r.poll_health_status === "Poor" ? "#b91c1c" : "#64748b" }}>
+                                      {" "}· {r.poll_health_status}
+                                    </span>
+                                  )}
+                                </>
+                              ) : "—"}
                             </td>
                             <td className="muted">{r.rating ? `★ ${r.rating}` : "—"}</td>
                             <td><Badge label={r.report_status} styles={REPORT_STYLES} /></td>

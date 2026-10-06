@@ -4009,12 +4009,14 @@ ZOOM_SUMMARY_ALIASES = {
     "topic": ["topic"],
     "meeting_id": ["id", "webinar_id"],
     "scheduled_time": ["scheduled_time"],
-    "duration_minutes": ["duration_minutes", "actual_duration_minutes"],
+    "duration_minutes": ["duration_minutes", "actual_duration", "actual_duration_minutes"],
     "total_registrants": ["registrants", "registered"],
     "cancelled_registrants": ["cancelled_registrants"],
     "approved_registrants": ["approved_registrants"],
     "denied_registrants": ["denied_registrants"],
     "total_participants": ["participants", "unique_viewers"],
+    "total_users": ["total_users"],
+    "max_concurrent_views": ["max_concurrent_views"],
 }
 
 APPROVED_STATUSES = {"approved", "", "nan", "none"}
@@ -4057,9 +4059,10 @@ def find_header_row(raw_rows, max_scan=15):
 
 
 def extract_meeting_summary(raw_rows, max_scan=15):
+    summary_keys = {"registrants", "registered", "participants", "unique_viewers", "total_users", "max_concurrent_views"}
     for i, row in enumerate(raw_rows[:max_scan]):
         cells = [normalize_header(c) for c in row]
-        if "topic" in cells and ({"registrants", "registered", "participants", "unique_viewers"} & set(cells)) and i + 1 < len(raw_rows):
+        if "topic" in cells and (summary_keys & set(cells)) and i + 1 < len(raw_rows):
             data_row = raw_rows[i + 1]
             summary = {}
             for field, aliases in ZOOM_SUMMARY_ALIASES.items():
@@ -4107,9 +4110,13 @@ def read_import_table(contents: bytes, filename: str):
         headers = [normalize_header(c) for c in raw_rows[header_row]] if header_row < len(raw_rows) else []
         width = len(headers)
         records = []
+        stop_markers = {"host_details", "panelist_details", "attendee_details"}
         for row in raw_rows[header_row + 1:]:
             if not any(cell.strip() for cell in row):
                 continue
+            cells_norm = [normalize_header(c) for c in row]
+            if len(cells_norm) <= 2 and any(c in stop_markers for c in cells_norm if c):
+                break
             padded = (row + [""] * width)[:width]
             records.append(dict(zip(headers, padded)))
 
@@ -6673,6 +6680,40 @@ def get_session_reports_summary(
     return session_reports.session_reports_summary(db, filters)
 
 
+@app.get("/session-reports/ops-intel/attendance")
+def get_ops_intel_attendance(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    course_name: Optional[str] = None,
+    session_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    filters = _session_report_filters(
+        date_from, date_to, None, mentor_name, batch_name,
+        course_name, session_type, None, None,
+    )
+    return {"success": True, **session_reports.ops_intel_attendance(db, filters)}
+
+
+@app.get("/session-reports/ops-intel/quality")
+def get_ops_intel_quality(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    mentor_name: Optional[str] = None,
+    batch_name: Optional[str] = None,
+    course_name: Optional[str] = None,
+    session_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    filters = _session_report_filters(
+        date_from, date_to, None, mentor_name, batch_name,
+        course_name, session_type, None, None,
+    )
+    return {"success": True, **session_reports.ops_intel_quality(db, filters)}
+
+
 @app.get("/session-reports/export")
 def export_session_reports(
     date_from: Optional[str] = None,
@@ -6789,29 +6830,44 @@ def create_session_attendance_row(session_id: int, data: SessionAttendanceCreate
 LATE_GRACE_MINUTES = 10
 
 
-@app.post("/session-reports/{session_id}/attendance/import")
-async def import_session_attendance(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Imports a Zoom attendance / participants (or registration) report into
-    this session's attendance: one row per learner, Present / Late / Absent."""
+def _clock_time(value):
+    if not value:
+        return None
+    text = str(value).strip()
+    for fmt in ("%H:%M", "%I:%M %p", "%I:%M:%S %p"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            return f"{parsed.hour:02d}:{parsed.minute:02d}"
+        except ValueError:
+            continue
+    dt = zoom_dt(text)
+    return f"{dt.hour:02d}:{dt.minute:02d}" if dt else text
+
+
+async def _handle_session_attendance_import(session_id: int, file: UploadFile, db: Session):
     from fastapi import HTTPException
 
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
 
+    webinar_count = db.query(WebinarRegistration).filter(WebinarRegistration.session_id == session_id).count()
+    if webinar_count:
+        raise HTTPException(
+            status_code=409,
+            detail="This session already has webinar registration rows. Import attendance via Webinar Reports instead.",
+        )
+
     contents = await file.read()
     try:
         df, meeting_summary = read_import_table(contents, file.filename)
     except Exception:
-        raise HTTPException(status_code=400, detail="Couldn't read this file. Upload Zoom's attendance report as CSV or Excel.")
+        raise HTTPException(status_code=400, detail="Couldn't read this file. Upload Zoom's Attendee Report as CSV or Excel.")
 
-    # Zoom guests often have no email — identify them by name so every unique
-    # joiner is counted once.
     aggregated, skipped, not_approved = aggregate_zoom_learners(df, allow_name_key=True)
     if aggregated is None:
-        raise HTTPException(status_code=400, detail="Couldn't find a Name or Email column. Upload Zoom's attendance / participants report.")
+        raise HTTPException(status_code=400, detail="Couldn't find a Name or Email column. Upload Zoom's Attendee Report.")
 
-    # The mentor shows up in Zoom's participant list as host — leave them out.
     mentor = None
     if session.mentor_name:
         mentor = db.query(Mentor).filter(func.lower(func.trim(Mentor.name)) == session.mentor_name.strip().lower()).first()
@@ -6835,43 +6891,39 @@ async def import_session_attendance(session_id: int, file: UploadFile = File(...
         entries.append({
             "learner_name": e["name"] or email.split("@")[0],
             "learner_email": email or None,
-            "join_time": e["join_time"],
-            "leave_time": e["leave_time"],
+            "join_time": _clock_time(e["join_time"]),
+            "leave_time": _clock_time(e["leave_time"]),
             "duration_minutes": e["duration"] or None,
             "attendance_status": status,
         })
 
-    # Expected learners: Zoom's own registrant count if the file has one,
-    # otherwise the batch's strength — so absentees who never joined count.
-    expected = 0
-    for key in ("approved_registrants", "total_registrants"):
-        try:
-            expected = int(float((meeting_summary or {}).get(key) or 0))
-        except (TypeError, ValueError):
-            expected = 0
-        if expected:
-            break
-    expected_source = "Zoom registrants" if expected else ""
-    if not expected and session.batch_name:
-        batch = db.query(Batch).filter(func.lower(func.trim(Batch.batch_name)) == session.batch_name.strip().lower()).first()
-        if batch and batch.strength:
-            expected = int(batch.strength)
-            expected_source = "batch strength"
-
-    totals = session_reports.replace_attendance(db, session_id, entries, expected)
-
-    message = f"{totals['attended']} unique joiner(s) from {len(df)} Zoom row(s); attendance {totals['attended']} of {totals['total']}"
-    if expected_source and totals["total"] > len(entries):
-        message += f" (total from {expected_source})"
+    totals = session_reports.import_attendance(db, session_id, entries, meeting_summary)
+    unique = totals["unique_viewers"]
+    message = f"Imported {totals['learner_rows']} learner row(s). Unique viewers {unique}"
+    if totals.get("total_users"):
+        message += f", total users {totals['total_users']}"
+    if totals.get("max_concurrent_views"):
+        message += f", peak {totals['max_concurrent_views']}"
+    if totals.get("actual_duration_minutes"):
+        message += f", duration {totals['actual_duration_minutes']} min"
     message += "."
-    zoom_unique = (meeting_summary or {}).get("total_participants")
-    if zoom_unique:
-        message += f" Zoom reports {zoom_unique} unique viewers (Zoom counts devices, so it can differ slightly)."
     if host_rows:
         message += " Mentor/host row excluded."
     if skipped:
         message += f" Skipped {skipped} row(s) with no name or email."
-    return {"success": True, "message": message, "total": totals["total"], "attended": totals["attended"]}
+    if not_approved:
+        message += f" Excluded {not_approved} cancelled/denied registration(s)."
+    return {"success": True, "message": message, **totals}
+
+
+@app.post("/session-reports/{session_id}/import-attendance")
+async def import_session_attendance_v2(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    return await _handle_session_attendance_import(session_id, file, db)
+
+
+@app.post("/session-reports/{session_id}/attendance/import")
+async def import_session_attendance(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    return await _handle_session_attendance_import(session_id, file, db)
 
 
 @app.delete("/session-reports/{session_id}/attendance")
@@ -6888,9 +6940,7 @@ def get_session_polls(session_id: int, db: Session = Depends(get_db)):
     return {"success": True, **bundle}
 
 
-@app.post("/session-reports/{session_id}/polls/import")
-async def import_session_polls(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Imports Zoom's poll report for this session and stores the parsed summary."""
+async def _handle_session_poll_import(session_id: int, file: UploadFile, db: Session):
     from fastapi import HTTPException
 
     session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
@@ -6911,20 +6961,35 @@ async def import_session_polls(session_id: int, file: UploadFile = File(...), db
     if not result["polls_conducted"]:
         raise HTTPException(status_code=400, detail="No polls found in this file. Make sure it's Zoom's Poll Report export.")
 
-    result["poll_health_status"] = compute_poll_health_status(result["poll_average_rating"])
-    result["imported_at"] = datetime.utcnow().isoformat()
-    session_reports.save_poll_summary(db, session_id, result)
+    health = compute_poll_health_status(result["poll_average_rating"])
+    remarks = []
+    for poll in result.get("polls", []):
+        remarks.append({"poll": poll.get("name"), "questions": poll.get("questions")})
+    session_reports.save_poll_snapshot(db, session_id, result, health, remarks)
 
     return {
         "success": True,
-        "message": f"Imported {result['polls_conducted']} poll(s) with {result['poll_responses']} response(s). Average rating {result['poll_average_rating']}/5 — {result['poll_health_status']}.",
+        "message": (
+            f"Imported {result['polls_conducted']} poll(s) with {result['poll_responses']} response(s). "
+            f"Average rating {result['poll_average_rating']}/5 — {health}."
+        ),
     }
+
+
+@app.post("/session-reports/{session_id}/import-polls")
+async def import_session_polls_v2(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    return await _handle_session_poll_import(session_id, file, db)
+
+
+@app.post("/session-reports/{session_id}/polls/import")
+async def import_session_polls(session_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    return await _handle_session_poll_import(session_id, file, db)
 
 
 @app.delete("/session-reports/{session_id}/polls")
 def clear_session_polls(session_id: int, db: Session = Depends(get_db)):
-    session_reports.save_poll_summary(db, session_id, None)
-    return {"success": True, "message": "Cleared imported poll data."}
+    removed = session_reports.clear_poll_snapshot(db, session_id)
+    return {"success": True, "message": f"Cleared imported poll data ({removed} snapshot(s))."}
 
 
 @app.put("/session-reports/{session_id}/attendance/{attendance_id}")

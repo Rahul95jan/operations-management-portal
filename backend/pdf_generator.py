@@ -61,7 +61,7 @@ def _line_duration_minutes(line):
 def _kn_logo_flowable(kn_logo_path, size_mm=14):
     """KN emblem only — never the full banner logo with academy text."""
     if kn_logo_path and os.path.exists(kn_logo_path):
-        return Image(kn_logo_path, width=size_mm * mm, height=size_mm * mm)
+        return Image(kn_logo_path, width=size_mm * mm, height=size_mm * mm, mask="auto")
     side = size_mm * mm
     badge = Drawing(side, side)
     badge.add(Rect(0, 0, side, side, fillColor=HexColor("#0f172a"), strokeColor=HexColor("#f59e0b"), strokeWidth=1.5))

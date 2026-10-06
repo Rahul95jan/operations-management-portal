@@ -12,7 +12,12 @@ from fastapi.responses import FileResponse, Response
 from fastapi import FastAPI, Depends, Form, File, UploadFile
 from typing import Optional, Union
 from pydantic import BaseModel, field_validator
-from duration_utils import is_valid_duration, parse_duration_minutes
+from duration_utils import (
+    duration_to_billable_hours,
+    format_duration,
+    is_valid_duration,
+    parse_duration_minutes,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from models.operations import OperationsAnalytics
 
@@ -760,6 +765,196 @@ def _course_lookup(db):
         for b in db.query(Batch).all() if b.batch_name
     }
     return lambda batch_name: mapping.get((batch_name or "").strip().lower()) or (batch_name or "")
+
+
+WEBINAR_SESSION_TYPE = "Webinar Session"
+
+
+def _webinar_payout_batch_name(month: str) -> str:
+    y, mo = month.split("-")
+    dt = datetime(int(y), int(mo), 1)
+    return f"Webinar Payout — {dt.strftime('%B %Y')}"
+
+
+def _session_billing_month_key(session_date: str | None) -> str:
+    raw = (session_date or "").strip()
+    if not raw:
+        return ""
+    if len(raw) >= 7 and raw[4] == "-":
+        return raw[:7]
+    dmy = re.match(r"^(\d{2})[-/](\d{2})[-/](\d{4})", raw)
+    if dmy:
+        return f"{dmy.group(3)}-{dmy.group(2)}"
+    return ""
+
+
+def _webinar_batch_name_for_session(session) -> str:
+    topic = (session.topic or "Webinar").strip()
+    date = session.session_date or ""
+    return f"Webinar: {topic} — {date}" if date else f"Webinar: {topic}"
+
+
+def _webinar_sessions_for_month(db, mentor_name: str, month: str):
+    rows = (
+        db.query(SessionModel)
+        .filter(
+            SessionModel.mentor_name == mentor_name,
+            SessionModel.session_type == WEBINAR_SESSION_TYPE,
+        )
+        .all()
+    )
+    matched = [s for s in rows if _session_billing_month_key(s.session_date) == month]
+    matched.sort(key=lambda s: s.session_date or "")
+    return matched
+
+
+def _webinar_invoices_for_month(db, mentor_name: str, month: str):
+    return (
+        db.query(Invoice)
+        .filter(
+            Invoice.mentor_name == mentor_name,
+            Invoice.month == month,
+            Invoice.source_type == "webinar",
+        )
+        .order_by(Invoice.id.asc())
+        .all()
+    )
+
+
+def _webinar_monthly_session_lines(db, mentor_name: str, month: str):
+    invoices = _webinar_invoices_for_month(db, mentor_name, month)
+    invoice_by_batch = {(inv.batch_name or "").strip(): inv for inv in invoices}
+    rate = float(invoices[0].hourly_rate or 0) if invoices else 0.0
+    if not rate:
+        mentor = db.query(Mentor).filter(Mentor.name == mentor_name).first()
+        rate = float(mentor.hourly_rate or 0) if mentor else 0.0
+
+    lines = []
+    for session in _webinar_sessions_for_month(db, mentor_name, month):
+        key = _webinar_batch_name_for_session(session)
+        inv = invoice_by_batch.get(key)
+        hours = duration_to_billable_hours(session.duration)
+        if inv:
+            amount = float(inv.total_amount or 0)
+            hours = float(inv.total_hours or hours)
+        else:
+            amount = round(hours * rate, 2)
+        lines.append(
+            {
+                "date": session.session_date or "—",
+                "topic": (session.topic or "Webinar").strip(),
+                "duration": format_duration(session.duration) or "—",
+                "hours": hours,
+                "amount": amount,
+                "invoice_number": inv.invoice_number if inv else None,
+                "invoice_id": inv.id if inv else None,
+            }
+        )
+    return lines
+
+
+def _webinar_monthly_report_data(db, mentor_name: str, month: str):
+    sessions = _webinar_sessions_for_month(db, mentor_name, month)
+    invoices = _webinar_invoices_for_month(db, mentor_name, month)
+    session_lines = _webinar_monthly_session_lines(db, mentor_name, month)
+
+    total_sessions = len(sessions)
+    total_hours = round(sum(line["hours"] for line in session_lines), 2)
+    total_amount = round(sum(float(inv.total_amount or 0) for inv in invoices), 2)
+    rate = float(invoices[0].hourly_rate or 0) if invoices else 0.0
+    if not rate:
+        mentor = db.query(Mentor).filter(Mentor.name == mentor_name).first()
+        rate = float(mentor.hourly_rate or 0) if mentor else 0.0
+
+    mentor_email = None
+    if invoices:
+        mentor_email = invoices[0].mentor_email
+    if not mentor_email:
+        mentor = db.query(Mentor).filter(Mentor.name == mentor_name).first()
+        mentor_email = mentor.email if mentor else None
+
+    statuses = [inv.payment_status for inv in invoices]
+    if not statuses:
+        payment_status = "Not invoiced"
+    elif all(s == "Paid" for s in statuses):
+        payment_status = "Paid"
+    elif any(s == "Pending" for s in statuses):
+        payment_status = "Pending"
+    else:
+        payment_status = statuses[0]
+
+    invoice_dates = [inv.created_at.strftime("%Y-%m-%d") for inv in invoices if inv.created_at]
+    due_dates = [inv.due_date for inv in invoices if inv.due_date]
+    payment_dates = [inv.payment_date for inv in invoices if inv.payment_date]
+
+    return {
+        "mentor_name": mentor_name,
+        "mentor_email": mentor_email,
+        "month": month,
+        "batch_name": _webinar_payout_batch_name(month),
+        "total_sessions": total_sessions,
+        "total_hours": str(total_hours),
+        "hourly_rate": str(rate),
+        "total_amount": str(total_amount),
+        "payment_status": payment_status,
+        "invoice_date": max(invoice_dates) if invoice_dates else None,
+        "due_date": min(due_dates) if due_dates else None,
+        "payment_date": max(payment_dates) if payment_dates else None,
+        "session_lines": session_lines,
+        "invoices": [
+            {
+                "id": inv.id,
+                "invoice_number": inv.invoice_number,
+                "batch_name": inv.batch_name,
+                "total_amount": inv.total_amount,
+                "payment_status": inv.payment_status,
+                "invoice_date": inv.created_at.strftime("%Y-%m-%d") if inv.created_at else None,
+            }
+            for inv in invoices
+        ],
+    }
+
+
+def _webinar_monthly_virtual_invoice(db, mentor_name: str, month: str, reference_invoice: Invoice | None = None):
+    report = _webinar_monthly_report_data(db, mentor_name, month)
+    ref = reference_invoice or (_webinar_invoices_for_month(db, mentor_name, month)[:1] or [None])[0]
+    invoice_number = f"WEB-{month.replace('-', '')}"
+    if ref and ref.invoice_number:
+        invoice_number = f"{invoice_number} ({ref.invoice_number})"
+
+    class _VirtualInvoice:
+        pass
+
+    inv = _VirtualInvoice()
+    inv.id = ref.id if ref else 0
+    inv.invoice_number = invoice_number
+    inv.mentor_name = mentor_name
+    inv.mentor_email = report["mentor_email"]
+    inv.batch_name = report["batch_name"]
+    inv.month = month
+    inv.total_sessions = report["total_sessions"]
+    inv.total_hours = report["total_hours"]
+    inv.hourly_rate = report["hourly_rate"]
+    inv.total_amount = report["total_amount"]
+    inv.payment_status = report["payment_status"]
+    inv.created_at = datetime.strptime(report["invoice_date"], "%Y-%m-%d") if report["invoice_date"] else datetime.utcnow()
+    inv.due_date = report["due_date"]
+    inv.payment_date = report["payment_date"]
+    inv.payment_mode = ref.payment_mode if ref else None
+    inv.transaction_id = ref.transaction_id if ref else None
+    inv.payment_reference = ref.payment_reference if ref else None
+    inv.notes = ref.notes if ref else None
+    inv.source_type = "webinar"
+    inv.webinar_id = None
+    return inv, report["session_lines"]
+
+
+def _invoice_pdf_args(db, invoice: Invoice):
+    source = invoice.source_type or "batch"
+    if source == "webinar":
+        virtual, session_lines = _webinar_monthly_virtual_invoice(db, invoice.mentor_name, invoice.month, invoice)
+        return virtual.batch_name, session_lines, virtual
+    return _course_lookup(db)(invoice.batch_name), None, invoice
 
 
 def _resolve_course_batch(db, course_name=None, batch_name=None):
@@ -1731,7 +1926,8 @@ def create_invoice(invoice: InvoiceCreate):
         # Generate PDF
         # =====================================
 
-        pdf_path = generate_invoice(new_invoice, course_name=_course_lookup(db)(new_invoice.batch_name))
+        course_name, session_lines, pdf_invoice = _invoice_pdf_args(db, new_invoice)
+        pdf_path = generate_invoice(pdf_invoice, course_name=course_name, session_lines=session_lines)
 
         print("PDF Generated:", pdf_path)
 
@@ -1779,11 +1975,17 @@ def download_invoice(invoice_id: int):
         print("=" * 60)
 
         # Always regenerate PDF using latest database values
-        pdf_path = generate_invoice(invoice, course_name=_course_lookup(db)(invoice.batch_name))
+        course_name, session_lines, pdf_invoice = _invoice_pdf_args(db, invoice)
+        pdf_path = generate_invoice(pdf_invoice, course_name=course_name, session_lines=session_lines)
+        filename = (
+            f"Webinar_Monthly_{invoice.mentor_name.replace(' ', '_')}_{invoice.month}.pdf"
+            if (invoice.source_type or "batch") == "webinar"
+            else f"{invoice.invoice_number}.pdf"
+        )
 
         return FileResponse(
             path=pdf_path,
-            filename=f"{invoice.invoice_number}.pdf",
+            filename=filename,
             media_type="application/pdf",
         )
 
@@ -1849,13 +2051,13 @@ def send_invoice(invoice_id: int):
             invoice.mentor_email = mentor_email
             db.commit()
 
-        pdf_path = f"pdfs/invoice_{invoice_id}.pdf"
-
-        if not os.path.exists(pdf_path):
-            return {
-                "success": False,
-                "message": f"PDF not found: {pdf_path}"
-            }
+        course_name, session_lines, pdf_invoice = _invoice_pdf_args(db, invoice)
+        pdf_path = generate_invoice(pdf_invoice, course_name=course_name, session_lines=session_lines)
+        invoice_number = (
+            f"Webinar Monthly — {invoice.mentor_name} ({invoice.month})"
+            if (invoice.source_type or "batch") == "webinar"
+            else invoice.invoice_number
+        )
 
         print("=" * 60)
         print("Invoice ID :", invoice.id)
@@ -1867,7 +2069,7 @@ def send_invoice(invoice_id: int):
         success = send_invoice_email(
             receiver_email=mentor_email,
             pdf_path=pdf_path,
-            invoice_number=invoice.invoice_number,
+            invoice_number=invoice_number,
         )
 
         print("send_invoice_email returned:", success)
@@ -1893,6 +2095,60 @@ def send_invoice(invoice_id: int):
 
     finally:
         db.close()
+
+@app.get("/mentor-monthly-report")
+def mentor_monthly_report(mentor_name: str, month: str, db: Session = Depends(get_db)):
+    report = _webinar_monthly_report_data(db, mentor_name, month)
+    if not report["session_lines"]:
+        return {"error": "No webinar sessions found for this mentor and month."}
+    return report
+
+
+@app.get("/download-mentor-monthly-report")
+def download_mentor_monthly_report(mentor_name: str, month: str):
+    db = SessionLocal()
+    try:
+        virtual, session_lines = _webinar_monthly_virtual_invoice(db, mentor_name, month)
+        if not session_lines:
+            return {"error": "No webinar sessions found for this mentor and month."}
+        pdf_path = generate_invoice(virtual, course_name=virtual.batch_name, session_lines=session_lines)
+        filename = f"Webinar_Monthly_{mentor_name.replace(' ', '_')}_{month}.pdf"
+        return FileResponse(path=pdf_path, filename=filename, media_type="application/pdf")
+    finally:
+        db.close()
+
+
+@app.post("/send-mentor-monthly-report")
+def send_mentor_monthly_report(mentor_name: str, month: str):
+    db = SessionLocal()
+    try:
+        report = _webinar_monthly_report_data(db, mentor_name, month)
+        if not report["session_lines"]:
+            return {"success": False, "message": "No webinar sessions found for this mentor and month."}
+
+        mentor = db.query(Mentor).filter(Mentor.name == mentor_name).first()
+        mentor_email = report["mentor_email"] or (mentor.email if mentor else None)
+        if not mentor_email:
+            return {"success": False, "message": "Mentor email not found"}
+
+        virtual, session_lines = _webinar_monthly_virtual_invoice(db, mentor_name, month)
+        pdf_path = generate_invoice(virtual, course_name=virtual.batch_name, session_lines=session_lines)
+        invoice_number = f"Webinar Monthly — {mentor_name} ({month})"
+
+        success = send_invoice_email(
+            receiver_email=mentor_email,
+            pdf_path=pdf_path,
+            invoice_number=invoice_number,
+        )
+        if success:
+            return {"success": True, "message": "Monthly report sent successfully"}
+        return {"success": False, "message": "send_invoice_email() returned False"}
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "message": str(e)}
+    finally:
+        db.close()
+
 
 @app.get("/invoices")
 def get_invoices(db: Session = Depends(get_db)):

@@ -351,7 +351,95 @@ function webinarInvoiceForSession(session, invoiceList) {
   ) || null;
 }
 
+function isPerSessionWebinarInvoice(inv) {
+  return inv?.source_type === "webinar" && !(inv.batch_name || "").startsWith("Webinar Payout");
+}
+
+function isMonthlyWebinarReport(inv) {
+  return !!inv?.isMonthlyReport;
+}
+
+function monthlyReportKey(mentor, month) {
+  return `monthly:${mentor}:${month}`;
+}
+
+function monthlyReportLabel(month) {
+  return month ? `WEB-${month.replace("-", "")}` : "Monthly Report";
+}
+
+function aggregatePaymentStatus(invoiceList) {
+  if (!invoiceList.length) return "Pending";
+  const statuses = invoiceList.map(displayStatus);
+  if (statuses.some((s) => s === "Overdue")) return "Overdue";
+  if (statuses.every((s) => s === "Paid")) return "Paid";
+  return "Pending";
+}
+
+function buildMonthlyWebinarReports(invoiceList, sessionList, mentorList) {
+  const groups = {};
+  invoiceList.filter(isPerSessionWebinarInvoice).forEach((inv) => {
+    const key = `${inv.mentor_name}|${inv.month}`;
+    if (!groups[key]) groups[key] = { mentor: inv.mentor_name, month: inv.month, invoices: [] };
+    groups[key].invoices.push(inv);
+  });
+
+  const mentorRate = (name) => Number(mentorList.find((m) => m.name === name)?.hourly_rate || 0);
+
+  return Object.values(groups).map((group) => {
+    const monthSessions = sessionList
+      .filter(
+        (s) =>
+          (s.mentor_name || "").trim() === group.mentor &&
+          isWebinarSessionRecord(s) &&
+          sessionInBillingMonth(s, group.month),
+      )
+      .sort((a, b) => (a.session_date || "").localeCompare(b.session_date || ""));
+
+    const sessionRows = monthSessions.map((session) => {
+      const invoice = webinarInvoiceForSession(session, group.invoices);
+      const billableHours = roundHours(parseDurationToMinutes(session.duration) / 60);
+      const rate = Number(invoice?.hourly_rate || mentorRate(group.mentor) || 0);
+      return {
+        session,
+        invoice,
+        durationLabel: formatSessionDuration(session.duration) || "—",
+        hours: billableHours,
+        amount: invoice ? Number(invoice.total_amount) || 0 : billableHours && rate ? roundHours(billableHours * rate) : null,
+      };
+    });
+
+    const totalAmount = group.invoices.reduce((sum, inv) => sum + (Number(inv.total_amount) || 0), 0);
+    const totalMinutes = monthSessions.reduce((sum, s) => sum + parseDurationToMinutes(s.duration), 0);
+    const totalHours = roundHours(totalMinutes / 60);
+    const invoiceDates = group.invoices.map((inv) => inv.invoice_date).filter(Boolean).sort();
+    const dueDates = group.invoices.map((inv) => inv.due_date).filter(Boolean).sort();
+    const paymentDates = group.invoices.map((inv) => inv.payment_date).filter(Boolean).sort();
+
+    return {
+      id: monthlyReportKey(group.mentor, group.month),
+      isMonthlyReport: true,
+      source_type: "webinar-monthly",
+      mentor_name: group.mentor,
+      mentor_email: group.invoices[0]?.mentor_email || mentorList.find((m) => m.name === group.mentor)?.email || "",
+      batch_name: `Webinar Payout — ${monthLabel(group.month)}`,
+      month: group.month,
+      total_sessions: monthSessions.length,
+      total_hours: String(totalHours),
+      hourly_rate: String(group.invoices[0]?.hourly_rate || mentorRate(group.mentor) || 0),
+      total_amount: String(totalAmount),
+      payment_status: aggregatePaymentStatus(group.invoices),
+      invoice_date: invoiceDates[invoiceDates.length - 1] || null,
+      due_date: dueDates[0] || null,
+      payment_date: paymentDates[paymentDates.length - 1] || null,
+      childInvoices: group.invoices,
+      sessionRows,
+      invoice_number: monthlyReportLabel(group.month),
+    };
+  });
+}
+
 function invoiceLabel(inv, courseByBatch) {
+  if (isMonthlyWebinarReport(inv)) return "Webinar Monthly";
   if (inv?.source_type === "webinar") return webinarTopicOf(inv) || inv.batch_name || "—";
   return courseOfBatch(inv.batch_name, courseByBatch);
 }
@@ -846,28 +934,54 @@ export default function InvoiceGenerator() {
     }
   };
 
-  const sendInvoiceEmail = async (id) => {
+  const sendInvoiceEmail = async (inv) => {
     setOpenMenuId(null);
     try {
-      const res = await fetch(`${API}/send-invoice/${id}`, { method: "POST" });
+      const url = isMonthlyWebinarReport(inv)
+        ? `${API}/send-mentor-monthly-report?mentor_name=${encodeURIComponent(inv.mentor_name)}&month=${encodeURIComponent(inv.month)}`
+        : `${API}/send-invoice/${inv.id}`;
+      const res = await fetch(url, { method: "POST" });
       const data = await res.json();
-      showToast(data.success ? "Invoice sent to mentor." : data.message || "Failed to send invoice.", data.success ? "success" : "error");
+      const successMessage = isMonthlyWebinarReport(inv) ? "Monthly report sent to mentor." : "Invoice sent to mentor.";
+      showToast(data.success ? successMessage : data.message || "Failed to send.", data.success ? "success" : "error");
     } catch (err) {
-      showToast("Failed to send invoice.");
+      showToast("Failed to send.");
     }
   };
 
+  const historyInvoices = useMemo(() => {
+    const nonWebinar = rangeFilteredInvoices.filter((inv) => !isPerSessionWebinarInvoice(inv));
+    const monthlyReports = buildMonthlyWebinarReports(rangeFilteredInvoices, sessions, mentors);
+    return [...monthlyReports, ...nonWebinar].sort((a, b) => {
+      const monthCmp = (b.month || "").localeCompare(a.month || "");
+      if (monthCmp !== 0) return monthCmp;
+      return (b.invoice_date || "").localeCompare(a.invoice_date || "");
+    });
+  }, [rangeFilteredInvoices, sessions, mentors]);
+
   const filteredInvoices = useMemo(() => {
     const q = search.toLowerCase();
-    return rangeFilteredInvoices.filter((inv) => {
-      const matchesSearch = !q || (inv.mentor_name || "").toLowerCase().includes(q) || invoiceCourse(inv).toLowerCase().includes(q) || (inv.invoice_number || "").toLowerCase().includes(q);
+    return historyInvoices.filter((inv) => {
+      const childNumbers = (inv.childInvoices || []).map((c) => c.invoice_number || "").join(" ");
+      const matchesSearch = !q
+        || (inv.mentor_name || "").toLowerCase().includes(q)
+        || invoiceCourse(inv).toLowerCase().includes(q)
+        || (inv.invoice_number || "").toLowerCase().includes(q)
+        || childNumbers.toLowerCase().includes(q)
+        || "webinar monthly".includes(q);
       if (!matchesSearch) return false;
-      if (batchFilter !== "All" && !sameCourse(invoiceCourse(inv), batchFilter)) return false;
+      if (batchFilter !== "All") {
+        if (batchFilter === "Webinar Monthly") {
+          if (!isMonthlyWebinarReport(inv)) return false;
+        } else if (!sameCourse(invoiceCourse(inv), batchFilter)) {
+          return false;
+        }
+      }
       if (monthFilter !== "All" && inv.month !== monthFilter) return false;
       if (statusFilter !== "All" && displayStatus(inv) !== statusFilter) return false;
       return true;
     });
-  }, [rangeFilteredInvoices, search, batchFilter, monthFilter, statusFilter]);
+  }, [historyInvoices, search, batchFilter, monthFilter, statusFilter, courseByBatch]);
 
   const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / ROWS_PER_PAGE));
   const pagedInvoices = useMemo(() => {
@@ -875,8 +989,30 @@ export default function InvoiceGenerator() {
     return filteredInvoices.slice(start, start + ROWS_PER_PAGE);
   }, [filteredInvoices, currentPage]);
 
-  const toggleSelect = (id) => setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  const toggleSelectAll = () => setSelectedIds(selectedIds.length === pagedInvoices.length ? [] : pagedInvoices.map((i) => i.id));
+  const invoiceSelectableIds = (inv) => (isMonthlyWebinarReport(inv) ? (inv.childInvoices || []).map((c) => c.id) : [inv.id]);
+
+  const toggleSelect = (inv) => {
+    const ids = invoiceSelectableIds(inv);
+    const allSelected = ids.every((id) => selectedIds.includes(id));
+    setSelectedIds((prev) => {
+      if (allSelected) return prev.filter((id) => !ids.includes(id));
+      return [...new Set([...prev, ...ids])];
+    });
+  };
+
+  const isRowSelected = (inv) => invoiceSelectableIds(inv).every((id) => selectedIds.includes(id));
+
+  const toggleSelectAll = () => {
+    const pageIds = pagedInvoices.flatMap((inv) => invoiceSelectableIds(inv));
+    const allSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+    setSelectedIds(allSelected ? [] : pageIds);
+  };
+
+  const downloadInvoiceUrl = (inv) => (
+    isMonthlyWebinarReport(inv)
+      ? `${API}/download-mentor-monthly-report?mentor_name=${encodeURIComponent(inv.mentor_name)}&month=${encodeURIComponent(inv.month)}`
+      : `${API}/download-invoice/${inv.id}`
+  );
 
   const mentorPayoutSummary = useMemo(() => {
     const map = {};
@@ -907,6 +1043,19 @@ export default function InvoiceGenerator() {
 
   const invoiceActivity = (inv) => {
     if (!inv) return [];
+    if (isMonthlyWebinarReport(inv)) {
+      const events = (inv.childInvoices || []).map((child) => ({
+        icon: "fileText",
+        text: `Invoice generated — ${child.invoice_number || `#${child.id}`}`,
+        when: fmtDate(child.invoice_date),
+      }));
+      (inv.childInvoices || []).forEach((child) => {
+        if (child.payment_status === "Paid") {
+          events.push({ icon: "checkCircle", text: `Payment recorded — ${child.invoice_number || `#${child.id}`}`, when: fmtDate(child.payment_date) });
+        }
+      });
+      return events.sort((a, b) => (b.when || "").localeCompare(a.when || ""));
+    }
     const events = [{ icon: "fileText", text: "Invoice generated", when: fmtDate(inv.invoice_date) }];
     if (inv.payment_status === "Paid") events.push({ icon: "checkCircle", text: "Payment recorded", when: fmtDate(inv.payment_date) });
     return events;
@@ -1303,11 +1452,12 @@ export default function InvoiceGenerator() {
                     </div>
                     <select className="styled-input filter-select" style={{ ...inputStyle, width: "auto" }} value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)}>
                       <option value="All">All Courses</option>
-                      {[...new Set(invoices.map((i) => invoiceCourse(i)))].filter(Boolean).sort().map((c) => <option key={c} value={c}>{c}</option>)}
+                      <option value="Webinar Monthly">Webinar Monthly</option>
+                      {[...new Set(historyInvoices.map((i) => invoiceCourse(i)))].filter((c) => c !== "Webinar Monthly").sort().map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                     <select className="styled-input filter-select" style={{ ...inputStyle, width: "auto" }} value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)}>
                       <option value="All">All Months</option>
-                      {[...new Set(invoices.map((i) => i.month))].sort().map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                      {[...new Set(historyInvoices.map((i) => i.month))].sort().map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
                     </select>
                     <select className="styled-input filter-select" style={{ ...inputStyle, width: "auto" }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
                       <option value="All">All Status</option>
@@ -1334,7 +1484,7 @@ export default function InvoiceGenerator() {
                       <table className="styled-table">
                         <thead>
                           <tr>
-                            <th><input type="checkbox" checked={pagedInvoices.length > 0 && selectedIds.length === pagedInvoices.length} onChange={toggleSelectAll} /></th>
+                            <th><input type="checkbox" checked={pagedInvoices.length > 0 && pagedInvoices.every((inv) => isRowSelected(inv))} onChange={toggleSelectAll} /></th>
                             <th>Invoice No.</th>
                             <th>Mentor</th>
                             <th>Course</th>
@@ -1351,8 +1501,15 @@ export default function InvoiceGenerator() {
                         <tbody>
                           {pagedInvoices.map((inv, i) => (
                             <tr key={inv.id} style={{ animationDelay: `${i * 0.03}s` }}>
-                              <td><input type="checkbox" checked={selectedIds.includes(inv.id)} onChange={() => toggleSelect(inv.id)} /></td>
-                              <td className="muted">{inv.invoice_number || `#${inv.id}`}</td>
+                              <td><input type="checkbox" checked={isRowSelected(inv)} onChange={() => toggleSelect(inv)} /></td>
+                              <td className="muted">
+                                {isMonthlyWebinarReport(inv) ? (
+                                  <span>
+                                    {inv.invoice_number}
+                                    <span style={{ marginLeft: "6px", fontSize: "10px", fontWeight: 700, color: "#6d28d9", background: "#ede9fe", padding: "2px 6px", borderRadius: "999px" }}>Monthly</span>
+                                  </span>
+                                ) : (inv.invoice_number || `#${inv.id}`)}
+                              </td>
                               <td className="strong">{inv.mentor_name}</td>
                               <td>{invoiceCourse(inv)}</td>
                               <td>{monthLabel(inv.month)}</td>
@@ -1365,11 +1522,13 @@ export default function InvoiceGenerator() {
                               <td style={{ whiteSpace: "nowrap" }}>
                                 <div className="row-actions">
                                   <button className="btn btn-icon btn-action" onClick={() => { setViewInvoice(inv); setDrawerTab("overview"); }}><Icon name="eye" size={13} /> View</button>
-                                  <a href={`${API}/download-invoice/${inv.id}`} target="_blank" rel="noreferrer" className="btn btn-icon btn-action" style={{ textDecoration: "none" }}><Icon name="download" size={13} /> Download</a>
-                                  <button className="btn btn-icon btn-action" onClick={() => sendInvoiceEmail(inv.id)}><Icon name="send" size={13} /> Send Mail</button>
-                                  <button className="btn btn-icon btn-dots" title="More actions" onClick={(e) => toggleRowMenu(e, inv.id)}><DotsIcon size={15} /></button>
+                                  <a href={downloadInvoiceUrl(inv)} target="_blank" rel="noreferrer" className="btn btn-icon btn-action" style={{ textDecoration: "none" }}><Icon name="download" size={13} /> Download</a>
+                                  <button className="btn btn-icon btn-action" onClick={() => sendInvoiceEmail(inv)}><Icon name="send" size={13} /> Send Mail</button>
+                                  {!isMonthlyWebinarReport(inv) && (
+                                    <button className="btn btn-icon btn-dots" title="More actions" onClick={(e) => toggleRowMenu(e, inv.id)}><DotsIcon size={15} /></button>
+                                  )}
                                 </div>
-                                {openMenuId === inv.id && (
+                                {openMenuId === inv.id && !isMonthlyWebinarReport(inv) && (
                                   <div className="dropdown-menu" style={menuPos || undefined} onClick={(e) => e.stopPropagation()}>
                                     <button onClick={() => editInvoice(inv)}><Icon name="edit" size={13} /> Edit Invoice</button>
                                     {inv.payment_status === "Pending" && <button onClick={() => markPaid(inv.id)}><Icon name="checkCircle" size={13} /> Mark as Paid</button>}
@@ -1382,7 +1541,7 @@ export default function InvoiceGenerator() {
                         </tbody>
                       </table>
                       {filteredInvoices.length === 0 && (
-                        <div className="empty-state"><div style={{ fontSize: "32px", marginBottom: "8px" }}>📄</div>{invoices.length === 0 ? "No invoices yet — generate your first one above." : "No invoices match your filters."}</div>
+                        <div className="empty-state"><div style={{ fontSize: "32px", marginBottom: "8px" }}>📄</div>{historyInvoices.length === 0 ? "No invoices yet — generate your first one above." : "No invoices match your filters."}</div>
                       )}
                       {filteredInvoices.length > 0 && (
                         <div className="pagination-row">
@@ -1435,32 +1594,36 @@ export default function InvoiceGenerator() {
           <div className="drawer-overlay" onClick={() => setViewInvoice(null)}>
             <div className="drawer-panel" onClick={(e) => e.stopPropagation()}>
               <div className="drawer-header">
-                <h2 className="card-title" style={{ margin: 0 }}>Invoice Details</h2>
+                <h2 className="card-title" style={{ margin: 0 }}>{isMonthlyWebinarReport(viewInvoice) ? "Monthly Session Report" : "Invoice Details"}</h2>
                 <button className="btn btn-ghost" onClick={() => setViewInvoice(null)}><Icon name="x" size={16} /></button>
               </div>
 
               <div className="drawer-profile">
                 <div className="drawer-profile-name-row">
-                  <h3 style={{ margin: 0 }}>{viewInvoice.invoice_number || `#${viewInvoice.id}`}</h3>
+                  <h3 style={{ margin: 0 }}>{isMonthlyWebinarReport(viewInvoice) ? viewInvoice.invoice_number : (viewInvoice.invoice_number || `#${viewInvoice.id}`)}</h3>
                   <StatusBadge status={displayStatus(viewInvoice)} />
                 </div>
                 <div className="muted" style={{ fontSize: "13px" }}>
                   {viewInvoice.mentor_name} · {invoiceCourse(viewInvoice)}
-                  {viewInvoice.source_type === "webinar" && <span style={{ marginLeft: "6px", fontSize: "11px", fontWeight: 700, color: "#6d28d9", background: "#ede9fe", padding: "2px 8px", borderRadius: "999px" }}>Webinar</span>}
+                  {isMonthlyWebinarReport(viewInvoice) && <span style={{ marginLeft: "6px", fontSize: "11px", fontWeight: 700, color: "#6d28d9", background: "#ede9fe", padding: "2px 8px", borderRadius: "999px" }}>Webinar Monthly</span>}
+                  {viewInvoice.source_type === "webinar" && !isMonthlyWebinarReport(viewInvoice) && <span style={{ marginLeft: "6px", fontSize: "11px", fontWeight: 700, color: "#6d28d9", background: "#ede9fe", padding: "2px 8px", borderRadius: "999px" }}>Webinar</span>}
                 </div>
               </div>
 
               <div className="drawer-actions">
-                <a href={`${API}/download-invoice/${viewInvoice.id}`} target="_blank" rel="noreferrer" className="btn btn-ghost" style={{ textDecoration: "none" }}><Icon name="download" size={13} /> Download PDF</a>
-                <button className="btn btn-ghost" onClick={() => sendInvoiceEmail(viewInvoice.id)}><Icon name="send" size={13} /> Send to Mentor</button>
-                {viewInvoice.payment_status === "Pending" && (
+                <a href={downloadInvoiceUrl(viewInvoice)} target="_blank" rel="noreferrer" className="btn btn-ghost" style={{ textDecoration: "none" }}><Icon name="download" size={13} /> Download PDF</a>
+                <button className="btn btn-ghost" onClick={() => sendInvoiceEmail(viewInvoice)}><Icon name="send" size={13} /> Send to Mentor</button>
+                {viewInvoice.payment_status === "Pending" && !isMonthlyWebinarReport(viewInvoice) && (
                   <button className="btn btn-mark-paid" onClick={() => markPaid(viewInvoice.id)}><Icon name="checkCircle" size={13} /> Mark as Paid</button>
                 )}
               </div>
 
               <div className="drawer-tabs">
                 <button className={`drawer-tab ${drawerTab === "overview" ? "drawer-tab-active" : ""}`} onClick={() => setDrawerTab("overview")}>Overview</button>
-                <button className={`drawer-tab ${drawerTab === "sessions" ? "drawer-tab-active" : ""}`} onClick={() => setDrawerTab("sessions")}>Sessions</button>
+                <button className={`drawer-tab ${drawerTab === "sessions" ? "drawer-tab-active" : ""}`} onClick={() => setDrawerTab("sessions")}>{isMonthlyWebinarReport(viewInvoice) ? "Session Breakdown" : "Sessions"}</button>
+                {isMonthlyWebinarReport(viewInvoice) && (
+                  <button className={`drawer-tab ${drawerTab === "invoices" ? "drawer-tab-active" : ""}`} onClick={() => setDrawerTab("invoices")}>Invoices</button>
+                )}
                 <button className={`drawer-tab ${drawerTab === "activity" ? "drawer-tab-active" : ""}`} onClick={() => setDrawerTab("activity")}>Activity</button>
               </div>
 
@@ -1468,9 +1631,12 @@ export default function InvoiceGenerator() {
                 <>
                   <div className="drawer-section">
                     <div className="info-grid">
-                      <div className="info-chip"><div className="info-chip-label">Session Type</div><div className="info-chip-value">{viewInvoice.source_type === "webinar" ? "Webinar" : "Live Session"}</div></div>
-                      {viewInvoice.source_type === "webinar" && (
+                      <div className="info-chip"><div className="info-chip-label">Session Type</div><div className="info-chip-value">{isMonthlyWebinarReport(viewInvoice) ? "Webinar Monthly" : (viewInvoice.source_type === "webinar" ? "Webinar" : "Live Session")}</div></div>
+                      {viewInvoice.source_type === "webinar" && !isMonthlyWebinarReport(viewInvoice) && (
                         <div className="info-chip"><div className="info-chip-label">Session Topic</div><div className="info-chip-value">{webinarTopicOf(viewInvoice)}{parseWebinarBatchName(viewInvoice.batch_name).date ? ` — ${fmtDate(parseWebinarBatchName(viewInvoice.batch_name).date)}` : ""}</div></div>
+                      )}
+                      {isMonthlyWebinarReport(viewInvoice) && (
+                        <div className="info-chip"><div className="info-chip-label">Invoices Included</div><div className="info-chip-value">{(viewInvoice.childInvoices || []).length}</div></div>
                       )}
                       <div className="info-chip"><div className="info-chip-label">Billing Month</div><div className="info-chip-value">{monthLabel(viewInvoice.month)}</div></div>
                       <div className="info-chip"><div className="info-chip-label">Invoice Date</div><div className="info-chip-value">{fmtDate(viewInvoice.invoice_date)}</div></div>
@@ -1505,6 +1671,38 @@ export default function InvoiceGenerator() {
               )}
 
               {drawerTab === "sessions" && (() => {
+                if (isMonthlyWebinarReport(viewInvoice)) {
+                  const rows = viewInvoice.sessionRows || [];
+                  return (
+                    <div className="drawer-section">
+                      <div className="drawer-section-title">Sessions in {monthLabel(viewInvoice.month)}</div>
+                      {rows.length === 0 ? (
+                        <div className="hint-text">No webinar sessions found for this mentor and billing month.</div>
+                      ) : (
+                        <div className="table-wrap">
+                          <table className="styled-table" style={{ minWidth: "100%" }}>
+                            <thead>
+                              <tr>{["Date", "Topic", "Duration", "Amount", "Invoice"].map((h) => <th key={h}>{h}</th>)}</tr>
+                            </thead>
+                            <tbody>
+                              {rows.map(({ session, durationLabel, amount, invoice }) => (
+                                <tr key={session.id}>
+                                  <td className="muted">{fmtDate(session.session_date)}</td>
+                                  <td className="strong">{session.topic || "Webinar"}</td>
+                                  <td className="muted">{durationLabel}</td>
+                                  <td className="num">{amount ? money(amount) : "—"}</td>
+                                  <td className="muted">{invoice ? (invoice.invoice_number || `#${invoice.id}`) : "Pending"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      <a href="/sessions" className="btn btn-ghost" style={{ marginTop: "14px", display: "inline-block", textDecoration: "none" }}>View All in Sessions →</a>
+                    </div>
+                  );
+                }
+
                 const isWebinarInv = viewInvoice.source_type === "webinar";
                 const drawerSessions = sessions.filter((s) => {
                   if (s.mentor_name !== viewInvoice.mentor_name) return false;
@@ -1542,6 +1740,27 @@ export default function InvoiceGenerator() {
                   </div>
                 );
               })()}
+
+              {drawerTab === "invoices" && isMonthlyWebinarReport(viewInvoice) && (
+                <div className="drawer-section">
+                  <div className="drawer-section-title">Per-Session Invoices</div>
+                  {(viewInvoice.childInvoices || []).length === 0 ? (
+                    <div className="hint-text">No invoices generated yet for this month.</div>
+                  ) : (
+                    <div className="drawer-sessions-list">
+                      {(viewInvoice.childInvoices || []).map((child) => (
+                        <div key={child.id} className="drawer-session-row" style={{ justifyContent: "space-between" }}>
+                          <div>
+                            <div className="strong">{child.invoice_number || `#${child.id}`}</div>
+                            <div className="muted" style={{ fontSize: "12px" }}>{webinarTopicOf(child)} · {money(child.total_amount)}</div>
+                          </div>
+                          <StatusBadge status={displayStatus(child)} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {drawerTab === "activity" && (
                 <div className="drawer-section">

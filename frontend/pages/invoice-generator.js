@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
-import { buildCourseByBatch, courseOf, courseOfBatch, courseOptionsFromBatches, batchForCourse, sameCourse } from "../lib/courses";
+import { buildCourseByBatch, courseOf, courseOfBatch, courseOptionsFromBatches, batchForCourse, sameCourse, uniqueCourses } from "../lib/courses";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -264,7 +264,37 @@ function Field({ label, required, children }) {
 }
 
 // course_name is what's picked; batch_name is the course record the invoice links to.
-const EMPTY_FORM = { mentor_name: "", mentor_email: "", course_name: "", batch_name: "", month: "", sessions: "", hours: "", rate: "", amount: "" };
+// session_type: "Live Session" | "Webinar" — webinar invoices use webinar_topic + source_type.
+const EMPTY_FORM = {
+  session_type: "Live Session",
+  mentor_name: "",
+  mentor_email: "",
+  course_name: "",
+  webinar_topic: "",
+  batch_name: "",
+  month: "",
+  sessions: "",
+  hours: "",
+  rate: "",
+  amount: "",
+};
+
+const WEBINAR_SESSION_TYPE = "Webinar Session";
+
+function isWebinarForm(sessionType) {
+  return sessionType === "Webinar";
+}
+
+function webinarTopicOf(inv) {
+  if (!inv || inv.source_type !== "webinar") return "";
+  const title = (inv.batch_name || "").trim();
+  return title.startsWith("Webinar: ") ? title.slice(9).trim() : title;
+}
+
+function invoiceLabel(inv, courseByBatch) {
+  if (inv?.source_type === "webinar") return webinarTopicOf(inv) || inv.batch_name || "—";
+  return courseOfBatch(inv.batch_name, courseByBatch);
+}
 const ROWS_PER_PAGE = 5;
 
 function Toast({ toast, onClose }) {
@@ -284,6 +314,7 @@ export default function InvoiceGenerator() {
   const [mentors, setMentors] = useState([]);
   const [batches, setBatches] = useState([]);
   const [sessions, setSessions] = useState([]);
+  const [zoomAnalytics, setZoomAnalytics] = useState([]);
   const [loading, setLoading] = useState(true);
   const mentorByName = (name) => mentors.find((m) => m.name === name);
   const [toast, setToast] = useState(null);
@@ -348,16 +379,18 @@ export default function InvoiceGenerator() {
   const load = async () => {
     setLoading(true);
     try {
-      const [i, m, b, s] = await Promise.all([
+      const [i, m, b, s, z] = await Promise.all([
         fetch(`${API}/invoices`).then((r) => r.json()).catch(() => []),
         fetch(`${API}/mentors`).then((r) => r.json()).catch(() => []),
         fetch(`${API}/batch-names`).then((r) => r.json()).catch(() => []),
         fetch(`${API}/sessions`).then((r) => r.json()).catch(() => []),
+        fetch(`${API}/zoom-analytics`).then((r) => r.json()).catch(() => []),
       ]);
       setInvoices(Array.isArray(i) ? i : []);
       setMentors(Array.isArray(m) ? m : []);
       setBatches(Array.isArray(b) ? b : []);
       setSessions(Array.isArray(s) ? s : []);
+      setZoomAnalytics(Array.isArray(z) ? z : []);
     } catch (err) {
       showToast("Failed to load invoices. Please refresh and try again.");
     } finally {
@@ -375,7 +408,7 @@ export default function InvoiceGenerator() {
 
   useEffect(() => {
     setValidated(false);
-  }, [form.mentor_name, form.course_name, form.month, editId]);
+  }, [form.session_type, form.mentor_name, form.course_name, form.webinar_topic, form.month, editId]);
 
   const rangeFilteredInvoices = useMemo(() => {
     if (!rangeFrom && !rangeTo) return invoices;
@@ -447,12 +480,46 @@ export default function InvoiceGenerator() {
 
   const courseByBatch = useMemo(() => buildCourseByBatch(batches), [batches]);
   const courseOptions = useMemo(() => courseOptionsFromBatches(batches), [batches]);
-  const invoiceCourse = (inv) => courseOfBatch(inv.batch_name, courseByBatch);
+  const invoiceCourse = (inv) => invoiceLabel(inv, courseByBatch);
+  const formIsWebinar = isWebinarForm(form.session_type);
+
+  const webinarTopicOptions = useMemo(() => {
+    if (!form.mentor_name) return [];
+    const fromSessions = sessions
+      .filter((s) => s.mentor_name === form.mentor_name && s.session_type === WEBINAR_SESSION_TYPE)
+      .map((s) => (s.topic || "").trim())
+      .filter(Boolean);
+    const uniqueFromSessions = uniqueCourses(fromSessions);
+    if (uniqueFromSessions.length > 0) return uniqueFromSessions;
+    return uniqueCourses(
+      zoomAnalytics
+        .filter((z) => z.mentor_name === form.mentor_name)
+        .map((z) => (z.webinar_title || "").trim())
+        .filter(Boolean),
+    );
+  }, [sessions, zoomAnalytics, form.mentor_name]);
 
   const matchingSessions = useMemo(() => {
-    if (!form.mentor_name || !form.course_name || !form.month) return [];
-    return sessions.filter((s) => s.mentor_name === form.mentor_name && sameCourse(courseOf(s, courseByBatch), form.course_name) && (s.session_date || "").startsWith(form.month));
-  }, [sessions, form.mentor_name, form.course_name, form.month, courseByBatch]);
+    if (!form.mentor_name || !form.month) return [];
+    if (formIsWebinar) {
+      if (!form.webinar_topic) return [];
+      return sessions.filter(
+        (s) =>
+          s.mentor_name === form.mentor_name &&
+          s.session_type === WEBINAR_SESSION_TYPE &&
+          (s.topic || "").trim() === form.webinar_topic.trim() &&
+          (s.session_date || "").startsWith(form.month),
+      );
+    }
+    if (!form.course_name) return [];
+    return sessions.filter(
+      (s) =>
+        s.mentor_name === form.mentor_name &&
+        (s.session_type || "Live Session") !== WEBINAR_SESSION_TYPE &&
+        sameCourse(courseOf(s, courseByBatch), form.course_name) &&
+        (s.session_date || "").startsWith(form.month),
+    );
+  }, [sessions, form.mentor_name, form.course_name, form.webinar_topic, form.month, form.session_type, formIsWebinar, courseByBatch]);
 
   // Auto-fill Total Sessions / Total Hours from the real matching sessions —
   // still editable afterwards, since tracked session durations are often
@@ -472,20 +539,26 @@ export default function InvoiceGenerator() {
 
   const validationChecks = useMemo(() => {
     const hasMentor = !!form.mentor_name;
-    const hasBatch = !!form.course_name;
+    const hasSelection = formIsWebinar ? !!form.webinar_topic : !!form.course_name;
     const hasMonth = !!form.month;
     const sessionsFound = matchingSessions.length > 0;
     const allHaveDuration = sessionsFound && matchingSessions.every((s) => Number(s.duration) > 0);
-    const duplicate = invoices.some((i) => i.id !== editId && i.mentor_name === form.mentor_name && sameCourse(invoiceCourse(i), form.course_name) && i.month === form.month);
+    const duplicate = invoices.some((i) => {
+      if (i.id === editId || i.mentor_name !== form.mentor_name || i.month !== form.month) return false;
+      if (formIsWebinar) {
+        return i.source_type === "webinar" && webinarTopicOf(i).toLowerCase() === (form.webinar_topic || "").trim().toLowerCase();
+      }
+      return (i.source_type || "batch") !== "webinar" && sameCourse(invoiceCourse(i), form.course_name);
+    });
     return [
       { label: "Mentor selected", pass: hasMentor },
-      { label: "Course selected", pass: hasBatch },
+      { label: formIsWebinar ? "Webinar topic selected" : "Course selected", pass: hasSelection },
       { label: "Billing month selected", pass: hasMonth },
       { label: "Sessions found", pass: sessionsFound, advisory: true },
       { label: "All sessions have duration", pass: allHaveDuration, advisory: true },
       { label: "No duplicate invoice", pass: !duplicate },
     ];
-  }, [form.mentor_name, form.course_name, form.month, matchingSessions, invoices, editId, courseByBatch]);
+  }, [form.mentor_name, form.course_name, form.webinar_topic, form.month, form.session_type, formIsWebinar, matchingSessions, invoices, editId, courseByBatch]);
 
   const allChecksPass = validationChecks.filter((c) => !c.advisory).every((c) => c.pass);
 
@@ -497,10 +570,13 @@ export default function InvoiceGenerator() {
 
   const editInvoice = (inv) => {
     setEditId(inv.id);
+    const isWebinar = inv.source_type === "webinar";
     setForm({
+      session_type: isWebinar ? "Webinar" : "Live Session",
       mentor_name: inv.mentor_name,
       mentor_email: inv.mentor_email || "",
-      course_name: invoiceCourse(inv),
+      course_name: isWebinar ? "" : courseOfBatch(inv.batch_name, courseByBatch),
+      webinar_topic: isWebinar ? webinarTopicOf(inv) : "",
       batch_name: inv.batch_name,
       month: inv.month,
       sessions: inv.total_sessions,
@@ -512,23 +588,43 @@ export default function InvoiceGenerator() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const resolveWebinarId = () => {
+    const topic = (form.webinar_topic || "").trim();
+    if (!topic) return null;
+    const zoomMatch = zoomAnalytics.find(
+      (z) => z.mentor_name === form.mentor_name && (z.webinar_title || "").trim() === topic,
+    );
+    if (zoomMatch) return zoomMatch.id;
+    const sessionMatch = matchingSessions[0];
+    if (sessionMatch) {
+      const zoomBySession = zoomAnalytics.find((z) => z.session_id === sessionMatch.id);
+      if (zoomBySession) return zoomBySession.id;
+    }
+    return null;
+  };
+
   const saveInvoice = async () => {
-    if (!form.mentor_name || !form.course_name || !form.month || !form.sessions || !form.hours) {
+    const missingSelection = formIsWebinar ? !form.webinar_topic : !form.course_name;
+    if (!form.mentor_name || missingSelection || !form.month || !form.sessions || !form.hours) {
       showToast("Please fill all required fields.");
       return;
     }
     setSaving(true);
+    const existingInvoice = editId ? invoices.find((i) => i.id === editId) : null;
     const payload = {
       mentor_name: form.mentor_name,
       mentor_email: form.mentor_email,
-      // Keep the existing link when the course is unchanged; otherwise link the course's record.
-      batch_name: form.batch_name || batchForCourse(form.course_name, batches)?.batch_name || form.course_name,
+      batch_name: formIsWebinar
+        ? form.webinar_topic.trim()
+        : form.batch_name || batchForCourse(form.course_name, batches)?.batch_name || form.course_name,
       month: form.month,
       total_sessions: Number(form.sessions),
       total_hours: String(form.hours),
       hourly_rate: String(form.rate),
       total_amount: String(form.amount),
-      payment_status: editId ? undefined : "Pending",
+      payment_status: existingInvoice?.payment_status || "Pending",
+      source_type: formIsWebinar ? "webinar" : "batch",
+      webinar_id: formIsWebinar ? resolveWebinarId() : null,
     };
     try {
       const url = editId ? `${API}/invoice/${editId}` : `${API}/invoices`;
@@ -795,19 +891,58 @@ export default function InvoiceGenerator() {
 
             <div className="generate-grid">
               <div className="form-grid">
+                <Field label="Session Type" required>
+                  <select
+                    className="styled-input"
+                    style={inputStyle}
+                    value={form.session_type}
+                    onChange={(e) => {
+                      const nextType = e.target.value;
+                      setForm({
+                        ...form,
+                        session_type: nextType,
+                        course_name: "",
+                        webinar_topic: "",
+                        batch_name: "",
+                        sessions: "",
+                        hours: "",
+                        amount: "",
+                      });
+                    }}
+                  >
+                    <option value="Live Session">Live Session</option>
+                    <option value="Webinar">Webinar</option>
+                  </select>
+                </Field>
                 <Field label="Mentor" required>
                   <select className="styled-input" style={inputStyle} value={form.mentor_name} onChange={handleMentorChange}>
                     <option value="">Select Mentor</option>
                     {mentors.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
                   </select>
                 </Field>
-                <Field label="Course" required>
-                  <select className="styled-input" style={inputStyle} value={form.course_name} onChange={(e) => setForm({ ...form, course_name: e.target.value, batch_name: "" })}>
-                    <option value="">Select Course</option>
-                    {form.course_name && !courseOptions.some((c) => sameCourse(c, form.course_name)) && <option value={form.course_name}>{form.course_name}</option>}
-                    {courseOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </Field>
+                {!formIsWebinar && (
+                  <Field label="Course" required>
+                    <select className="styled-input" style={inputStyle} value={form.course_name} onChange={(e) => setForm({ ...form, course_name: e.target.value, batch_name: "" })}>
+                      <option value="">Select Course</option>
+                      {form.course_name && !courseOptions.some((c) => sameCourse(c, form.course_name)) && <option value={form.course_name}>{form.course_name}</option>}
+                      {courseOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </Field>
+                )}
+                {formIsWebinar && (
+                  <Field label="Webinar Topic" required>
+                    <select
+                      className="styled-input"
+                      style={inputStyle}
+                      value={form.webinar_topic}
+                      onChange={(e) => setForm({ ...form, webinar_topic: e.target.value, batch_name: "" })}
+                    >
+                      <option value="">Select Webinar Topic</option>
+                      {form.webinar_topic && !webinarTopicOptions.some((t) => t === form.webinar_topic) && <option value={form.webinar_topic}>{form.webinar_topic}</option>}
+                      {webinarTopicOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </Field>
+                )}
                 <Field label="Billing Month" required>
                   <input type="month" className="styled-input" style={inputStyle} value={form.month} onChange={(e) => setForm({ ...form, month: e.target.value })} />
                 </Field>
@@ -1018,7 +1153,10 @@ export default function InvoiceGenerator() {
                   <h3 style={{ margin: 0 }}>{viewInvoice.invoice_number || `#${viewInvoice.id}`}</h3>
                   <StatusBadge status={displayStatus(viewInvoice)} />
                 </div>
-                <div className="muted" style={{ fontSize: "13px" }}>{viewInvoice.mentor_name} · {invoiceCourse(viewInvoice)}</div>
+                <div className="muted" style={{ fontSize: "13px" }}>
+                  {viewInvoice.mentor_name} · {invoiceCourse(viewInvoice)}
+                  {viewInvoice.source_type === "webinar" && <span style={{ marginLeft: "6px", fontSize: "11px", fontWeight: 700, color: "#6d28d9", background: "#ede9fe", padding: "2px 8px", borderRadius: "999px" }}>Webinar</span>}
+                </div>
               </div>
 
               <div className="drawer-actions">
@@ -1039,6 +1177,10 @@ export default function InvoiceGenerator() {
                 <>
                   <div className="drawer-section">
                     <div className="info-grid">
+                      <div className="info-chip"><div className="info-chip-label">Session Type</div><div className="info-chip-value">{viewInvoice.source_type === "webinar" ? "Webinar" : "Live Session"}</div></div>
+                      {viewInvoice.source_type === "webinar" && (
+                        <div className="info-chip"><div className="info-chip-label">Webinar Topic</div><div className="info-chip-value">{webinarTopicOf(viewInvoice)}</div></div>
+                      )}
                       <div className="info-chip"><div className="info-chip-label">Billing Month</div><div className="info-chip-value">{monthLabel(viewInvoice.month)}</div></div>
                       <div className="info-chip"><div className="info-chip-label">Invoice Date</div><div className="info-chip-value">{fmtDate(viewInvoice.invoice_date)}</div></div>
                       <div className="info-chip"><div className="info-chip-label">Due Date</div><div className="info-chip-value">{fmtDate(viewInvoice.due_date)}</div></div>
@@ -1071,24 +1213,39 @@ export default function InvoiceGenerator() {
                 </>
               )}
 
-              {drawerTab === "sessions" && (
-                <div className="drawer-section">
-                  <div className="drawer-section-title">Matching Sessions</div>
-                  {sessions.filter((s) => s.mentor_name === viewInvoice.mentor_name && sameCourse(courseOf(s, courseByBatch), invoiceCourse(viewInvoice)) && (s.session_date || "").startsWith(viewInvoice.month)).length === 0 ? (
-                    <div className="hint-text">No sessions found for this mentor, course, and billing month.</div>
-                  ) : (
-                    <div className="drawer-sessions-list">
-                      {sessions.filter((s) => s.mentor_name === viewInvoice.mentor_name && sameCourse(courseOf(s, courseByBatch), invoiceCourse(viewInvoice)) && (s.session_date || "").startsWith(viewInvoice.month)).map((s) => (
-                        <div key={s.id} className="drawer-session-row">
-                          <div className="drawer-session-date">{s.session_date}</div>
-                          <div><div className="strong">{s.topic || "Untitled Session"}</div><div className="muted" style={{ fontSize: "12px" }}>{s.duration ? `${s.duration} min` : "Duration —"}</div></div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <a href="/sessions" className="btn btn-ghost" style={{ marginTop: "14px", display: "inline-block", textDecoration: "none" }}>View All in Sessions →</a>
-                </div>
-              )}
+              {drawerTab === "sessions" && (() => {
+                const isWebinarInv = viewInvoice.source_type === "webinar";
+                const drawerSessions = sessions.filter((s) => {
+                  if (s.mentor_name !== viewInvoice.mentor_name) return false;
+                  if (!(s.session_date || "").startsWith(viewInvoice.month)) return false;
+                  if (isWebinarInv) {
+                    return s.session_type === WEBINAR_SESSION_TYPE && (s.topic || "").trim() === webinarTopicOf(viewInvoice);
+                  }
+                  return (s.session_type || "Live Session") !== WEBINAR_SESSION_TYPE && sameCourse(courseOf(s, courseByBatch), courseOfBatch(viewInvoice.batch_name, courseByBatch));
+                });
+                return (
+                  <div className="drawer-section">
+                    <div className="drawer-section-title">Matching Sessions</div>
+                    {drawerSessions.length === 0 ? (
+                      <div className="hint-text">
+                        {isWebinarInv
+                          ? "No sessions found for this mentor, webinar topic, and billing month."
+                          : "No sessions found for this mentor, course, and billing month."}
+                      </div>
+                    ) : (
+                      <div className="drawer-sessions-list">
+                        {drawerSessions.map((s) => (
+                          <div key={s.id} className="drawer-session-row">
+                            <div className="drawer-session-date">{s.session_date}</div>
+                            <div><div className="strong">{s.topic || "Untitled Session"}</div><div className="muted" style={{ fontSize: "12px" }}>{s.duration ? `${s.duration} min` : "Duration —"}</div></div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <a href="/sessions" className="btn btn-ghost" style={{ marginTop: "14px", display: "inline-block", textDecoration: "none" }}>View All in Sessions →</a>
+                  </div>
+                );
+              })()}
 
               {drawerTab === "activity" && (
                 <div className="drawer-section">

@@ -1701,6 +1701,8 @@ def create_invoice(invoice: InvoiceCreate):
             payment_status="Pending",
             due_date=due_date,
             notes=invoice.notes,
+            source_type=invoice.source_type or "batch",
+            webinar_id=invoice.webinar_id,
         )
 
         db.add(new_invoice)
@@ -1912,6 +1914,8 @@ def get_invoices(db: Session = Depends(get_db)):
             "transaction_id": invoice.transaction_id,
             "payment_reference": invoice.payment_reference,
             "notes": invoice.notes,
+            "source_type": invoice.source_type or "batch",
+            "webinar_id": invoice.webinar_id,
         })
 
     return result
@@ -2016,6 +2020,7 @@ def update_invoice(invoice_id: int, updated_invoice: InvoiceCreate):
         return {"message": "Invoice not found"}
 
     invoice.mentor_name = updated_invoice.mentor_name
+    invoice.mentor_email = updated_invoice.mentor_email
     invoice.batch_name = updated_invoice.batch_name
     invoice.month = updated_invoice.month
     invoice.total_sessions = updated_invoice.total_sessions
@@ -2027,6 +2032,9 @@ def update_invoice(invoice_id: int, updated_invoice: InvoiceCreate):
         invoice.due_date = updated_invoice.due_date
     if updated_invoice.notes is not None:
         invoice.notes = updated_invoice.notes
+    if updated_invoice.source_type is not None:
+        invoice.source_type = updated_invoice.source_type
+    invoice.webinar_id = updated_invoice.webinar_id
 
     db.commit()
     db.refresh(invoice)

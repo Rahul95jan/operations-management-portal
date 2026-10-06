@@ -96,6 +96,8 @@ class InvoiceCreate(BaseModel):
     invoice_number: str | None = None
     due_date: str | None = None
     notes: str | None = None
+    source_type: str | None = "batch"  # "batch" | "webinar"
+    webinar_id: int | None = None
 
 
 class InvoicePaymentUpdate(BaseModel):

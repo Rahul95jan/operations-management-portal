@@ -403,10 +403,12 @@ function buildMonthlyWebinarReports(invoiceList, sessionList, mentorList) {
       const invoice = webinarInvoiceForSession(session, group.invoices);
       const billableHours = roundHours(parseDurationToMinutes(session.duration) / 60);
       const rate = Number(invoice?.hourly_rate || mentorRate(group.mentor) || 0);
+      const durationLabel = formatSessionDuration(session.duration) || (billableHours ? formatHoursAsDuration(billableHours) : "") || "—";
       return {
         session,
         invoice,
-        durationLabel: formatSessionDuration(session.duration) || "—",
+        durationLabel,
+        rate,
         hours: billableHours,
         amount: invoice ? Number(invoice.total_amount) || 0 : billableHours && rate ? roundHours(billableHours * rate) : null,
       };
@@ -1690,16 +1692,16 @@ export default function InvoiceGenerator() {
                         <div className="table-wrap">
                           <table className="styled-table" style={{ minWidth: "100%" }}>
                             <thead>
-                              <tr>{["Date", "Topic", "Duration", "Amount", "Invoice"].map((h) => <th key={h}>{h}</th>)}</tr>
+                              <tr>{["Date", "Topic", "Duration", "Per Hr Pay", "Amount"].map((h) => <th key={h}>{h}</th>)}</tr>
                             </thead>
                             <tbody>
-                              {rows.map(({ session, durationLabel, amount, invoice }) => (
+                              {rows.map(({ session, durationLabel, rate, amount }) => (
                                 <tr key={session.id}>
                                   <td className="muted">{fmtDate(session.session_date)}</td>
                                   <td className="strong">{session.topic || "Webinar"}</td>
                                   <td className="muted">{durationLabel}</td>
+                                  <td className="num">{rate ? money(rate) : "—"}</td>
                                   <td className="num">{amount ? money(amount) : "—"}</td>
-                                  <td className="muted">{invoice ? (invoice.invoice_number || `#${invoice.id}`) : "Pending"}</td>
                                 </tr>
                               ))}
                             </tbody>

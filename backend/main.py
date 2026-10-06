@@ -837,14 +837,20 @@ def _webinar_monthly_session_lines(db, mentor_name: str, month: str):
         if inv:
             amount = float(inv.total_amount or 0)
             hours = float(inv.total_hours or hours)
+            line_rate = float(inv.hourly_rate or rate)
         else:
             amount = round(hours * rate, 2)
+            line_rate = rate
+        duration_label = format_duration(session.duration)
+        if not duration_label and hours:
+            duration_label = format_duration(hours * 60)
         lines.append(
             {
                 "date": session.session_date or "—",
                 "topic": (session.topic or "Webinar").strip(),
-                "duration": format_duration(session.duration) or "—",
+                "duration": duration_label or "—",
                 "hours": hours,
+                "rate": line_rate,
                 "amount": amount,
                 "invoice_number": inv.invoice_number if inv else None,
                 "invoice_id": inv.id if inv else None,

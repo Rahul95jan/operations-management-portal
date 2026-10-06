@@ -310,7 +310,7 @@ export default function SessionReportDetail() {
     try {
       const body = new FormData();
       body.append("file", file);
-      const path = kind === "attendance" ? "attendance/import" : "polls/import";
+      const path = kind === "attendance" ? "import-attendance" : "import-polls";
       const res = await fetch(`${API}/session-reports/${id}/${path}`, { method: "POST", body });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Import failed. Please check the file and try again.");
@@ -439,16 +439,23 @@ export default function SessionReportDetail() {
                 </div>
               }
             />
-            <p className="import-hint">Upload Zoom&apos;s attendance / participants report (CSV or Excel). Learners are matched by email; joining more than 10 min after the start counts as Late, and the mentor (host) is left out.</p>
+            <p className="import-hint">Upload Zoom&apos;s Attendee Report (CSV or Excel). Rejoins are merged by email or name; host/panelist rows are excluded. Attendance % stays blank when registration was off.</p>
             {importMsg.attendance && <div className={`import-msg ${importMsg.attendance.ok ? "import-msg-ok" : "import-msg-err"}`}>{importMsg.attendance.text}</div>}
+            {attendance?.has_webinar_registrations && (
+              <p className="hint-text" style={{ color: "#b45309" }}>This session also has webinar registration rows — use Webinar Reports for that roster.</p>
+            )}
             {attendance && (
               <div className="kpi-grid" style={{ marginBottom: "18px" }}>
-                <KPICard label="Unique Joiners" value={attendance.unique_joiners} color="#2563eb" icon={UserCheck} />
-                <KPICard label="Total Learners" value={attendance.total_learners} icon={Users} />
-                <KPICard label="Present" value={attendance.present} color="#16a34a" icon={UserCheck} />
-                <KPICard label="Absent" value={attendance.absent} color="#dc2626" icon={UserX} />
-                <KPICard label="Late" value={attendance.late} color="#f59e0b" icon={Clock3} />
-                <KPICard label="Attendance %" value={`${attendance.attendance_percentage}%`} color="#16a34a" icon={TrendingUp} percent={attendance.attendance_percentage} />
+                <KPICard label="Unique Viewers" value={attendance.import_summary?.unique_viewers ?? attendance.unique_joiners} color="#2563eb" icon={UserCheck} />
+                <KPICard label="Total Users" value={attendance.import_summary?.total_users} icon={Users} />
+                <KPICard label="Peak in Room" value={attendance.import_summary?.max_concurrent_views} color="#7c3aed" icon={TrendingUp} />
+                <KPICard label="Hold Rate" value={attendance.import_summary?.hold_rate != null ? `${attendance.import_summary.hold_rate}%` : null} color="#0891b2" icon={Gauge} percent={attendance.import_summary?.hold_rate ?? undefined} />
+                <KPICard label="Duration" value={attendance.import_summary?.actual_duration_minutes ? `${attendance.import_summary.actual_duration_minutes} min` : null} icon={Clock3} />
+                <KPICard label="Attendance %" value={attendance.attendance_percentage != null ? `${attendance.attendance_percentage}%` : "—"} color="#16a34a" icon={TrendingUp} percent={attendance.attendance_percentage ?? undefined} />
+                <KPICard label="Median Stay" value={attendance.import_summary?.median_stay_minutes != null ? `${attendance.import_summary.median_stay_minutes} min` : null} icon={Clock3} />
+                <KPICard label="Stayed ≥ Half" value={attendance.import_summary?.pct_stayed_half != null ? `${attendance.import_summary.pct_stayed_half}%` : null} icon={TrendingUp} />
+                <KPICard label="Stayed ≥ ¾" value={attendance.import_summary?.pct_stayed_three_quarter != null ? `${attendance.import_summary.pct_stayed_three_quarter}%` : null} icon={TrendingUp} />
+                <KPICard label="Under 15 min" value={attendance.import_summary?.pct_under_15_min != null ? `${attendance.import_summary.pct_under_15_min}%` : null} color="#dc2626" icon={UserX} />
                 <KPICard label="Avg Join Time" value={attendance.average_join_time} icon={CalendarClock} />
                 <KPICard label="Avg Leave Time" value={attendance.average_leave_time} icon={CalendarClock} />
               </div>
@@ -502,32 +509,16 @@ export default function SessionReportDetail() {
             {polls?.has_data ? (
               <>
                 <div className="kpi-grid" style={{ marginBottom: "18px" }}>
-                  <KPICard label="Polls Conducted" value={polls.polls_conducted} color="#7c3aed" icon={BarChart3} />
+                  <KPICard label="Teaching Style" value={polls.teaching_rating != null ? `${polls.teaching_rating} / 5` : null} color="#3b82f6" icon={Star} />
+                  <KPICard label="Doubts & Queries" value={polls.doubt_rating != null ? `${polls.doubt_rating} / 5` : null} color="#8b5cf6" icon={Star} />
+                  <KPICard label="Session Effectiveness" value={polls.effectiveness_rating != null ? `${polls.effectiveness_rating} / 5` : null} color="#0891b2" icon={Star} />
+                  <KPICard label="Overall Average" value={`${polls.poll_average_rating} / 5`} color="#f59e0b" icon={Star} />
+                  <KPICard label="Poll Health" value={<StatusPill label={polls.poll_health_status} tone={polls.poll_health_status === "Good" ? "positive" : polls.poll_health_status === "Poor" ? "negative" : "neutral"} icon={polls.poll_health_status === "Good" ? CheckCircle2 : XCircle} />} color={POLL_HEALTH_TONE[polls.poll_health_status] || "#94a3b8"} />
                   <KPICard label="Poll Responses" value={polls.poll_responses} color="#2563eb" icon={Users} />
                   <KPICard label="Response Rate" value={polls.response_rate !== null ? `${polls.response_rate}%` : null} color="#0891b2" icon={TrendingUp} percent={polls.response_rate ?? undefined} />
-                  <KPICard label="Teaching Style" value={polls.teaching_rating ? `${polls.teaching_rating} / 5` : null} color="#3b82f6" icon={Star} />
-                  <KPICard label="Doubt Handling" value={polls.doubt_rating ? `${polls.doubt_rating} / 5` : null} color="#8b5cf6" icon={Star} />
-                  <KPICard label="Session Effectiveness" value={polls.effectiveness_rating ? `${polls.effectiveness_rating} / 5` : null} color="#0891b2" icon={Star} />
-                  <KPICard label="Overall Rating" value={`${polls.poll_average_rating} / 5`} color="#f59e0b" icon={Star} />
-                  <KPICard label="Poll Health" value={<StatusPill label={polls.poll_health_status} tone={polls.poll_health_status === "Good" ? "positive" : polls.poll_health_status === "Poor" ? "negative" : "neutral"} icon={polls.poll_health_status === "Good" ? CheckCircle2 : XCircle} />} color={POLL_HEALTH_TONE[polls.poll_health_status] || "#94a3b8"} />
                 </div>
-                {polls.response_rate === null && <p className="hint-text" style={{ marginTop: 0, marginBottom: "12px" }}>ℹ️ Import attendance to see the response rate (responses vs learners who attended).</p>}
-                <div className="table-wrap">
-                  <table className="styled-table">
-                    <thead><tr><th>Poll</th><th>Questions</th><th>Responses</th><th>Question Averages</th><th>Average Rating</th></tr></thead>
-                    <tbody>
-                      {polls.polls.map((pl, i) => (
-                        <tr key={i}>
-                          <td className="strong">{pl.name}</td>
-                          <td className="muted">{pl.questions || "—"}</td>
-                          <td>{pl.responses}</td>
-                          <td className="muted">{pl.question_averages?.length ? pl.question_averages.join(" · ") : "—"}</td>
-                          <td className="strong">{pl.average_rating ? `${pl.average_rating} / 5` : "—"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {polls.response_rate === null && <p className="hint-text" style={{ marginTop: 0, marginBottom: "12px" }}>ℹ️ Import attendance to see the response rate (responses vs unique viewers).</p>}
+                {polls.poll_name && <Field label="Poll" value={polls.poll_name} />}
               </>
             ) : (
               <div className="empty-state">No poll results imported for this session yet.</div>

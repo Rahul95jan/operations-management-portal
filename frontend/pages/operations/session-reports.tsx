@@ -307,7 +307,7 @@ function SessionOperationsPage() {
             {trendQ.data && <ComboTrendChart data={trendQ.data} />}
           </SectionCard>
 
-          <SectionCard icon={Star} iconColor="#A855F7" title="Session Quality" subtitle="Based on learner feedback" isLoading={qualityQ.isLoading} isError={qualityQ.isError} onRetry={() => retry(["opsIntel", "quality"])}>
+          <SectionCard icon={Star} iconColor="#A855F7" title="Session Quality" subtitle="From imported Zoom poll reports" isLoading={qualityQ.isLoading} isError={qualityQ.isError} onRetry={() => retry(["opsIntel", "quality"])}>
             {qualityQ.data?.map((row) => (
               <ProgressMetricRow key={row.label} label={row.label} value={row.score} max={row.max} displayValue={`${row.score}/5`} trend={row.trend} barColor="#F5B82E" />
             ))}
@@ -316,49 +316,76 @@ function SessionOperationsPage() {
 
         {/* Attendance row */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-          <SectionCard icon={Users} iconColor="#0891B2" title="Attendance Intelligence" subtitle="Registered vs attended learners" isLoading={attendanceQ.isLoading} isError={attendanceQ.isError} onRetry={() => retry(["opsIntel", "attendance"])}>
+          <SectionCard icon={Users} iconColor="#0891B2" title="Attendance Intelligence" subtitle="From imported Zoom attendee reports" isLoading={attendanceQ.isLoading} isError={attendanceQ.isError} onRetry={() => retry(["opsIntel", "attendance"])}>
             {attendanceQ.data && (
               <>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                  <div className="bg-slate-50 rounded-lg p-3 text-center">
-                    <div className="text-lg font-extrabold text-navy-900">{attendanceQ.data.registered.toLocaleString()}</div>
-                    <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5">Registered</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg p-3 text-center">
-                    <div className="text-lg font-extrabold text-navy-900">{attendanceQ.data.attended.toLocaleString()}</div>
-                    <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5">Attended</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg p-3 text-center">
-                    <div className="text-lg font-extrabold text-navy-900">{attendanceQ.data.averagePct}%</div>
-                    <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5 flex items-center justify-center gap-1">
-                      Avg Attendance <TrendBadge trend={attendanceQ.data.averageTrend} compact />
-                    </div>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg p-3 text-center">
-                    <div className="text-lg font-extrabold text-navy-900">{attendanceQ.data.absenteeRate}%</div>
-                    <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5 flex items-center justify-center gap-1">
-                      Absentee Rate <TrendBadge trend={attendanceQ.data.absenteeTrend} compact />
-                    </div>
-                  </div>
+                  {"source" in attendanceQ.data && attendanceQ.data.source === "api" ? (
+                    <>
+                      <div className="bg-slate-50 rounded-lg p-3 text-center">
+                        <div className="text-lg font-extrabold text-navy-900">{(attendanceQ.data.uniqueViewers ?? 0).toLocaleString()}</div>
+                        <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5">Unique Viewers</div>
+                      </div>
+                      <div className="bg-slate-50 rounded-lg p-3 text-center">
+                        <div className="text-lg font-extrabold text-navy-900">{(attendanceQ.data.totalUsers ?? 0).toLocaleString()}</div>
+                        <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5">Total Users</div>
+                      </div>
+                      <div className="bg-slate-50 rounded-lg p-3 text-center">
+                        <div className="text-lg font-extrabold text-navy-900">{(attendanceQ.data.peakConcurrent ?? 0).toLocaleString()}</div>
+                        <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5">Peak in Room</div>
+                      </div>
+                      <div className="bg-slate-50 rounded-lg p-3 text-center">
+                        <div className="text-lg font-extrabold text-navy-900">{attendanceQ.data.durationMinutes ? `${attendanceQ.data.durationMinutes} min` : "—"}</div>
+                        <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5">Duration</div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="bg-slate-50 rounded-lg p-3 text-center">
+                        <div className="text-lg font-extrabold text-navy-900">{attendanceQ.data.registered.toLocaleString()}</div>
+                        <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5">Registered</div>
+                      </div>
+                      <div className="bg-slate-50 rounded-lg p-3 text-center">
+                        <div className="text-lg font-extrabold text-navy-900">{attendanceQ.data.attended.toLocaleString()}</div>
+                        <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5">Attended</div>
+                      </div>
+                      <div className="bg-slate-50 rounded-lg p-3 text-center">
+                        <div className="text-lg font-extrabold text-navy-900">{attendanceQ.data.averagePct ?? "—"}{attendanceQ.data.averagePct != null ? "%" : ""}</div>
+                        <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5 flex items-center justify-center gap-1">
+                          Avg Attendance <TrendBadge trend={attendanceQ.data.averageTrend} compact />
+                        </div>
+                      </div>
+                      <div className="bg-slate-50 rounded-lg p-3 text-center">
+                        <div className="text-lg font-extrabold text-navy-900">{attendanceQ.data.absenteeRate}%</div>
+                        <div className="text-[10px] font-bold uppercase text-slate-400 mt-0.5 flex items-center justify-center gap-1">
+                          Absentee Rate <TrendBadge trend={attendanceQ.data.absenteeTrend} compact />
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">Attendance Distribution</div>
-                <div className="grid grid-cols-3 gap-2">
-                  {attendanceQ.data.distribution.map((d) => {
-                    const color = d.tier === "high" ? TIER_COLORS.good : d.tier === "medium" ? TIER_COLORS.watch : TIER_COLORS.critical;
-                    return (
-                      <button
-                        key={d.tier}
-                        onClick={() => setHealthFilter(null)}
-                        className="rounded-lg p-3 text-left"
-                        style={{ backgroundColor: color.bg }}
-                      >
-                        <div className="text-[11px] font-bold" style={{ color: color.text }}>{d.label}</div>
-                        <div className="text-lg font-extrabold text-navy-900 mt-1">{d.batches} batches</div>
-                        <div className="text-xs font-semibold" style={{ color: color.text }}>{d.pct}%</div>
-                      </button>
-                    );
-                  })}
-                </div>
+                {!("source" in attendanceQ.data && attendanceQ.data.source === "api") && (
+                  <>
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400 mb-2">Attendance Distribution</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {attendanceQ.data.distribution.map((d) => {
+                        const color = d.tier === "high" ? TIER_COLORS.good : d.tier === "medium" ? TIER_COLORS.watch : TIER_COLORS.critical;
+                        return (
+                          <button
+                            key={d.tier}
+                            onClick={() => setHealthFilter(null)}
+                            className="rounded-lg p-3 text-left"
+                            style={{ backgroundColor: color.bg }}
+                          >
+                            <div className="text-[11px] font-bold" style={{ color: color.text }}>{d.label}</div>
+                            <div className="text-lg font-extrabold text-navy-900 mt-1">{d.batches} batches</div>
+                            <div className="text-xs font-semibold" style={{ color: color.text }}>{d.pct}%</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </>
             )}
           </SectionCard>

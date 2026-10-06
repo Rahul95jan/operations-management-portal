@@ -98,11 +98,17 @@ export interface QualityRow {
 export interface AttendanceIntel {
   registered: number;
   attended: number;
-  averagePct: number;
+  averagePct: number | null;
   averageTrend: TrendInfo;
   absenteeRate: number;
   absenteeTrend: TrendInfo;
   distribution: { tier: "high" | "medium" | "low"; label: string; batches: number; pct: number }[];
+  uniqueViewers?: number;
+  totalUsers?: number;
+  peakConcurrent?: number;
+  durationMinutes?: number | null;
+  holdRate?: number | null;
+  source?: "api" | "mock";
 }
 
 export interface AttendanceTrendPoint {

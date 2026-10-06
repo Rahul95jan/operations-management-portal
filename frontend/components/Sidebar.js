@@ -18,6 +18,7 @@ import {
   UploadCloud,
   Gauge,
   FileBarChart,
+  Activity,
   Settings as SettingsIcon,
   LogOut,
   ChevronLeft,
@@ -120,6 +121,14 @@ export default function Sidebar() {
                   icon={FileBarChart}
                   label="Session Reports"
                   active={router.pathname === "/session-reports" || router.pathname.startsWith("/session-reports/")}
+                />
+              )}
+              {hasPermission(user, "analytics") && (
+                <NavItem
+                  href="/course-health"
+                  icon={Activity}
+                  label="Course Health"
+                  active={router.pathname === "/course-health"}
                 />
               )}
               {hasPermission(user, "analytics") && <NavItem href="/analytics" icon={BarChart3} label="Analytics" active={isActive("/analytics")} />}

@@ -29,6 +29,29 @@ import type {
   TrendPoint,
 } from "./types";
 
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+function filtersToQuery(filters: Filters): string {
+  const params = new URLSearchParams();
+  if (filters.dateRange === "7d") {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    params.set("date_from", d.toISOString().slice(0, 10));
+  } else if (filters.dateRange === "90d") {
+    const d = new Date();
+    d.setDate(d.getDate() - 90);
+    params.set("date_from", d.toISOString().slice(0, 10));
+  } else if (filters.dateRange === "custom" && filters.customFrom) {
+    params.set("date_from", filters.customFrom);
+    if (filters.customTo) params.set("date_to", filters.customTo);
+  } else {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    params.set("date_from", d.toISOString().slice(0, 10));
+  }
+  return params.toString();
+}
+
 // ---- generic helpers -------------------------------------------------
 
 function delay<T>(value: T): Promise<T> {
@@ -211,6 +234,24 @@ export async function getKPIs(filters: Filters): Promise<KPI[]> {
 // ---- Session Health -------------------------------------------------
 
 export async function getSessionHealth(filters: Filters): Promise<HealthDonut> {
+  try {
+    const res = await fetch(`${API}/session-reports/ops-intel/health?${filtersToQuery(filters)}`);
+    const data = await res.json();
+    if (data.success && data.total > 0) {
+      return {
+        total: data.total - (data.no_data || 0),
+        segments: data.segments.map((s: { label: string; count: number; pct: number; color: string }) => ({
+          label: s.label,
+          count: s.count,
+          pct: s.pct,
+          color: s.color,
+        })),
+      };
+    }
+  } catch {
+    // fall through to mock
+  }
+
   const { current } = splitWindows(filters);
   const c = completedOf(current);
   const healthy = c.filter((s) => s.risk === "Healthy").length;
@@ -266,6 +307,21 @@ export async function getPerformanceTrend(filters: Filters, period: "7D" | "30D"
 // ---- Quality -------------------------------------------------------
 
 export async function getQuality(filters: Filters): Promise<QualityRow[]> {
+  try {
+    const res = await fetch(`${API}/session-reports/ops-intel/quality?${filtersToQuery(filters)}`);
+    const data = await res.json();
+    if (data.success && data.sessions_with_poll > 0) {
+      return [
+        { label: "Teaching Style", score: data.teaching_style_avg ?? 0, max: 5, trend: { value: 0, direction: "flat", isGood: true } },
+        { label: "Doubts & Queries", score: data.doubts_avg ?? 0, max: 5, trend: { value: 0, direction: "flat", isGood: true } },
+        { label: "Session Effectiveness", score: data.effectiveness_avg ?? 0, max: 5, trend: { value: 0, direction: "flat", isGood: true } },
+        { label: "Overall Average", score: data.overall_avg ?? 0, max: 5, trend: { value: 0, direction: "flat", isGood: data.poll_health === "Good" } },
+      ];
+    }
+  } catch {
+    // fall through to mock
+  }
+
   const { current, previous } = splitWindows(filters);
   const c = completedOf(current).filter((s) => s.rating !== null);
   const p = completedOf(previous).filter((s) => s.rating !== null);
@@ -287,6 +343,30 @@ export async function getQuality(filters: Filters): Promise<QualityRow[]> {
 // ---- Attendance Intelligence -----------------------------------------
 
 export async function getAttendance(filters: Filters): Promise<AttendanceIntel> {
+  try {
+    const res = await fetch(`${API}/session-reports/ops-intel/attendance?${filtersToQuery(filters)}`);
+    const data = await res.json();
+    if (data.success && data.sessions_with_import > 0) {
+      return {
+        registered: data.unique_viewers ?? 0,
+        attended: data.unique_viewers ?? 0,
+        averagePct: data.average_attendance_pct ?? null,
+        averageTrend: { value: 0, direction: "flat", isGood: true },
+        absenteeRate: 0,
+        absenteeTrend: { value: 0, direction: "flat", isGood: true },
+        distribution: [],
+        uniqueViewers: data.unique_viewers,
+        totalUsers: data.total_users,
+        peakConcurrent: data.peak_concurrent,
+        durationMinutes: data.average_duration_minutes,
+        holdRate: data.unique_viewers && data.peak_concurrent ? Math.round((data.peak_concurrent / data.unique_viewers) * 100) : null,
+        source: "api",
+      } as AttendanceIntel & { uniqueViewers?: number; totalUsers?: number; peakConcurrent?: number; durationMinutes?: number; holdRate?: number | null; source?: string };
+    }
+  } catch {
+    // fall through to mock
+  }
+
   const { current, previous } = splitWindows(filters);
   const c = completedOf(current);
   const p = completedOf(previous);

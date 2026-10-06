@@ -10,6 +10,7 @@ attendance rows). No new auth/permission system — mirrors every other module.
 import csv
 import io
 import json
+import math
 from datetime import datetime
 
 from dateutil import parser as date_parser
@@ -20,6 +21,9 @@ from models.session import Session as SessionModel
 from models.session_analytics import SessionAnalytics
 from models.session_report import SessionReport
 from models.session_attendance import SessionAttendance
+from models.session_attendance_import import SessionAttendanceImport
+from models.session_poll_snapshot import SessionPollSnapshot
+from models.webinar_registration import WebinarRegistration
 from models.mentor import Mentor
 from models.resource import Resource
 from models.nps import NPSFeedback
@@ -78,8 +82,166 @@ def _course_by_batch(db):
     }
 
 
-def _row_dict(session, report_map, course_map=None):
+POLL_GOOD_THRESHOLD = 4.3
+POLL_WATCH_LOW = 3.5
+STAY_HEALTHY_PCT = 50
+STAY_WATCH_LOW_PCT = 25
+EARLY_BOUNCE_CRITICAL_PCT = 20
+RESPONSE_RATE_HEALTHY_PCT = 15
+POLL_GAP_WATCH = 0.3
+POLL_GAP_HEALTHY = 0.4
+
+
+def _session_response_rate(session, imp, poll):
+    unique_viewers = None
+    if imp and imp.unique_viewers:
+        unique_viewers = imp.unique_viewers
+    elif session.attended_students:
+        unique_viewers = session.attended_students
+    if not poll or not poll.poll_responses or not unique_viewers:
+        return None
+    return round(poll.poll_responses / unique_viewers * 100, 1)
+
+
+def _median_stay_pct(imp, session):
+    class_minutes = (imp.actual_duration_minutes if imp else None) or session.duration
+    if not imp or not imp.median_stay_minutes or not class_minutes:
+        return None
+    return round(imp.median_stay_minutes / class_minutes * 100, 1)
+
+
+def compute_session_health(session, imp, poll, report):
+    """Score one session from attendance import, poll snapshot, and ops status."""
+    metrics = {
+        "median_stay_pct": _median_stay_pct(imp, session) if imp else None,
+        "hold_rate": imp.hold_rate if imp else None,
+        "early_bounce_pct": imp.pct_under_15_min if imp else None,
+        "poll_overall": poll.overall_avg if poll else None,
+        "response_rate": _session_response_rate(session, imp, poll),
+        "teaching_style_avg": poll.teaching_style_avg if poll else None,
+        "doubts_avg": poll.doubts_avg if poll else None,
+        "effectiveness_avg": poll.effectiveness_avg if poll else None,
+        "report_pending": (report.report_status if report else "Pending") == "Pending",
+        "recording_missing": not bool(session.recording_link),
+    }
+
+    if session.status == "Cancelled":
+        return {
+            "label": "Critical",
+            "list_tier": "attention",
+            "reasons": ["Session was cancelled"],
+            "metrics": metrics,
+        }
+
+    if session.status != "Completed":
+        return {
+            "label": "No data",
+            "list_tier": "noData",
+            "reasons": ["Session is not completed yet"],
+            "metrics": metrics,
+        }
+
+    if not imp or not poll:
+        return {
+            "label": "No data",
+            "list_tier": "noData",
+            "reasons": ["Upload attendee and poll CSV files to score session health"],
+            "metrics": metrics,
+        }
+
+    reasons = []
+    delivery_weak = False
+    delivery_critical = False
+    experience_weak = False
+    experience_critical = False
+    ops_weak = False
+
+    median_stay_pct = metrics["median_stay_pct"]
+    if median_stay_pct is not None:
+        if median_stay_pct < STAY_WATCH_LOW_PCT:
+            delivery_critical = True
+            reasons.append(f"Median stay is only {median_stay_pct}% of class length")
+        elif median_stay_pct < STAY_HEALTHY_PCT:
+            delivery_weak = True
+            reasons.append(f"Median stay is {median_stay_pct}% of class length (below 50%)")
+
+    early_bounce = metrics["early_bounce_pct"]
+    if early_bounce is not None and early_bounce > EARLY_BOUNCE_CRITICAL_PCT:
+        delivery_critical = True
+        reasons.append(f"{early_bounce}% of viewers left within the first 15 minutes")
+
+    overall = metrics["poll_overall"]
+    if overall is not None:
+        if overall < POLL_WATCH_LOW:
+            experience_critical = True
+            reasons.append(f"Overall poll score is {overall} (below 3.5)")
+        elif overall < POLL_GOOD_THRESHOLD:
+            experience_weak = True
+            reasons.append(f"Overall poll score is {overall} (below 4.3 target)")
+
+    response_rate = metrics["response_rate"]
+    if response_rate is not None and response_rate < RESPONSE_RATE_HEALTHY_PCT:
+        experience_weak = True
+        reasons.append(f"Poll response rate is {response_rate}% (below 15%)")
+
+    poll_dims = {
+        "Teaching style": poll.teaching_style_avg,
+        "Doubts and queries": poll.doubts_avg,
+        "Session effectiveness": poll.effectiveness_avg,
+    }
+    valid_dims = [(name, val) for name, val in poll_dims.items() if val is not None]
+    if valid_dims and overall is not None:
+        sorted_dims = sorted(valid_dims, key=lambda item: item[1])
+        lowest_name, lowest_val = sorted_dims[0]
+        if len(sorted_dims) >= 2:
+            others_avg = sum(val for _, val in sorted_dims[1:]) / (len(sorted_dims) - 1)
+            if others_avg - lowest_val >= POLL_GAP_WATCH:
+                experience_weak = True
+                reasons.append(f"{lowest_name} scored {lowest_val}, notably lower than other poll questions")
+        if overall - lowest_val > POLL_GAP_HEALTHY:
+            experience_weak = True
+            reasons.append(f"{lowest_name} is more than 0.4 below the session overall poll score")
+
+    if metrics["recording_missing"]:
+        ops_weak = True
+        reasons.append("Recording is not available")
+    if metrics["report_pending"]:
+        ops_weak = True
+        reasons.append("Written report is still pending")
+
+    delivery_bad = delivery_weak or delivery_critical
+    experience_bad = experience_weak or experience_critical
+    weak_pillars = sum([delivery_bad, experience_bad, ops_weak])
+
+    if delivery_critical or experience_critical or (delivery_bad and experience_bad):
+        label = "Critical"
+        list_tier = "attention"
+    elif weak_pillars >= 1:
+        label = "Watch"
+        list_tier = "needsReview"
+    else:
+        label = "Healthy"
+        list_tier = "healthy"
+        reasons = []
+
+    return {
+        "label": label,
+        "list_tier": list_tier,
+        "reasons": reasons,
+        "metrics": metrics,
+    }
+
+
+def _row_dict(session, report_map, course_map=None, import_map=None, poll_map=None):
     report = report_map.get(session.id)
+    imp = (import_map or {}).get(session.id)
+    poll = (poll_map or {}).get(session.id)
+    health = compute_session_health(session, imp, poll, report)
+
+    attendance_pct = session.attendance_percentage or 0
+    if imp and not imp.has_registrant_total:
+        attendance_pct = None
+
     return {
         "id": session.id,
         "session_date": session.session_date,
@@ -88,19 +250,22 @@ def _row_dict(session, report_map, course_map=None):
         "topic": session.topic,
         "mentor_name": session.mentor_name,
         "batch_name": session.batch_name,
-        # The portal shows courses: fall back to the course of the linked record.
         "course_name": session.course_name or (course_map or {}).get((session.batch_name or "").strip().lower()) or session.batch_name,
         "session_type": session.session_type or session.category,
         "status": session.status,
         "learner_count": session.registered_students or 0,
         "attendance": session.attended_students or 0,
-        "attendance_percentage": session.attendance_percentage or 0,
+        "attendance_percentage": attendance_pct,
         "recording_status": _recording_status(session),
         "report_status": report.report_status if report else "Pending",
         "rating": session.feedback_score or None,
-        "teaching_rating": session.poll_teaching_rating,
-        "doubt_rating": session.poll_doubt_rating,
-        "effectiveness_rating": session.poll_effectiveness_rating,
+        "poll_average_rating": poll.overall_avg if poll else None,
+        "poll_health_status": poll.poll_health if poll else None,
+        "health_label": health["label"],
+        "health_tier": health["list_tier"],
+        "health_reasons": health["reasons"],
+        "median_stay_pct": health["metrics"]["median_stay_pct"],
+        "poll_response_rate": health["metrics"]["response_rate"],
     }
 
 
@@ -114,12 +279,18 @@ def _filtered_rows(db, date_from=None, date_to=None, status=None, mentor_name=No
 
     session_ids = [s.id for s in sessions]
     report_map = {}
+    import_map = {}
+    poll_map = {}
     if session_ids:
         reports = db.query(SessionReport).filter(SessionReport.session_id.in_(session_ids)).all()
         report_map = {r.session_id: r for r in reports}
+        imports = db.query(SessionAttendanceImport).filter(SessionAttendanceImport.session_id.in_(session_ids)).all()
+        import_map = {i.session_id: i for i in imports}
+        polls = db.query(SessionPollSnapshot).filter(SessionPollSnapshot.session_id.in_(session_ids)).all()
+        poll_map = {p.session_id: p for p in polls}
 
     course_map = _course_by_batch(db)
-    rows = [_row_dict(s, report_map, course_map) for s in sessions]
+    rows = [_row_dict(s, report_map, course_map, import_map, poll_map) for s in sessions]
 
     if recording_status:
         rows = [r for r in rows if r["recording_status"] == recording_status]
@@ -414,25 +585,89 @@ def _avg_time_of_day(values):
     return f"{avg_minutes // 60:02d}:{avg_minutes % 60:02d}"
 
 
+def _to_clock_time(value):
+    """Store join/leave as clock time (HH:MM) for average calculations."""
+    if not value:
+        return None
+    text = str(value).strip()
+    for fmt in ("%H:%M", "%I:%M %p", "%I:%M:%S %p"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            return f"{parsed.hour:02d}:{parsed.minute:02d}"
+        except ValueError:
+            continue
+    try:
+        parsed = date_parser.parse(text)
+        return f"{parsed.hour:02d}:{parsed.minute:02d}"
+    except (ValueError, TypeError, OverflowError):
+        return text
+
+
+def _safe_int(value):
+    try:
+        return int(float(str(value).strip().replace(",", "")))
+    except (TypeError, ValueError):
+        return None
+
+
+def _summary_int(summary, *keys):
+    for key in keys:
+        val = _safe_int((summary or {}).get(key))
+        if val is not None:
+            return val
+    return None
+
+
+def _stay_metrics(durations, class_minutes):
+    values = sorted([d for d in durations if d and d > 0])
+    if not values or not class_minutes:
+        return None, None, None, None
+    mid = len(values) // 2
+    median = values[mid] if len(values) % 2 else round((values[mid - 1] + values[mid]) / 2, 1)
+    half = class_minutes / 2
+    three_quarter = class_minutes * 0.75
+    n = len(values)
+    return (
+        median,
+        round(len([v for v in values if v >= half]) / n * 100, 1),
+        round(len([v for v in values if v >= three_quarter]) / n * 100, 1),
+        round(len([v for v in values if v < 15]) / n * 100, 1),
+    )
+
+
+def _import_bundle(imp):
+    if not imp:
+        return None
+    return {
+        "unique_viewers": imp.unique_viewers,
+        "total_users": imp.total_users,
+        "max_concurrent_views": imp.max_concurrent_views,
+        "actual_duration_minutes": imp.actual_duration_minutes,
+        "hold_rate": imp.hold_rate,
+        "median_stay_minutes": imp.median_stay_minutes,
+        "pct_stayed_half": imp.pct_stayed_half,
+        "pct_stayed_three_quarter": imp.pct_stayed_three_quarter,
+        "pct_under_15_min": imp.pct_under_15_min,
+        "has_registrant_total": imp.has_registrant_total,
+        "imported_at": imp.imported_at.isoformat() if imp.imported_at else None,
+    }
+
+
 def attendance_bundle(db, session_id):
     session = _get_session(db, session_id)
     if not session:
         return None
 
+    imp = db.query(SessionAttendanceImport).filter(SessionAttendanceImport.session_id == session_id).first()
     rows = db.query(SessionAttendance).filter(SessionAttendance.session_id == session_id).order_by(SessionAttendance.id.asc()).all()
+    webinar_count = db.query(WebinarRegistration).filter(WebinarRegistration.session_id == session_id).count()
 
     if rows:
         present = len([r for r in rows if r.attendance_status == "Present"])
         late = len([r for r in rows if r.attendance_status == "Late"])
-        # Expected learners can exceed the rows (a participants report only
-        # lists people who joined), so absentees = expected - attendees.
-        total = max(len(rows), session.registered_students or 0)
-        absent = max(total - present - late, 0)
-        attendance_percentage = round((present + late) / total * 100, 2) if total else 0
         attended_rows = [r for r in rows if r.attendance_status in ("Present", "Late")]
         average_join_time = _avg_time_of_day([r.join_time for r in attended_rows])
         average_leave_time = _avg_time_of_day([r.leave_time for r in attended_rows])
-
         learners = [
             {
                 "id": r.id,
@@ -446,26 +681,34 @@ def attendance_bundle(db, session_id):
             for r in rows
         ]
     else:
-        total = session.registered_students or 0
         present = session.attended_students or 0
-        absent = max(total - present, 0)
         late = 0
-        attendance_percentage = session.attendance_percentage or 0
         average_join_time = None
         average_leave_time = None
         learners = []
 
+    unique_viewers = imp.unique_viewers if imp else (present + late if rows else session.attended_students)
+    attendance_percentage = None
+    if imp and imp.has_registrant_total and session.attendance_percentage:
+        attendance_percentage = session.attendance_percentage
+    elif not imp and session.registered_students:
+        attendance_percentage = session.attendance_percentage or 0
+
+    total_registrants = imp.registrant_total if imp and imp.has_registrant_total else (session.registered_students or 0)
+    absent = max(total_registrants - present - late, 0) if total_registrants else 0
+
     return {
-        "total_learners": total,
+        "total_learners": total_registrants or unique_viewers,
         "present": present,
         "absent": absent,
         "late": late,
-        # Unique people who joined (repeat joins already merged on import).
-        "unique_joiners": present + late,
+        "unique_joiners": unique_viewers,
         "attendance_percentage": attendance_percentage,
         "average_join_time": average_join_time,
         "average_leave_time": average_leave_time,
         "has_detailed_rows": bool(rows),
+        "has_webinar_registrations": webinar_count > 0,
+        "import_summary": _import_bundle(imp),
         "learners": learners,
     }
 
@@ -563,29 +806,29 @@ def poll_bundle(db, session_id):
     if not session:
         return None
 
-    report = db.query(SessionReport).filter(SessionReport.session_id == session_id).first()
-    poll = _poll_summary(report)
-    if not poll:
+    snap = db.query(SessionPollSnapshot).filter(SessionPollSnapshot.session_id == session_id).first()
+    if not snap:
         return {"has_data": False}
 
-    attended = session.attended_students or 0
-    responses = poll.get("poll_responses") or 0
-    conducted = poll.get("polls_conducted") or 0
-    # Each attendee can answer every poll, so compare the average responses
-    # per poll with the number who attended (only once attendance exists).
-    response_rate = min(round(responses / conducted / attended * 100, 1), 100.0) if attended and conducted else None
+    unique_viewers = session.attended_students or 0
+    imp = db.query(SessionAttendanceImport).filter(SessionAttendanceImport.session_id == session_id).first()
+    if imp and imp.unique_viewers:
+        unique_viewers = imp.unique_viewers
+
+    response_rate = round(snap.poll_responses / unique_viewers * 100, 1) if unique_viewers else None
+
     return {
         "has_data": True,
-        "polls_conducted": poll.get("polls_conducted", 0),
-        "poll_responses": responses,
-        "poll_average_rating": poll.get("poll_average_rating", 0),
-        "highest_rated_poll": poll.get("highest_rated_poll", 0),
-        "poll_health_status": poll.get("poll_health_status", "No Data"),
-        **{f"{dim}_rating": value for dim, value in poll_dimensions(poll).items()},
-        # Responses vs learners who attended — only meaningful once attendance is imported.
+        "poll_name": snap.poll_name,
+        "polls_conducted": snap.polls_conducted or 0,
+        "poll_responses": snap.poll_responses or 0,
+        "poll_average_rating": snap.overall_avg or 0,
+        "poll_health_status": snap.poll_health or "No Data",
+        "teaching_rating": snap.teaching_style_avg,
+        "doubt_rating": snap.doubts_avg,
+        "effectiveness_rating": snap.effectiveness_avg,
         "response_rate": response_rate,
-        "polls": poll.get("polls", []),
-        "imported_at": poll.get("imported_at"),
+        "imported_at": snap.imported_at.isoformat() if snap.imported_at else None,
     }
 
 
@@ -593,14 +836,73 @@ def poll_bundle(db, session_id):
 # Mutations
 # =========================================================
 
-def replace_attendance(db, session_id, entries, expected_learners):
-    """Replaces a session's attendance with imported rows and syncs the
-    session's aggregate counts so lists, analytics and exports agree."""
+def import_attendance(db, session_id, entries, meeting_summary):
+    """Replace session_attendance rows and sync session totals from Zoom summary."""
     session = _get_session(db, session_id)
+    if not session:
+        return None
+
     db.query(SessionAttendance).filter(SessionAttendance.session_id == session_id).delete()
     for e in entries:
         db.add(SessionAttendance(session_id=session_id, **e))
 
+    unique_viewers = _summary_int(meeting_summary, "total_participants", "unique_viewers")
+    if unique_viewers is None:
+        unique_viewers = len([e for e in entries if e["attendance_status"] in ("Present", "Late")])
+
+    total_users = _summary_int(meeting_summary, "total_users")
+    max_concurrent = _summary_int(meeting_summary, "max_concurrent_views")
+    actual_duration = _summary_int(meeting_summary, "duration_minutes", "actual_duration")
+    registrant_total = _summary_int(meeting_summary, "approved_registrants", "total_registrants")
+    has_registrant_total = registrant_total is not None and registrant_total > 0
+
+    durations = [e.get("duration_minutes") or 0 for e in entries if e["attendance_status"] in ("Present", "Late")]
+    median, pct_half, pct_three_quarter, pct_under_15 = _stay_metrics(durations, actual_duration or session.duration or 0)
+    hold_rate = round(max_concurrent / unique_viewers * 100, 1) if max_concurrent and unique_viewers else None
+
+    existing = db.query(SessionAttendanceImport).filter(SessionAttendanceImport.session_id == session_id).first()
+    if not existing:
+        existing = SessionAttendanceImport(session_id=session_id)
+        db.add(existing)
+        existing.previous_attended_students = session.attended_students
+        existing.previous_registered_students = session.registered_students
+        existing.previous_attendance_percentage = session.attendance_percentage
+
+    existing.unique_viewers = unique_viewers
+    existing.total_users = total_users
+    existing.max_concurrent_views = max_concurrent
+    existing.actual_duration_minutes = actual_duration
+    existing.hold_rate = hold_rate
+    existing.median_stay_minutes = median
+    existing.pct_stayed_half = pct_half
+    existing.pct_stayed_three_quarter = pct_three_quarter
+    existing.pct_under_15_min = pct_under_15
+    existing.has_registrant_total = has_registrant_total
+    existing.registrant_total = registrant_total
+    existing.imported_at = datetime.utcnow()
+
+    session.attended_students = unique_viewers
+    if has_registrant_total:
+        session.registered_students = registrant_total
+        session.attendance_percentage = round(unique_viewers / registrant_total * 100, 2) if registrant_total else 0
+
+    db.commit()
+    return {
+        "unique_viewers": unique_viewers,
+        "total_users": total_users,
+        "max_concurrent_views": max_concurrent,
+        "actual_duration_minutes": actual_duration,
+        "hold_rate": hold_rate,
+        "learner_rows": len(entries),
+    }
+
+
+def replace_attendance(db, session_id, entries, expected_learners):
+    """Legacy helper — kept for manual row APIs."""
+    session = _get_session(db, session_id)
+    db.query(SessionAttendance).filter(SessionAttendance.session_id == session_id).delete()
+    for e in entries:
+        db.add(SessionAttendance(session_id=session_id, **e))
     attended = len([e for e in entries if e["attendance_status"] in ("Present", "Late")])
     total = max(len(entries), expected_learners or 0)
     if session:
@@ -614,35 +916,58 @@ def replace_attendance(db, session_id, entries, expected_learners):
 def clear_attendance(db, session_id):
     session = _get_session(db, session_id)
     removed = db.query(SessionAttendance).filter(SessionAttendance.session_id == session_id).delete()
-    if session:
-        session.registered_students = 0
+    imp = db.query(SessionAttendanceImport).filter(SessionAttendanceImport.session_id == session_id).first()
+    if session and imp:
+        if imp.previous_attended_students is not None:
+            session.attended_students = imp.previous_attended_students
+        if imp.previous_registered_students is not None:
+            session.registered_students = imp.previous_registered_students
+        if imp.previous_attendance_percentage is not None:
+            session.attendance_percentage = imp.previous_attendance_percentage
+        db.delete(imp)
+    elif session:
         session.attended_students = 0
+        session.registered_students = 0
         session.attendance_percentage = 0
     db.commit()
     return removed
 
 
+def save_poll_snapshot(db, session_id, parsed, health_status, remarks=None):
+    """Persist parsed poll report to session_poll_snapshot (not zoom_analytics)."""
+    dims = poll_dimensions(parsed)
+    snap = db.query(SessionPollSnapshot).filter(SessionPollSnapshot.session_id == session_id).first()
+    if not snap:
+        snap = SessionPollSnapshot(session_id=session_id)
+        db.add(snap)
+
+    polls = parsed.get("polls") or []
+    snap.poll_name = polls[0]["name"] if polls else None
+    snap.polls_conducted = parsed.get("polls_conducted") or 0
+    snap.poll_responses = parsed.get("poll_responses") or 0
+    snap.teaching_style_avg = dims.get("teaching")
+    snap.doubts_avg = dims.get("doubt")
+    snap.effectiveness_avg = dims.get("effectiveness")
+    snap.overall_avg = parsed.get("poll_average_rating")
+    snap.poll_health = health_status
+    snap.remarks = json.dumps(remarks) if remarks else None
+    snap.imported_at = datetime.utcnow()
+    db.commit()
+
+
+def clear_poll_snapshot(db, session_id):
+    removed = db.query(SessionPollSnapshot).filter(SessionPollSnapshot.session_id == session_id).delete()
+    db.commit()
+    return removed
+
+
 def save_poll_summary(db, session_id, summary):
+    """Legacy JSON storage on session_reports — no longer written on import."""
     report = db.query(SessionReport).filter(SessionReport.session_id == session_id).first()
     if not report:
         report = SessionReport(session_id=session_id, report_status="Pending")
         db.add(report)
-    previous = _poll_summary(report)
     report.poll_summary = json.dumps(summary) if summary else None
-
-    # The session's rating (feedback_score) is what Session Reports, Mentor 360
-    # and Analytics average — keep it in step with the imported poll rating.
-    session = _get_session(db, session_id)
-    if session:
-        if summary and summary.get("poll_average_rating"):
-            _apply_poll_to_session(session, summary)
-        elif previous:
-            # Clearing the poll removes the ratings it set.
-            if session.feedback_score == previous.get("poll_average_rating"):
-                session.feedback_score = 0
-            session.poll_teaching_rating = None
-            session.poll_doubt_rating = None
-            session.poll_effectiveness_rating = None
     db.commit()
 
 
@@ -726,6 +1051,424 @@ def delete_attendance_row(db, attendance_id):
 
 
 # =========================================================
+# Operations Intelligence (real import data)
+# =========================================================
+
+def ops_intel_attendance(db, filters):
+    rows = _filtered_rows(db, status="Completed", **{k: v for k, v in filters.items() if k != "status"})
+    imports = {
+        i.session_id: i
+        for i in db.query(SessionAttendanceImport).filter(
+            SessionAttendanceImport.session_id.in_([r["id"] for r in rows] or [0])
+        ).all()
+    }
+
+    with_import = [imports[r["id"]] for r in rows if r["id"] in imports]
+    unique_total = sum(i.unique_viewers or 0 for i in with_import)
+    users_total = sum(i.total_users or 0 for i in with_import)
+    peak_total = sum(i.max_concurrent_views or 0 for i in with_import)
+    duration_values = [i.actual_duration_minutes for i in with_import if i.actual_duration_minutes]
+    avg_duration = round(sum(duration_values) / len(duration_values)) if duration_values else None
+
+    pct_values = [r["attendance_percentage"] for r in rows if r["attendance_percentage"]]
+    average_pct = round(sum(pct_values) / len(pct_values)) if pct_values else None
+
+    return {
+        "sessions_with_import": len(with_import),
+        "unique_viewers": unique_total,
+        "total_users": users_total,
+        "peak_concurrent": peak_total,
+        "average_duration_minutes": avg_duration,
+        "average_attendance_pct": average_pct,
+    }
+
+
+def ops_intel_quality(db, filters):
+    rows = _filtered_rows(db, status="Completed", **{k: v for k, v in filters.items() if k != "status"})
+    snaps = {
+        s.session_id: s
+        for s in db.query(SessionPollSnapshot).filter(
+            SessionPollSnapshot.session_id.in_([r["id"] for r in rows] or [0])
+        ).all()
+    }
+
+    with_poll = [snaps[r["id"]] for r in rows if r["id"] in snaps]
+    if not with_poll:
+        return {
+            "sessions_with_poll": 0,
+            "teaching_style_avg": None,
+            "doubts_avg": None,
+            "effectiveness_avg": None,
+            "overall_avg": None,
+            "poll_health": None,
+            "total_responses": 0,
+            "response_rate": None,
+        }
+
+    def avg(field):
+        vals = [getattr(s, field) for s in with_poll if getattr(s, field) is not None]
+        return round(sum(vals) / len(vals), 2) if vals else None
+
+    teaching = avg("teaching_style_avg")
+    doubts = avg("doubts_avg")
+    effectiveness = avg("effectiveness_avg")
+    overall = avg("overall_avg")
+    health = "Good" if overall and overall >= 4.3 else ("Poor" if overall else None)
+    total_responses = sum(s.poll_responses or 0 for s in with_poll)
+
+    imports = {
+        i.session_id: i
+        for i in db.query(SessionAttendanceImport).filter(
+            SessionAttendanceImport.session_id.in_([s.session_id for s in with_poll])
+        ).all()
+    }
+    unique_viewers = sum(
+        imports.get(s.session_id).unique_viewers or 0
+        for s in with_poll
+        if s.session_id in imports and imports[s.session_id].unique_viewers
+    )
+    response_rate = round(total_responses / unique_viewers * 100, 1) if unique_viewers else None
+
+    return {
+        "sessions_with_poll": len(with_poll),
+        "teaching_style_avg": teaching,
+        "doubts_avg": doubts,
+        "effectiveness_avg": effectiveness,
+        "overall_avg": overall,
+        "poll_health": health,
+        "total_responses": total_responses,
+        "response_rate": response_rate,
+    }
+
+
+def ops_intel_health(db, filters):
+    rows = _filtered_rows(db, status="Completed", **{k: v for k, v in filters.items() if k != "status"})
+    buckets = {"Healthy": 0, "Watch": 0, "Critical": 0}
+    no_data = 0
+    for row in rows:
+        label = row.get("health_label") or "No data"
+        if label == "No data":
+            no_data += 1
+        elif label in buckets:
+            buckets[label] += 1
+
+    total_scored = sum(buckets.values()) or 1
+    return {
+        "total": len(rows),
+        "no_data": no_data,
+        "segments": [
+            {"label": "Healthy", "count": buckets["Healthy"], "pct": round(buckets["Healthy"] / total_scored * 100, 1), "color": "#16A34A"},
+            {"label": "At Risk", "count": buckets["Watch"], "pct": round(buckets["Watch"] / total_scored * 100, 1), "color": "#F59E0B"},
+            {"label": "Critical", "count": buckets["Critical"], "pct": round(buckets["Critical"] / total_scored * 100, 1), "color": "#DC2626"},
+        ],
+    }
+
+
+def _course_health_sessions(db, course_name=None, batch_name=None, date_from=None, date_to=None):
+    filters = {
+        "date_from": date_from,
+        "date_to": date_to,
+        "course_name": course_name,
+        "batch_name": batch_name,
+    }
+    rows = _filtered_rows(db, status="Completed", **filters)
+    if not rows:
+        return rows, {}, {}, {}
+
+    session_ids = [r["id"] for r in rows]
+    imports = {
+        i.session_id: i
+        for i in db.query(SessionAttendanceImport).filter(SessionAttendanceImport.session_id.in_(session_ids)).all()
+    }
+    polls = {
+        p.session_id: p
+        for p in db.query(SessionPollSnapshot).filter(SessionPollSnapshot.session_id.in_(session_ids)).all()
+    }
+    reports = {
+        r.session_id: r
+        for r in db.query(SessionReport).filter(SessionReport.session_id.in_(session_ids)).all()
+    }
+    sessions = {
+        s.id: s
+        for s in db.query(SessionModel).filter(SessionModel.id.in_(session_ids)).all()
+    }
+    return rows, sessions, imports, polls, reports
+
+
+def _weighted_poll_avg(polls, field):
+    total_weight = 0
+    weighted_sum = 0.0
+    for poll in polls:
+        val = getattr(poll, field, None)
+        weight = poll.poll_responses or 0
+        if val is None or not weight:
+            continue
+        weighted_sum += val * weight
+        total_weight += weight
+    return round(weighted_sum / total_weight, 2) if total_weight else None
+
+
+def _coverage_confidence(coverage_pct):
+    if coverage_pct >= 80:
+        return "High"
+    if coverage_pct >= 50:
+        return "Medium"
+    return "Low"
+
+
+def _score_course_health(delivery_metrics, experience_metrics, coverage_confidence):
+    if coverage_confidence == "Low":
+        return "No data", ["Upload attendee and poll files on at least half of completed sessions before scoring course health"]
+
+    reasons = []
+    delivery_weak = False
+    delivery_critical = False
+    experience_weak = False
+    experience_critical = False
+
+    median_stay = delivery_metrics.get("median_stay_pct")
+    if median_stay is not None:
+        if median_stay < STAY_WATCH_LOW_PCT:
+            delivery_critical = True
+            reasons.append(f"Course average median stay is only {median_stay}% of class length")
+        elif median_stay < STAY_HEALTHY_PCT:
+            delivery_weak = True
+            reasons.append(f"Course average median stay is {median_stay}% (below 50%)")
+
+    early_bounce = delivery_metrics.get("early_bounce_pct")
+    if early_bounce is not None and early_bounce > EARLY_BOUNCE_CRITICAL_PCT:
+        delivery_critical = True
+        reasons.append(f"{early_bounce}% of viewers leave within 15 minutes on average")
+
+    overall = experience_metrics.get("overall_avg")
+    if overall is not None:
+        if overall < POLL_WATCH_LOW:
+            experience_critical = True
+            reasons.append(f"Course weighted poll score is {overall} (below 3.5)")
+        elif overall < POLL_GOOD_THRESHOLD:
+            experience_weak = True
+            reasons.append(f"Course weighted poll score is {overall} (below 4.3 target)")
+
+    response_rate = experience_metrics.get("response_rate")
+    if response_rate is not None and response_rate < RESPONSE_RATE_HEALTHY_PCT:
+        experience_weak = True
+        reasons.append(f"Course average poll response rate is {response_rate}% (below 15%)")
+
+    dim_fields = [
+        ("Teaching style", "teaching_style_avg"),
+        ("Doubts and queries", "doubts_avg"),
+        ("Session effectiveness", "effectiveness_avg"),
+    ]
+    dim_values = [(name, experience_metrics.get(field)) for name, field in dim_fields if experience_metrics.get(field) is not None]
+    if dim_values and overall is not None:
+        sorted_dims = sorted(dim_values, key=lambda item: item[1])
+        lowest_name, lowest_val = sorted_dims[0]
+        if len(sorted_dims) >= 2:
+            others_avg = sum(val for _, val in sorted_dims[1:]) / (len(sorted_dims) - 1)
+            if others_avg - lowest_val >= POLL_GAP_WATCH:
+                experience_weak = True
+                reasons.append(f"{lowest_name} is the weakest poll pillar at {lowest_val}")
+        if overall - lowest_val > POLL_GAP_HEALTHY:
+            experience_weak = True
+            reasons.append(f"{lowest_name} is more than 0.4 below the course overall poll score")
+
+    delivery_bad = delivery_weak or delivery_critical
+    experience_bad = experience_weak or experience_critical
+    if delivery_critical or experience_critical or (delivery_bad and experience_bad):
+        return "Critical", reasons
+    if delivery_bad or experience_bad:
+        return "Watch", reasons
+    return "Healthy", []
+
+
+def course_health_detail(db, course_name=None, batch_name=None, date_from=None, date_to=None):
+    bundle = _course_health_sessions(db, course_name, batch_name, date_from, date_to)
+    if not bundle[0]:
+        return None
+
+    rows, sessions, imports, polls, reports = bundle
+    completed_count = len(rows)
+    with_attendance = 0
+    with_poll = 0
+    with_both = 0
+
+    stay_values = []
+    hold_values = []
+    bounce_values = []
+    response_rates = []
+    poll_objects = []
+    session_breakdown = []
+
+    for row in rows:
+        session = sessions[row["id"]]
+        imp = imports.get(row["id"])
+        poll = polls.get(row["id"])
+        report = reports.get(row["id"])
+        health = compute_session_health(session, imp, poll, report)
+
+        if imp:
+            with_attendance += 1
+            if health["metrics"]["median_stay_pct"] is not None:
+                stay_values.append(health["metrics"]["median_stay_pct"])
+            if imp.hold_rate is not None:
+                hold_values.append(imp.hold_rate)
+            if imp.pct_under_15_min is not None:
+                bounce_values.append(imp.pct_under_15_min)
+        if poll:
+            with_poll += 1
+            poll_objects.append(poll)
+            if health["metrics"]["response_rate"] is not None:
+                response_rates.append(health["metrics"]["response_rate"])
+        if imp and poll:
+            with_both += 1
+
+        session_breakdown.append({
+            "session_id": row["id"],
+            "session_date": row["session_date"],
+            "topic": row["topic"],
+            "mentor_name": row["mentor_name"],
+            "median_stay_pct": health["metrics"]["median_stay_pct"],
+            "poll_overall": health["metrics"]["poll_overall"],
+            "response_rate": health["metrics"]["response_rate"],
+            "health_label": health["label"],
+            "health_reasons": health["reasons"],
+        })
+
+    coverage_pct = round(with_both / completed_count * 100, 1) if completed_count else 0
+    coverage_confidence = _coverage_confidence(coverage_pct)
+
+    delivery_metrics = {
+        "median_stay_pct": round(sum(stay_values) / len(stay_values), 1) if stay_values else None,
+        "hold_rate": round(sum(hold_values) / len(hold_values), 1) if hold_values else None,
+        "early_bounce_pct": round(sum(bounce_values) / len(bounce_values), 1) if bounce_values else None,
+        "sessions_with_attendance_import": with_attendance,
+    }
+    experience_metrics = {
+        "teaching_style_avg": _weighted_poll_avg(poll_objects, "teaching_style_avg"),
+        "doubts_avg": _weighted_poll_avg(poll_objects, "doubts_avg"),
+        "effectiveness_avg": _weighted_poll_avg(poll_objects, "effectiveness_avg"),
+        "overall_avg": _weighted_poll_avg(poll_objects, "overall_avg"),
+        "response_rate": round(sum(response_rates) / len(response_rates), 1) if response_rates else None,
+        "sessions_with_poll_import": with_poll,
+    }
+
+    health_label, health_reasons = _score_course_health(delivery_metrics, experience_metrics, coverage_confidence)
+
+    resolved_course = course_name or (rows[0]["course_name"] if rows else None)
+    resolved_batch = batch_name or (rows[0]["batch_name"] if rows else None)
+
+    return {
+        "course_name": resolved_course,
+        "batch_name": resolved_batch,
+        "completed_sessions": completed_count,
+        "coverage_pct": coverage_pct,
+        "coverage_confidence": coverage_confidence,
+        "delivery_metrics": delivery_metrics,
+        "experience_metrics": experience_metrics,
+        "delivery_score": delivery_metrics["median_stay_pct"],
+        "experience_score": experience_metrics["overall_avg"],
+        "health_label": health_label,
+        "health_reasons": health_reasons,
+        "sessions": sorted(session_breakdown, key=lambda s: s["session_date"] or ""),
+        "trend": [
+            {
+                "session_date": s["session_date"],
+                "median_stay_pct": s["median_stay_pct"],
+                "poll_overall": s["poll_overall"],
+            }
+            for s in sorted(session_breakdown, key=lambda s: s["session_date"] or "")
+        ],
+    }
+
+
+def course_health_summary(db, date_from=None, date_to=None):
+    rows = _filtered_rows(db, status="Completed", date_from=date_from, date_to=date_to)
+    if not rows:
+        return []
+
+    session_ids = [r["id"] for r in rows]
+    import_ids = {
+        sid for (sid,) in db.query(SessionAttendanceImport.session_id).filter(SessionAttendanceImport.session_id.in_(session_ids)).all()
+    }
+    poll_ids = {
+        sid for (sid,) in db.query(SessionPollSnapshot.session_id).filter(SessionPollSnapshot.session_id.in_(session_ids)).all()
+    }
+
+    groups = {}
+    for row in rows:
+        key = (row.get("course_name") or "Unknown", row.get("batch_name") or "Unknown")
+        groups.setdefault(key, []).append(row)
+
+    summaries = []
+    for (course, batch), group_rows in groups.items():
+        group_ids = {r["id"] for r in group_rows}
+        if not (group_ids & import_ids or group_ids & poll_ids):
+            continue
+
+        detail = course_health_detail(
+            db,
+            course_name=course if course != "Unknown" else None,
+            batch_name=batch if batch != "Unknown" else None,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        if not detail:
+            continue
+        summaries.append({
+            "course_name": detail["course_name"],
+            "batch_name": detail["batch_name"],
+            "completed_sessions": detail["completed_sessions"],
+            "coverage_pct": detail["coverage_pct"],
+            "coverage_confidence": detail["coverage_confidence"],
+            "delivery_score": detail["delivery_score"],
+            "experience_score": detail["experience_score"],
+            "health_label": detail["health_label"],
+            "health_reasons": detail["health_reasons"],
+        })
+
+    summaries.sort(key=lambda s: (s["health_label"] != "Critical", s["health_label"] != "Watch", -(s["coverage_pct"] or 0)))
+    return summaries
+
+
+def course_health_alerts(db, min_coverage_pct=50):
+    alerts = []
+    for item in course_health_summary(db):
+        if item["health_label"] in ("Watch", "Critical") and (item["coverage_pct"] or 0) >= min_coverage_pct:
+            alerts.append({
+                "course_name": item["course_name"],
+                "batch_name": item["batch_name"],
+                "health_label": item["health_label"],
+                "coverage_pct": item["coverage_pct"],
+                "primary_reason": (item["health_reasons"] or ["Course health needs review"])[0],
+            })
+    return alerts
+
+
+def build_course_health_csv(db, date_from=None, date_to=None):
+    summaries = course_health_summary(db, date_from=date_from, date_to=date_to)
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([
+        "Course", "Batch", "Completed Sessions", "Coverage %", "Coverage Confidence",
+        "Median Stay %", "Poll Overall", "Health", "Primary Reason",
+    ])
+    for item in summaries:
+        writer.writerow([
+            item["course_name"],
+            item["batch_name"],
+            item["completed_sessions"],
+            item["coverage_pct"],
+            item["coverage_confidence"],
+            item["delivery_score"] if item["delivery_score"] is not None else "",
+            item["experience_score"] if item["experience_score"] is not None else "",
+            item["health_label"],
+            (item["health_reasons"] or [""])[0],
+        ])
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+# =========================================================
 # Export
 # =========================================================
 
@@ -737,7 +1480,7 @@ def build_csv(db, filters, search=None):
     writer.writerow([
         "Session ID", "Date", "Time", "Duration (min)", "Topic", "Mentor",
         "Course", "Session Type", "Status", "Learner Count",
-        "Attendance", "Attendance %", "Report Status",
+        "Attendance", "Attendance %", "Poll Avg", "Poll Health", "Report Status",
     ])
 
     for r in rows:
@@ -745,7 +1488,10 @@ def build_csv(db, filters, search=None):
             r["id"], r["session_date"], r["session_time"], r["duration"],
             r["topic"], r["mentor_name"], r["course_name"],
             r["session_type"], r["status"], r["learner_count"], r["attendance"],
-            r["attendance_percentage"], r["report_status"],
+            r["attendance_percentage"] if r["attendance_percentage"] is not None else "",
+            r.get("poll_average_rating") or "",
+            r.get("poll_health_status") or "",
+            r["report_status"],
         ])
 
     buffer.seek(0)

@@ -126,7 +126,7 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
     # =====================================================
     # Header banner — KN logo left, academy name centered, invoice right
     # =====================================================
-    logo_cell = _kn_logo_flowable(KN_LOGO_PATH if os.path.exists(KN_LOGO_PATH) else None)
+    logo_cell = _kn_logo_flowable(KN_LOGO_PATH if os.path.exists(KN_LOGO_PATH) else None, size_mm=26)
 
     brand_text = Paragraph(
         "<font color='#ffffff' size='16'><b>Krish Naik Academy</b></font><br/>"
@@ -141,15 +141,16 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
         ParagraphStyle("DocTitle", parent=styles["Normal"], alignment=2, leading=23),
     )
 
-    header = Table([[logo_cell, brand_text, doc_title]], colWidths=[20 * mm, 108 * mm, 50 * mm])
+    header = Table([[logo_cell, brand_text, doc_title]], colWidths=[34 * mm, 94 * mm, 50 * mm])
     header.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), NAVY),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (0, 0), "LEFT"),
         ("ALIGN", (1, 0), (1, 0), "CENTER"),
-        ("LEFTPADDING", (0, 0), (0, 0), 16 * mm),
+        ("LEFTPADDING", (0, 0), (0, 0), 14 * mm),
         ("RIGHTPADDING", (2, 0), (2, 0), 12 * mm),
-        ("TOPPADDING", (0, 0), (-1, -1), 16),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+        ("TOPPADDING", (0, 0), (-1, -1), 18),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
     ]))
     elements.append(header)
     elements.append(HRFlowable(width="100%", thickness=3, color=GOLD, spaceBefore=0, spaceAfter=18))

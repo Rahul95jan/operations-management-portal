@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
 import { buildCourseByBatch, courseOf, courseOfBatch, courseOptionsFromBatches, batchForCourse, sameCourse, uniqueCourses } from "../lib/courses";
+import { formatSessionDuration, hasDuration, parseDurationToMinutes, roundHours } from "../lib/duration";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -527,7 +528,9 @@ export default function InvoiceGenerator() {
   useEffect(() => {
     if (matchingSessions.length === 0) return;
     const sessionCount = matchingSessions.length;
-    const hoursSum = matchingSessions.reduce((sum, s) => sum + (Number(s.duration) || 0), 0) / 60;
+    const hoursSum = roundHours(
+      matchingSessions.reduce((sum, s) => sum + parseDurationToMinutes(s.duration), 0) / 60,
+    );
     setForm((f) => ({
       ...f,
       sessions: sessionCount,
@@ -542,7 +545,7 @@ export default function InvoiceGenerator() {
     const hasSelection = formIsWebinar ? !!form.webinar_topic : !!form.course_name;
     const hasMonth = !!form.month;
     const sessionsFound = matchingSessions.length > 0;
-    const allHaveDuration = sessionsFound && matchingSessions.every((s) => Number(s.duration) > 0);
+    const allHaveDuration = sessionsFound && matchingSessions.every((s) => hasDuration(s.duration));
     const duplicate = invoices.some((i) => {
       if (i.id === editId || i.mentor_name !== form.mentor_name || i.month !== form.month) return false;
       if (formIsWebinar) {
@@ -950,7 +953,7 @@ export default function InvoiceGenerator() {
                   <input type="number" className="styled-input" style={inputStyle} value={form.sessions} onChange={(e) => setForm({ ...form, sessions: e.target.value })} />
                 </Field>
                 <Field label="Total Hours">
-                  <input type="number" className="styled-input" style={inputStyle} value={form.hours} onChange={handleHoursChange} />
+                  <input type="number" min="0" step="0.01" className="styled-input" style={inputStyle} value={form.hours} onChange={handleHoursChange} />
                 </Field>
                 <Field label="Hourly Rate">
                   <input className="styled-input" readOnly value={form.rate ? `₹${form.rate}` : ""} style={{ ...inputStyle, background: "#f1f5f9", color: "#64748b" }} />
@@ -1237,7 +1240,7 @@ export default function InvoiceGenerator() {
                         {drawerSessions.map((s) => (
                           <div key={s.id} className="drawer-session-row">
                             <div className="drawer-session-date">{s.session_date}</div>
-                            <div><div className="strong">{s.topic || "Untitled Session"}</div><div className="muted" style={{ fontSize: "12px" }}>{s.duration ? `${s.duration} min` : "Duration —"}</div></div>
+                            <div><div className="strong">{s.topic || "Untitled Session"}</div><div className="muted" style={{ fontSize: "12px" }}>{formatSessionDuration(s.duration) || "Duration —"}</div></div>
                           </div>
                         ))}
                       </div>

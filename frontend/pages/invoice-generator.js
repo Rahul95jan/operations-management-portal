@@ -359,6 +359,10 @@ function isMonthlyWebinarReport(inv) {
   return !!inv?.isMonthlyReport;
 }
 
+function monthlyReportAnchorInvoice(inv) {
+  return isMonthlyWebinarReport(inv) ? inv.childInvoices?.[0] : inv;
+}
+
 function monthlyReportKey(mentor, month) {
   return `monthly:${mentor}:${month}`;
 }
@@ -937,9 +941,10 @@ export default function InvoiceGenerator() {
   const sendInvoiceEmail = async (inv) => {
     setOpenMenuId(null);
     try {
-      const url = isMonthlyWebinarReport(inv)
-        ? `${API}/send-mentor-monthly-report?mentor_name=${encodeURIComponent(inv.mentor_name)}&month=${encodeURIComponent(inv.month)}`
-        : `${API}/send-invoice/${inv.id}`;
+      const anchor = monthlyReportAnchorInvoice(inv);
+      const url = anchor?.id
+        ? `${API}/send-invoice/${anchor.id}`
+        : `${API}/send-mentor-monthly-report?mentor_name=${encodeURIComponent(inv.mentor_name)}&month=${encodeURIComponent(inv.month)}`;
       const res = await fetch(url, { method: "POST" });
       const data = await res.json();
       const successMessage = isMonthlyWebinarReport(inv) ? "Monthly report sent to mentor." : "Invoice sent to mentor.";
@@ -1008,11 +1013,14 @@ export default function InvoiceGenerator() {
     setSelectedIds(allSelected ? [] : pageIds);
   };
 
-  const downloadInvoiceUrl = (inv) => (
-    isMonthlyWebinarReport(inv)
-      ? `${API}/download-mentor-monthly-report?mentor_name=${encodeURIComponent(inv.mentor_name)}&month=${encodeURIComponent(inv.month)}`
-      : `${API}/download-invoice/${inv.id}`
-  );
+  const downloadInvoiceUrl = (inv) => {
+    const anchor = monthlyReportAnchorInvoice(inv);
+    if (anchor?.id) return `${API}/download-invoice/${anchor.id}`;
+    if (isMonthlyWebinarReport(inv)) {
+      return `${API}/download-mentor-monthly-report?mentor_name=${encodeURIComponent(inv.mentor_name)}&month=${encodeURIComponent(inv.month)}`;
+    }
+    return `${API}/download-invoice/${inv.id}`;
+  };
 
   const mentorPayoutSummary = useMemo(() => {
     const map = {};

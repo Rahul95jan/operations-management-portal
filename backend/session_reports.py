@@ -1281,12 +1281,16 @@ def _score_course_health(delivery_metrics, experience_metrics, coverage_confiden
     return "Healthy", []
 
 
-def course_health_detail(db, course_name=None, batch_name=None, date_from=None, date_to=None):
-    bundle = _course_health_sessions(db, course_name, batch_name, date_from, date_to)
-    if not bundle[0]:
-        return None
+def _mentor_lookup(db):
+    return {
+        (m.name or "").strip().lower(): m
+        for m in db.query(Mentor).all()
+        if m.name
+    }
 
-    rows, sessions, imports, polls, reports = bundle
+
+def _rollup_health_metrics(rows, sessions, imports, polls, reports):
+    """Aggregate health metrics for a set of completed session rows."""
     completed_count = len(rows)
     with_attendance = 0
     with_poll = 0
@@ -1354,12 +1358,8 @@ def course_health_detail(db, course_name=None, batch_name=None, date_from=None, 
 
     health_label, health_reasons = _score_course_health(delivery_metrics, experience_metrics, coverage_confidence)
 
-    resolved_course = course_name or (rows[0]["course_name"] if rows else None)
-    resolved_batch = batch_name or (rows[0]["batch_name"] if rows else None)
-
+    sorted_sessions = sorted(session_breakdown, key=lambda s: s["session_date"] or "")
     return {
-        "course_name": resolved_course,
-        "batch_name": resolved_batch,
         "completed_sessions": completed_count,
         "coverage_pct": coverage_pct,
         "coverage_confidence": coverage_confidence,
@@ -1369,15 +1369,71 @@ def course_health_detail(db, course_name=None, batch_name=None, date_from=None, 
         "experience_score": experience_metrics["overall_avg"],
         "health_label": health_label,
         "health_reasons": health_reasons,
-        "sessions": sorted(session_breakdown, key=lambda s: s["session_date"] or ""),
+        "sessions": sorted_sessions,
         "trend": [
             {
                 "session_date": s["session_date"],
                 "median_stay_pct": s["median_stay_pct"],
                 "poll_overall": s["poll_overall"],
             }
-            for s in sorted(session_breakdown, key=lambda s: s["session_date"] or "")
+            for s in sorted_sessions
         ],
+    }
+
+
+def course_health_detail(db, course_name=None, batch_name=None, date_from=None, date_to=None):
+    bundle = _course_health_sessions(db, course_name, batch_name, date_from, date_to)
+    if not bundle[0]:
+        return None
+
+    rows, sessions, imports, polls, reports = bundle
+    rollup = _rollup_health_metrics(rows, sessions, imports, polls, reports)
+
+    resolved_course = course_name or (rows[0]["course_name"] if rows else None)
+    resolved_batch = batch_name or (rows[0]["batch_name"] if rows else None)
+
+    return {
+        "course_name": resolved_course,
+        "batch_name": resolved_batch,
+        **rollup,
+    }
+
+
+def course_health_mentors(db, course_name=None, batch_name=None, date_from=None, date_to=None):
+    bundle = _course_health_sessions(db, course_name, batch_name, date_from, date_to)
+    if not bundle[0]:
+        return None
+
+    rows, sessions, imports, polls, reports = bundle
+    mentor_map = _mentor_lookup(db)
+
+    groups = {}
+    for row in rows:
+        mentor_key = (row.get("mentor_name") or "Unknown").strip()
+        groups.setdefault(mentor_key, []).append(row)
+
+    resolved_course = course_name or (rows[0]["course_name"] if rows else None)
+    resolved_batch = batch_name or (rows[0]["batch_name"] if rows else None)
+
+    mentors = []
+    for mentor_name, mentor_rows in groups.items():
+        rollup = _rollup_health_metrics(mentor_rows, sessions, imports, polls, reports)
+        mentor_record = mentor_map.get(mentor_name.lower())
+        topics = sorted({(r.get("topic") or "").strip() for r in mentor_rows if (r.get("topic") or "").strip()})
+        mentors.append({
+            "mentor_name": mentor_name,
+            "mentor_id": mentor_record.id if mentor_record else None,
+            "expertise": mentor_record.expertise if mentor_record else None,
+            "session_count": rollup["completed_sessions"],
+            "topics": topics,
+            **rollup,
+        })
+
+    mentors.sort(key=lambda m: (-m["session_count"], m["mentor_name"]))
+    return {
+        "course_name": resolved_course,
+        "batch_name": resolved_batch,
+        "mentors": mentors,
     }
 
 
@@ -1435,12 +1491,33 @@ def course_health_alerts(db, min_coverage_pct=50):
     for item in course_health_summary(db):
         if item["health_label"] in ("Watch", "Critical") and (item["coverage_pct"] or 0) >= min_coverage_pct:
             alerts.append({
+                "level": "course",
                 "course_name": item["course_name"],
                 "batch_name": item["batch_name"],
+                "mentor_name": None,
                 "health_label": item["health_label"],
                 "coverage_pct": item["coverage_pct"],
                 "primary_reason": (item["health_reasons"] or ["Course health needs review"])[0],
             })
+
+        mentor_bundle = course_health_mentors(
+            db,
+            course_name=item["course_name"] if item["course_name"] != "Unknown" else None,
+            batch_name=item["batch_name"] if item["batch_name"] != "Unknown" else None,
+        )
+        if not mentor_bundle:
+            continue
+        for mentor in mentor_bundle["mentors"]:
+            if mentor["health_label"] in ("Watch", "Critical") and (mentor["coverage_pct"] or 0) >= min_coverage_pct:
+                alerts.append({
+                    "level": "mentor",
+                    "course_name": item["course_name"],
+                    "batch_name": item["batch_name"],
+                    "mentor_name": mentor["mentor_name"],
+                    "health_label": mentor["health_label"],
+                    "coverage_pct": mentor["coverage_pct"],
+                    "primary_reason": (mentor["health_reasons"] or [f"{mentor['mentor_name']} needs review in this course"])[0],
+                })
     return alerts
 
 
@@ -1449,14 +1526,18 @@ def build_course_health_csv(db, date_from=None, date_to=None):
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow([
-        "Course", "Batch", "Completed Sessions", "Coverage %", "Coverage Confidence",
-        "Median Stay %", "Poll Overall", "Health", "Primary Reason",
+        "Level", "Course", "Batch", "Mentor", "Completed Sessions", "Topics",
+        "Coverage %", "Coverage Confidence", "Median Stay %", "Poll Overall",
+        "Health", "Primary Reason",
     ])
     for item in summaries:
         writer.writerow([
+            "course",
             item["course_name"],
             item["batch_name"],
+            "",
             item["completed_sessions"],
+            "",
             item["coverage_pct"],
             item["coverage_confidence"],
             item["delivery_score"] if item["delivery_score"] is not None else "",
@@ -1464,6 +1545,30 @@ def build_course_health_csv(db, date_from=None, date_to=None):
             item["health_label"],
             (item["health_reasons"] or [""])[0],
         ])
+        mentor_bundle = course_health_mentors(
+            db,
+            course_name=item["course_name"] if item["course_name"] != "Unknown" else None,
+            batch_name=item["batch_name"] if item["batch_name"] != "Unknown" else None,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        if not mentor_bundle:
+            continue
+        for mentor in mentor_bundle["mentors"]:
+            writer.writerow([
+                "mentor",
+                item["course_name"],
+                item["batch_name"],
+                mentor["mentor_name"],
+                mentor["session_count"],
+                "; ".join(mentor.get("topics") or []),
+                mentor["coverage_pct"],
+                mentor["coverage_confidence"],
+                mentor["delivery_score"] if mentor["delivery_score"] is not None else "",
+                mentor["experience_score"] if mentor["experience_score"] is not None else "",
+                mentor["health_label"],
+                (mentor["health_reasons"] or [""])[0],
+            ])
     buffer.seek(0)
     return buffer.getvalue()
 

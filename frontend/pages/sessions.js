@@ -257,6 +257,8 @@ function Field({ label, children }) {
   );
 }
 
+const WEBINAR_SESSION_TYPE = "Webinar Session";
+
 const EMPTY_FORM = {
   topic: "",
   mentor_name: "",
@@ -389,6 +391,7 @@ export default function Sessions() {
   const [editZoomEmail, setEditZoomEmail] = useState("");
 
   const [form, setForm] = useState(EMPTY_FORM);
+  const [newWebinarTopic, setNewWebinarTopic] = useState(false);
 
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [toast, setToast] = useState(null);
@@ -457,6 +460,16 @@ export default function Sessions() {
   }, [batches]);
   const courseOf = (session) =>
     session?.course_name || courseByBatch[(session?.batch_name || "").trim().toLowerCase()] || session?.batch_name || "";
+  const webinarTopicOptions = useMemo(() => {
+    const topics = new Set();
+    sessions.forEach((s) => {
+      if ((s.session_type || "").trim() === WEBINAR_SESSION_TYPE && (s.topic || "").trim()) {
+        topics.add(s.topic.trim());
+      }
+    });
+    return Array.from(topics).sort((a, b) => a.localeCompare(b));
+  }, [sessions]);
+
   const courseOptions = useMemo(() => {
     const seen = new Map();
     batches.forEach((b) => {
@@ -567,6 +580,7 @@ export default function Sessions() {
   const resetForm = () => {
     setForm(EMPTY_FORM);
     setEditId(null);
+    setNewWebinarTopic(false);
   };
 
   const createSession = async () => {
@@ -632,6 +646,9 @@ export default function Sessions() {
 
   const editSession = (session) => {
     setEditId(session.id);
+    const topic = (session.topic || "").trim();
+    const isWebinar = (session.session_type || "").trim() === WEBINAR_SESSION_TYPE;
+    setNewWebinarTopic(isWebinar && topic && !webinarTopicOptions.includes(topic));
     setForm({
       topic: session.topic,
       mentor_name: session.mentor_name,
@@ -654,6 +671,9 @@ export default function Sessions() {
   // automatically.
   const duplicateSession = (session) => {
     setEditId(null);
+    const topic = (session.topic || "").trim();
+    const isWebinar = (session.session_type || "").trim() === WEBINAR_SESSION_TYPE;
+    setNewWebinarTopic(isWebinar && topic && !webinarTopicOptions.includes(topic));
     setForm({
       topic: session.topic,
       mentor_name: session.mentor_name,
@@ -994,13 +1014,56 @@ export default function Sessions() {
 
           <div className="form-grid">
             <Field label="Topic">
-              <input
-                className="styled-input"
-                style={inputStyle}
-                placeholder="e.g. LangGraph Introduction"
-                value={form.topic}
-                onChange={(e) => setForm({ ...form, topic: e.target.value })}
-              />
+              {form.session_type === WEBINAR_SESSION_TYPE ? (
+                <>
+                  <select
+                    className="styled-input"
+                    style={inputStyle}
+                    value={newWebinarTopic ? "__new__" : form.topic}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === "__new__") {
+                        setNewWebinarTopic(true);
+                        setForm({ ...form, topic: "" });
+                        return;
+                      }
+                      setNewWebinarTopic(false);
+                      setForm({ ...form, topic: value });
+                    }}
+                  >
+                    <option value="">Select session topic</option>
+                    {form.topic && !webinarTopicOptions.includes(form.topic) && !newWebinarTopic && (
+                      <option value={form.topic}>{form.topic}</option>
+                    )}
+                    {webinarTopicOptions.map((topic) => (
+                      <option key={topic} value={topic}>{topic}</option>
+                    ))}
+                    <option value="__new__">➕ New topic…</option>
+                  </select>
+                  {newWebinarTopic && (
+                    <input
+                      className="styled-input"
+                      style={{ ...inputStyle, marginTop: "8px" }}
+                      placeholder="Enter new webinar topic"
+                      value={form.topic}
+                      onChange={(e) => setForm({ ...form, topic: e.target.value })}
+                    />
+                  )}
+                  {!newWebinarTopic && webinarTopicOptions.length > 0 && (
+                    <div className="hint-text" style={{ marginTop: "6px" }}>
+                      Topics from existing <strong>Webinar Session</strong> entries. Pick <strong>New topic…</strong> to add another.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <input
+                  className="styled-input"
+                  style={inputStyle}
+                  placeholder="e.g. LangGraph Introduction"
+                  value={form.topic}
+                  onChange={(e) => setForm({ ...form, topic: e.target.value })}
+                />
+              )}
             </Field>
 
             <Field label="Session Type">
@@ -1010,11 +1073,12 @@ export default function Sessions() {
                 value={form.session_type}
                 onChange={(e) => {
                   const nextType = e.target.value;
+                  setNewWebinarTopic(false);
                   setForm({
                     ...form,
                     session_type: nextType,
-                    course_name: nextType === "Webinar Session" ? "" : form.course_name,
-                    batch_name: nextType === "Webinar Session" ? "" : form.batch_name,
+                    course_name: nextType === WEBINAR_SESSION_TYPE ? "" : form.course_name,
+                    batch_name: nextType === WEBINAR_SESSION_TYPE ? "" : form.batch_name,
                   });
                 }}
               >

@@ -293,6 +293,10 @@ function isWebinarForm(sessionType) {
   return sessionType === "Webinar";
 }
 
+function isWebinarSessionRecord(session) {
+  return (session?.session_type || "").trim() === WEBINAR_SESSION_TYPE;
+}
+
 function webinarBatchName(session) {
   if (!session) return "";
   const topic = (session.topic || "Webinar").trim();
@@ -554,7 +558,7 @@ export default function InvoiceGenerator() {
       .filter(
         (s) =>
           (s.mentor_name || "").trim() === mentor &&
-          s.session_type === WEBINAR_SESSION_TYPE &&
+          isWebinarSessionRecord(s) &&
           sessionInBillingMonth(s, form.month),
       )
       .sort((a, b) => (a.session_date || "").localeCompare(b.session_date || ""));
@@ -562,11 +566,12 @@ export default function InvoiceGenerator() {
 
   const monthlyWebinarSessions = useMemo(() => {
     if (!form.mentor_name || !form.month) return [];
+    const mentor = form.mentor_name.trim();
     return sessions
       .filter(
         (s) =>
-          s.mentor_name === form.mentor_name &&
-          s.session_type === WEBINAR_SESSION_TYPE &&
+          (s.mentor_name || "").trim() === mentor &&
+          isWebinarSessionRecord(s) &&
           sessionInBillingMonth(s, form.month),
       )
       .sort((a, b) => (a.session_date || "").localeCompare(b.session_date || ""))
@@ -593,7 +598,7 @@ export default function InvoiceGenerator() {
     return sessions.filter(
       (s) =>
         s.mentor_name === form.mentor_name &&
-        (s.session_type || "Live Session") !== WEBINAR_SESSION_TYPE &&
+        !isWebinarSessionRecord(s) &&
         sameCourse(courseOf(s, courseByBatch), form.course_name) &&
         (s.session_date || "").startsWith(form.month),
     );
@@ -659,7 +664,7 @@ export default function InvoiceGenerator() {
       const match = sessions.find(
         (s) =>
           s.mentor_name === inv.mentor_name &&
-          s.session_type === WEBINAR_SESSION_TYPE &&
+          isWebinarSessionRecord(s) &&
           (s.topic || "").trim() === topic &&
           (!date || s.session_date === date),
       );
@@ -1096,7 +1101,7 @@ export default function InvoiceGenerator() {
                   </Field>
                 )}
                 {formIsWebinar && (
-                  <Field label="Webinar Session" required>
+                  <Field label="Session Topic" required>
                     <select
                       className="styled-input"
                       style={{ ...inputStyle, opacity: !form.mentor_name || !form.month ? 0.7 : 1 }}
@@ -1119,8 +1124,8 @@ export default function InvoiceGenerator() {
                           : !form.month
                             ? "Select billing month first"
                             : webinarSessionOptions.length
-                              ? `Select session (${webinarSessionOptions.length} in ${monthLabel(form.month)})`
-                              : "No sessions in this month"}
+                              ? `Select session topic (${webinarSessionOptions.length} in ${monthLabel(form.month)})`
+                              : "No webinar topics in this month"}
                       </option>
                       {form.webinar_session_id && !webinarSessionOptions.some((s) => String(s.id) === String(form.webinar_session_id)) && selectedWebinarSession && (
                         <option value={form.webinar_session_id}>{webinarSessionLabel(selectedWebinarSession)}</option>
@@ -1141,7 +1146,7 @@ export default function InvoiceGenerator() {
                     )}
                     {form.mentor_name && form.month && webinarSessionOptions.length > 0 && (
                       <div className="hint-text" style={{ marginTop: "6px" }}>
-                        {webinarSessionOptions.length} session{webinarSessionOptions.length === 1 ? "" : "s"} found for {monthLabel(form.month)}.
+                        Topics loaded from <a href="/sessions">Sessions</a> (type <strong>Webinar Session</strong>). {webinarSessionOptions.length} session{webinarSessionOptions.length === 1 ? "" : "s"} in {monthLabel(form.month)}.
                       </div>
                     )}
                   </Field>
@@ -1465,7 +1470,7 @@ export default function InvoiceGenerator() {
                     <div className="info-grid">
                       <div className="info-chip"><div className="info-chip-label">Session Type</div><div className="info-chip-value">{viewInvoice.source_type === "webinar" ? "Webinar" : "Live Session"}</div></div>
                       {viewInvoice.source_type === "webinar" && (
-                        <div className="info-chip"><div className="info-chip-label">Webinar Session</div><div className="info-chip-value">{webinarTopicOf(viewInvoice)}{parseWebinarBatchName(viewInvoice.batch_name).date ? ` — ${fmtDate(parseWebinarBatchName(viewInvoice.batch_name).date)}` : ""}</div></div>
+                        <div className="info-chip"><div className="info-chip-label">Session Topic</div><div className="info-chip-value">{webinarTopicOf(viewInvoice)}{parseWebinarBatchName(viewInvoice.batch_name).date ? ` — ${fmtDate(parseWebinarBatchName(viewInvoice.batch_name).date)}` : ""}</div></div>
                       )}
                       <div className="info-chip"><div className="info-chip-label">Billing Month</div><div className="info-chip-value">{monthLabel(viewInvoice.month)}</div></div>
                       <div className="info-chip"><div className="info-chip-label">Invoice Date</div><div className="info-chip-value">{fmtDate(viewInvoice.invoice_date)}</div></div>
@@ -1507,12 +1512,12 @@ export default function InvoiceGenerator() {
                   if (isWebinarInv) {
                     const { topic, date } = parseWebinarBatchName(viewInvoice.batch_name);
                     return (
-                      s.session_type === WEBINAR_SESSION_TYPE &&
+                      isWebinarSessionRecord(s) &&
                       (s.topic || "").trim() === topic &&
                       (!date || s.session_date === date)
                     );
                   }
-                  return (s.session_type || "Live Session") !== WEBINAR_SESSION_TYPE && sameCourse(courseOf(s, courseByBatch), courseOfBatch(viewInvoice.batch_name, courseByBatch));
+                  return !isWebinarSessionRecord(s) && sameCourse(courseOf(s, courseByBatch), courseOfBatch(viewInvoice.batch_name, courseByBatch));
                 });
                 return (
                   <div className="drawer-section">

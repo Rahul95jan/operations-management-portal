@@ -82,10 +82,6 @@ export default function Sidebar() {
     router.pathname === "/resources/tracking" ||
     router.pathname === "/resources/pending" ||
     router.pathname === "/resources/[id]";
-  const webinarOpsActive =
-    router.pathname === "/webinars" ||
-    router.pathname.startsWith("/webinars/");
-
   return (
     <div className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}>
       <button
@@ -129,14 +125,6 @@ export default function Sidebar() {
               {hasPermission(user, "analytics") && <NavItem href="/analytics" icon={BarChart3} label="Analytics" active={isActive("/analytics")} />}
               {hasPermission(user, "analytics") && <NavItem href="/mentor-performance" icon={Gauge} label="Mentor 360" active={isActive("/mentor-performance")} />}
               {hasPermission(user, "invoices") && <NavItem href="/invoice-generator" icon={Receipt} label="Invoice Generator" active={isActive("/invoice-generator")} />}
-
-              {hasPermission(user, "invoices") && (
-                <>
-                  <NavGroupLabel>Webinar Operations</NavGroupLabel>
-                  <NavItem href="/webinars" icon={Video} label="Webinar Scheduler" active={webinarOpsActive && router.pathname !== "/webinars/payouts"} />
-                  <NavItem href="/webinars/payouts" icon={Receipt} label="Webinar Payouts" active={isActive("/webinars/payouts")} />
-                </>
-              )}
 
               {hasPermission(user, "feedback") && (
                 <>

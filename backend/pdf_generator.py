@@ -203,18 +203,18 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
             Paragraph("DATE", item_header_style),
             Paragraph("TOPIC", item_header_style),
             Paragraph("DURATION", item_header_style),
-            Paragraph("HOURS", item_header_style),
+            Paragraph("PER HR PAY", item_header_style),
             Paragraph("AMOUNT", ParagraphStyle("ItemHeaderR", parent=item_header_style, alignment=2)),
         ]]
 
         for line in session_lines:
-            line_hours = float(line.get("hours") or 0)
+            line_rate = float(line.get("rate") or rate_val or 0)
             line_amount = float(line.get("amount") or 0)
             items_data.append([
                 Paragraph(str(line.get("date") or "—"), item_text_style),
                 Paragraph(str(line.get("topic") or "Webinar"), item_desc_style),
                 Paragraph(str(line.get("duration") or "—"), item_value_style),
-                Paragraph(f"{line_hours:.2f}", item_value_style),
+                Paragraph(f"₹ {line_rate:,.0f}", item_value_style),
                 Paragraph(f"₹ {line_amount:,.2f}", ParagraphStyle("ItemAmount", parent=item_value_style, fontName="DejaVuSans-Bold", textColor=NAVY)),
             ])
 
@@ -222,14 +222,14 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
             Paragraph("TOTAL", item_total_style),
             Paragraph("", item_total_style),
             Paragraph(total_duration_label, item_total_style),
-            Paragraph(f"{hours_val:.2f}", item_total_style),
+            Paragraph("", item_total_style),
             Paragraph(
                 f"₹ {amount_val:,.2f}",
                 ParagraphStyle("ItemTotalAmount", parent=item_value_style, fontName="DejaVuSans-Bold", textColor=NAVY, alignment=2),
             ),
         ])
 
-        items_table = Table(items_data, colWidths=[28 * mm, 62 * mm, 28 * mm, 22 * mm, 38 * mm])
+        items_table = Table(items_data, colWidths=[26 * mm, 64 * mm, 28 * mm, 32 * mm, 36 * mm])
         items_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), NAVY),
             ("BACKGROUND", (0, -1), (-1, -1), BG_ALT),

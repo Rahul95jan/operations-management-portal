@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import Sidebar from "../../components/Sidebar";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import { formatDuration, isValidDuration, parseDurationToMinutes } from "../../lib/duration";
@@ -84,6 +85,7 @@ function emptyForm() {
 }
 
 export default function WebinarsPage() {
+  const router = useRouter();
   const [webinars, setWebinars] = useState([]);
   const [mentors, setMentors] = useState([]);
   const [editId, setEditId] = useState(null);
@@ -91,11 +93,14 @@ export default function WebinarsPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [payoutLoadingId, setPayoutLoadingId] = useState(null);
+  const [toast, setToast] = useState("");
 
   const [search, setSearch] = useState("");
   const [mentorFilter, setMentorFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [payoutFilter, setPayoutFilter] = useState("All");
 
   const loadWebinars = () => {
     fetch(`${API}/webinars?stats=true`).then((r) => r.json()).then((d) => setWebinars(Array.isArray(d) ? d : [])).catch(() => setWebinars([]));
@@ -105,6 +110,19 @@ export default function WebinarsPage() {
     loadWebinars();
     fetch(`${API}/mentors`).then((r) => r.json()).then((d) => setMentors(Array.isArray(d) ? d : [])).catch(() => setMentors([]));
   }, []);
+
+  useEffect(() => {
+    if (router.query.needs_payout === "1") {
+      setPayoutFilter("Needs Invoice");
+      setStatusFilter("Completed");
+    }
+  }, [router.query.needs_payout]);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const t = setTimeout(() => setToast(""), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const resetForm = () => {
     setForm(emptyForm());
@@ -223,6 +241,24 @@ export default function WebinarsPage() {
     loadWebinars();
   };
 
+  const createPayoutInvoice = async (webinarId) => {
+    setPayoutLoadingId(webinarId);
+    try {
+      const res = await fetch(`${API}/webinars/${webinarId}/payout`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setToast(data.message || `Payout invoice #${data.invoice_id} created.`);
+      } else {
+        setToast(data.message || "Could not create payout invoice.");
+      }
+      loadWebinars();
+    } catch {
+      setToast("Unable to reach the server.");
+    } finally {
+      setPayoutLoadingId(null);
+    }
+  };
+
   const categories = useMemo(() => [...new Set(webinars.map((w) => w.category).filter(Boolean))], [webinars]);
 
   const filtered = webinars.filter((w) => {
@@ -233,8 +269,13 @@ export default function WebinarsPage() {
     const matchesMentor = mentorFilter === "All" || w.mentor_name === mentorFilter;
     const matchesStatus = statusFilter === "All" || w.status === statusFilter;
     const matchesCategory = categoryFilter === "All" || w.category === categoryFilter;
-    return matchesSearch && matchesMentor && matchesStatus && matchesCategory;
+    const matchesPayout =
+      payoutFilter === "All" ||
+      (payoutFilter === "Needs Invoice" && w.status === "Completed" && w.payout_status === "Not Invoiced");
+    return matchesSearch && matchesMentor && matchesStatus && matchesCategory && matchesPayout;
   });
+
+  const needsPayoutCount = webinars.filter((w) => w.status === "Completed" && w.payout_status === "Not Invoiced").length;
 
   return (
     <ProtectedRoute>
@@ -242,6 +283,21 @@ export default function WebinarsPage() {
         <Sidebar />
 
         <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
+          {toast && (
+            <div style={{ position: "fixed", top: "20px", right: "24px", zIndex: 9999, background: "#0f172a", color: "#f8fafc", padding: "12px 18px", borderRadius: "10px", fontSize: "13px", fontWeight: 600, boxShadow: "0 8px 24px rgba(15,23,42,0.25)" }}>
+              {toast}
+            </div>
+          )}
+
+          {needsPayoutCount > 0 && (
+            <div style={{ marginBottom: "18px", padding: "14px 18px", borderRadius: "12px", background: "#fef3c7", border: "1px solid #fcd34d", color: "#92400e", fontSize: "13px", fontWeight: 600 }}>
+              {needsPayoutCount} completed webinar{needsPayoutCount === 1 ? "" : "s"} need payout invoice{needsPayoutCount === 1 ? "" : "s"}.
+              <button type="button" onClick={() => { setPayoutFilter("Needs Invoice"); setStatusFilter("Completed"); }} style={{ marginLeft: "10px", background: "#f59e0b", color: "#0f172a", border: "none", borderRadius: "8px", padding: "6px 12px", fontWeight: 700, cursor: "pointer" }}>
+                Show them
+              </button>
+            </div>
+          )}
+
           <div className="page-hero">
             <div className="page-hero-blob" />
             <div className="page-hero-content">
@@ -339,6 +395,10 @@ export default function WebinarsPage() {
                   <option value="All">All Categories</option>
                   {categories.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
+                <select style={{ ...inputStyle, width: "170px" }} value={payoutFilter} onChange={(e) => setPayoutFilter(e.target.value)}>
+                  <option value="All">All Payouts</option>
+                  <option value="Needs Invoice">Needs Invoice</option>
+                </select>
               </div>
             </div>
 
@@ -370,6 +430,11 @@ export default function WebinarsPage() {
                         <button className="btn btn-icon" onClick={() => duplicateWebinar(w)}>⧉ Duplicate</button>
                         {w.status !== "Completed" && w.status !== "Cancelled" && (
                           <button className="btn btn-icon" onClick={() => markCompleted(w.id)}>✅ Complete</button>
+                        )}
+                        {w.status === "Completed" && w.payout_status === "Not Invoiced" && (
+                          <button className="btn btn-icon btn-payout" disabled={payoutLoadingId === w.id} onClick={() => createPayoutInvoice(w.id)}>
+                            {payoutLoadingId === w.id ? "…" : "💰 Create Invoice"}
+                          </button>
                         )}
                         {w.status !== "Cancelled" && (
                           <button className="btn btn-icon btn-danger" onClick={() => cancelWebinar(w.id)}>✕ Cancel</button>
@@ -429,6 +494,8 @@ export default function WebinarsPage() {
           .btn-primary:hover { transform: translateY(-1px); }
           .btn-ghost { background: #f1f5f9; color: #475569; }
           .btn-ghost:hover { background: #e2e8f0; }
+          .btn-payout { background: #dcfce7; color: #15803d; }
+          .btn-payout:hover { background: #bbf7d0; }
 
           .list-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; }
 

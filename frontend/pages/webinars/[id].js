@@ -54,6 +54,8 @@ export default function WebinarDetailPage() {
   const [newParticipant, setNewParticipant] = useState(emptyParticipant());
   const [regError, setRegError] = useState("");
   const [registering, setRegistering] = useState(false);
+  const [payoutMessage, setPayoutMessage] = useState("");
+  const [creatingPayout, setCreatingPayout] = useState(false);
 
   const load = () => {
     if (!id) return;
@@ -119,10 +121,18 @@ export default function WebinarDetailPage() {
   };
 
   const createPayout = async () => {
-    const res = await fetch(`${API}/webinars/${id}/payout`, { method: "POST" });
-    const data = await res.json();
-    alert(data.message);
-    load();
+    setCreatingPayout(true);
+    setPayoutMessage("");
+    try {
+      const res = await fetch(`${API}/webinars/${id}/payout`, { method: "POST" });
+      const data = await res.json();
+      setPayoutMessage(data.message || (data.success ? "Payout invoice created." : "Could not create payout invoice."));
+      load();
+    } catch {
+      setPayoutMessage("Unable to reach the server.");
+    } finally {
+      setCreatingPayout(false);
+    }
   };
 
   if (loading) {
@@ -157,7 +167,7 @@ export default function WebinarDetailPage() {
         <Sidebar />
 
         <div style={{ marginLeft: "var(--om-sidebar-width, 280px)", transition: "margin-left 0.25s ease", padding: "32px 36px 60px", background: "#f1f5f9", minHeight: "100vh" }}>
-          <Link href="/webinars" className="back-link">← Back to Webinars</Link>
+          <Link href="/webinars" className="back-link">← Webinar Scheduler</Link>
 
           <div className="card" style={{ marginBottom: "24px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "16px" }}>
@@ -168,6 +178,34 @@ export default function WebinarDetailPage() {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="card payout-card" style={{ marginBottom: "24px" }}>
+            <h2 className="card-title">💰 Mentor Payout — Per Session Invoice</h2>
+            <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: "13px" }}>
+              1. Confirm duration and hourly rate below · 2. Click <strong>Create Payout Invoice</strong> to bill this single webinar session.
+            </p>
+            {payout?.success ? (
+              <div style={{ display: "flex", alignItems: "center", gap: "24px", flexWrap: "wrap" }}>
+                <div><div className="mini-label">Duration</div><div className="mini-value">{formatDuration(payout.duration_minutes) || "—"}</div></div>
+                <div><div className="mini-label">Hourly Rate</div><div className="mini-value">₹{payout.hourly_rate}</div></div>
+                <div><div className="mini-label">Estimated Payout</div><div className="mini-value">₹{payout.estimated_amount}</div></div>
+                {payout.already_invoiced ? (
+                  <span className="invoiced-chip">✓ Invoice #{payout.invoice_id} already created — <Link href="/invoice-generator">view in Invoice Generator</Link></span>
+                ) : (
+                  <button className="btn btn-primary" onClick={createPayout} disabled={creatingPayout}>
+                    {creatingPayout ? "Creating…" : "Create Payout Invoice"}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p style={{ color: "#94a3b8", fontSize: "13px" }}>{payout?.message || "Payout cannot be calculated. Set mentor hourly rate and webinar duration first."}</p>
+            )}
+            {payoutMessage && (
+              <div style={{ marginTop: "14px", padding: "10px 14px", borderRadius: "8px", background: "#ecfdf5", color: "#166534", fontSize: "13px", fontWeight: 600 }}>
+                {payoutMessage}
+              </div>
+            )}
           </div>
 
           {report && (
@@ -190,24 +228,6 @@ export default function WebinarDetailPage() {
               )}
             </div>
           )}
-
-          <div className="card" style={{ marginBottom: "24px" }}>
-            <h2 className="card-title">💰 Mentor Payout</h2>
-            {payout?.success ? (
-              <div style={{ display: "flex", alignItems: "center", gap: "24px", flexWrap: "wrap" }}>
-                <div><div className="mini-label">Duration</div><div className="mini-value">{formatDuration(payout.duration_minutes) || "—"}</div></div>
-                <div><div className="mini-label">Hourly Rate</div><div className="mini-value">₹{payout.hourly_rate}</div></div>
-                <div><div className="mini-label">Estimated Payout</div><div className="mini-value">₹{payout.estimated_amount}</div></div>
-                {payout.already_invoiced ? (
-                  <span className="invoiced-chip">✓ Invoice #{payout.invoice_id} already created</span>
-                ) : (
-                  <button className="btn btn-primary" onClick={createPayout}>Create Payout Invoice</button>
-                )}
-              </div>
-            ) : (
-              <p style={{ color: "#94a3b8", fontSize: "13px" }}>{payout?.message || "Payout cannot be calculated."}</p>
-            )}
-          </div>
 
           <div className="card" style={{ marginBottom: "24px" }}>
             <h2 className="card-title">➕ Register Participant</h2>

@@ -61,7 +61,7 @@ def _line_duration_minutes(line):
 def _kn_logo_flowable(kn_logo_path, size_mm=14):
     """KN emblem only — never the full banner logo with academy text."""
     if kn_logo_path and os.path.exists(kn_logo_path):
-        return Image(kn_logo_path, width=size_mm * mm, height=size_mm * mm, mask="auto")
+        return Image(kn_logo_path, width=size_mm * mm, height=size_mm * mm)
     side = size_mm * mm
     badge = Drawing(side, side)
     badge.add(Rect(0, 0, side, side, fillColor=HexColor("#0f172a"), strokeColor=HexColor("#f59e0b"), strokeWidth=1.5))
@@ -126,7 +126,17 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
     # =====================================================
     # Header banner — KN logo left, academy name centered, invoice right
     # =====================================================
-    logo_cell = _kn_logo_flowable(KN_LOGO_PATH if os.path.exists(KN_LOGO_PATH) else None, size_mm=26)
+    logo_size_mm = 24
+    logo_cell = _kn_logo_flowable(KN_LOGO_PATH if os.path.exists(KN_LOGO_PATH) else None, size_mm=logo_size_mm)
+    logo_wrap = Table([[logo_cell]], colWidths=[logo_size_mm * mm], rowHeights=[logo_size_mm * mm])
+    logo_wrap.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
 
     brand_text = Paragraph(
         "<font color='#ffffff' size='16'><b>Krish Naik Academy</b></font><br/>"
@@ -141,16 +151,22 @@ def generate_invoice(invoice, course_name=None, session_lines=None):
         ParagraphStyle("DocTitle", parent=styles["Normal"], alignment=2, leading=23),
     )
 
-    header = Table([[logo_cell, brand_text, doc_title]], colWidths=[34 * mm, 94 * mm, 50 * mm])
+    # Equal side columns keep the academy name visually centered on the page.
+    side_col = 42 * mm
+    center_col = 178 * mm - (2 * side_col)
+    header = Table([[logo_wrap, brand_text, doc_title]], colWidths=[side_col, center_col, side_col])
     header.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), NAVY),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (0, 0), (0, 0), "LEFT"),
         ("ALIGN", (1, 0), (1, 0), "CENTER"),
+        ("ALIGN", (2, 0), (2, 0), "RIGHT"),
         ("LEFTPADDING", (0, 0), (0, 0), 14 * mm),
         ("RIGHTPADDING", (2, 0), (2, 0), 12 * mm),
-        ("TOPPADDING", (0, 0), (-1, -1), 18),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
+        ("LEFTPADDING", (1, 0), (1, 0), 0),
+        ("RIGHTPADDING", (1, 0), (1, 0), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 22),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 22),
     ]))
     elements.append(header)
     elements.append(HRFlowable(width="100%", thickness=3, color=GOLD, spaceBefore=0, spaceAfter=18))

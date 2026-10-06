@@ -273,11 +273,7 @@ const EMPTY_FORM = {
 
 function buildSessionPayload(form) {
   const payload = { ...form };
-  if (form.session_type === "Webinar Session") {
-    payload.duration = form.duration ? parseDurationToMinutes(form.duration) : null;
-  } else {
-    delete payload.duration;
-  }
+  payload.duration = form.duration ? parseDurationToMinutes(form.duration) : null;
   return payload;
 }
 
@@ -574,8 +570,8 @@ export default function Sessions() {
   };
 
   const createSession = async () => {
-    if (form.session_type === "Webinar Session" && form.duration && !isValidDuration(form.duration)) {
-      showToast("Duration must be a valid time like 1:20:30.");
+    if (form.duration && !isValidDuration(form.duration)) {
+      showToast("Duration must be a valid time like 1:20:40.");
       return;
     }
     try {
@@ -596,8 +592,8 @@ export default function Sessions() {
   };
 
   const updateSession = async () => {
-    if (form.session_type === "Webinar Session" && form.duration && !isValidDuration(form.duration)) {
-      showToast("Duration must be a valid time like 1:20:30.");
+    if (form.duration && !isValidDuration(form.duration)) {
+      showToast("Duration must be a valid time like 1:20:40.");
       return;
     }
     try {
@@ -1198,18 +1194,16 @@ export default function Sessions() {
               />
             </Field>
 
-            {form.session_type === "Webinar Session" && (
-              <Field label="Duration (H:MM:SS)">
-                <input
-                  type="text"
-                  placeholder="1:20:30"
-                  className="styled-input"
-                  style={inputStyle}
-                  value={form.duration}
-                  onChange={(e) => setForm({ ...form, duration: e.target.value })}
-                />
-              </Field>
-            )}
+            <Field label="Duration (H:MM:SS)">
+              <input
+                type="text"
+                placeholder="1:20:40"
+                className="styled-input"
+                style={inputStyle}
+                value={form.duration}
+                onChange={(e) => setForm({ ...form, duration: e.target.value })}
+              />
+            </Field>
 
             <Field label="Status">
               <select
@@ -1420,6 +1414,7 @@ export default function Sessions() {
                       <th>Course</th>
                       <th>Date</th>
                       <th>Time</th>
+                      <th>Duration</th>
                       <th>Status</th>
                       <th>Actions</th>
                     </tr>
@@ -1444,6 +1439,7 @@ export default function Sessions() {
                         <td>{courseOf(session) || "Not Assigned"}</td>
                         <td className="muted">{session.session_date || "—"}</td>
                         <td className="muted">{session.session_time || "—"}</td>
+                        <td className="muted">{formatDuration(session.duration) || "—"}</td>
                         <td>
                           <StatusBadge status={session.status} />
                         </td>

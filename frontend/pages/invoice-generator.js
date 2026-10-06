@@ -3,7 +3,14 @@ import { useRouter } from "next/router";
 import Sidebar from "../components/Sidebar";
 import ProtectedRoute from "../components/ProtectedRoute";
 import { buildCourseByBatch, courseOf, courseOfBatch, courseOptionsFromBatches, batchForCourse, sameCourse, uniqueCourses } from "../lib/courses";
-import { formatSessionDuration, hasDuration, parseDurationToMinutes, roundHours } from "../lib/duration";
+import {
+  formatHoursAsDuration,
+  formatSessionDuration,
+  hasDuration,
+  parseDurationInputToHours,
+  parseDurationToMinutes,
+  roundHours,
+} from "../lib/duration";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -494,13 +501,14 @@ export default function InvoiceGenerator() {
       mentor_email: mentor ? mentor.email : "",
       webinar_session_id: "",
       rate: mentor ? mentor.hourly_rate : "",
-      amount: mentor ? Number(f.hours || 0) * Number(mentor.hourly_rate || 0) : f.amount,
+      amount: mentor ? parseDurationInputToHours(f.hours) * Number(mentor.hourly_rate || 0) : f.amount,
     }));
   };
 
   const handleHoursChange = (e) => {
     const value = e.target.value;
-    setForm((f) => ({ ...f, hours: value, amount: Number(value || 0) * Number(f.rate || 0) }));
+    const billableHours = parseDurationInputToHours(value);
+    setForm((f) => ({ ...f, hours: value, amount: billableHours * Number(f.rate || 0) }));
   };
 
   const courseByBatch = useMemo(() => buildCourseByBatch(batches), [batches]);
@@ -542,14 +550,14 @@ export default function InvoiceGenerator() {
   useEffect(() => {
     if (matchingSessions.length === 0) return;
     const sessionCount = matchingSessions.length;
-    const hoursSum = roundHours(
-      matchingSessions.reduce((sum, s) => sum + parseDurationToMinutes(s.duration), 0) / 60,
-    );
+    const totalMinutes = matchingSessions.reduce((sum, s) => sum + parseDurationToMinutes(s.duration), 0);
+    const hoursSum = roundHours(totalMinutes / 60);
+    const durationLabel = formatSessionDuration(totalMinutes) || formatHoursAsDuration(hoursSum) || "";
     setForm((f) => ({
       ...f,
       sessions: sessionCount,
-      hours: hoursSum || f.hours,
-      amount: (hoursSum || Number(f.hours) || 0) * Number(f.rate || 0),
+      hours: durationLabel || f.hours,
+      amount: (hoursSum || parseDurationInputToHours(f.hours) || 0) * Number(f.rate || 0),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchingSessions]);
@@ -611,7 +619,7 @@ export default function InvoiceGenerator() {
       batch_name: inv.batch_name,
       month: inv.month,
       sessions: inv.total_sessions,
-      hours: inv.total_hours,
+      hours: formatHoursAsDuration(inv.total_hours) || inv.total_hours,
       rate: inv.hourly_rate,
       amount: inv.total_amount,
     });
@@ -633,7 +641,8 @@ export default function InvoiceGenerator() {
 
   const saveInvoice = async () => {
     const missingSelection = formIsWebinar ? !form.webinar_session_id : !form.course_name;
-    if (!form.mentor_name || missingSelection || !form.month || !form.sessions || !form.hours) {
+    const billableHours = parseDurationInputToHours(form.hours);
+    if (!form.mentor_name || missingSelection || !form.month || !form.sessions || !billableHours) {
       showToast("Please fill all required fields.");
       return;
     }
@@ -647,9 +656,9 @@ export default function InvoiceGenerator() {
         : form.batch_name || batchForCourse(form.course_name, batches)?.batch_name || form.course_name,
       month: form.month,
       total_sessions: Number(form.sessions),
-      total_hours: String(form.hours),
+      total_hours: String(roundHours(billableHours)),
       hourly_rate: String(form.rate),
-      total_amount: String(form.amount),
+      total_amount: String(roundHours(billableHours * Number(form.rate || 0))),
       payment_status: existingInvoice?.payment_status || "Pending",
       source_type: formIsWebinar ? "webinar" : "batch",
       webinar_id: formIsWebinar ? resolveWebinarId() : null,
@@ -1016,8 +1025,15 @@ export default function InvoiceGenerator() {
                     onChange={(e) => setForm({ ...form, sessions: e.target.value })}
                   />
                 </Field>
-                <Field label="Total Hours">
-                  <input type="number" min="0" step="0.01" className="styled-input" style={inputStyle} value={form.hours} onChange={handleHoursChange} />
+                <Field label="Total Duration (H:MM:SS)">
+                  <input
+                    type="text"
+                    placeholder="1:20:40"
+                    className="styled-input"
+                    style={inputStyle}
+                    value={form.hours}
+                    onChange={handleHoursChange}
+                  />
                 </Field>
                 <Field label="Hourly Rate">
                   <input className="styled-input" readOnly value={form.rate ? `₹${form.rate}` : ""} style={{ ...inputStyle, background: "#f1f5f9", color: "#64748b" }} />
@@ -1133,7 +1149,7 @@ export default function InvoiceGenerator() {
                               <td>{invoiceCourse(inv)}</td>
                               <td>{monthLabel(inv.month)}</td>
                               <td className="num">{inv.total_sessions}</td>
-                              <td className="num">{inv.total_hours}</td>
+                              <td className="num">{formatHoursAsDuration(inv.total_hours) || inv.total_hours}</td>
                               <td className="strong num">{money(inv.total_amount)}</td>
                               <td className="muted">{fmtDate(inv.invoice_date)}</td>
                               <td className="muted">{fmtDate(inv.due_date)}</td>
@@ -1253,7 +1269,7 @@ export default function InvoiceGenerator() {
                       <div className="info-chip"><div className="info-chip-label">Due Date</div><div className="info-chip-value">{fmtDate(viewInvoice.due_date)}</div></div>
                       <div className="info-chip"><div className="info-chip-label">Payment Date</div><div className="info-chip-value">{fmtDate(viewInvoice.payment_date)}</div></div>
                       <div className="info-chip"><div className="info-chip-label">Sessions</div><div className="info-chip-value">{viewInvoice.total_sessions}</div></div>
-                      <div className="info-chip"><div className="info-chip-label">Total Hours</div><div className="info-chip-value">{viewInvoice.total_hours}</div></div>
+                      <div className="info-chip"><div className="info-chip-label">Total Duration</div><div className="info-chip-value">{formatHoursAsDuration(viewInvoice.total_hours) || viewInvoice.total_hours}</div></div>
                       <div className="info-chip"><div className="info-chip-label">Hourly Rate</div><div className="info-chip-value">₹{viewInvoice.hourly_rate}</div></div>
                     </div>
                   </div>

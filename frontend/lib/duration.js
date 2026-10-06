@@ -73,3 +73,16 @@ export function roundHours(hours) {
 export function formatSessionDuration(value) {
   return formatDuration(value);
 }
+
+/** Format decimal hours as H:MM:SS (e.g. 1.34 → 1:20:24). */
+export function formatHoursAsDuration(hours) {
+  if (hours === null || hours === undefined || hours === "") return null;
+  const numeric = Number(hours);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return formatMinutesToHms(numeric * 60);
+}
+
+/** Parse H:MM:SS (or minutes) input to decimal hours for billing. */
+export function parseDurationInputToHours(value) {
+  return parseDurationToHours(value);
+}

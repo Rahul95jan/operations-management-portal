@@ -1,55 +1,30 @@
 from fastapi import FastAPI
-from sqlalchemy.orm import Session
+from fastapi.middleware.cors import CORSMiddleware
 
-from database import SessionLocal
-from models.session import Session as SessionModel
-from schemas import UserCreate, SessionCreate
+from database import engine
+from models.user import Base
+from routers import auth, users, sessions
 
-app = FastAPI()
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="Operations Management Portal API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "https://operations-management-portal.vercel.app",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth.router)
+app.include_router(users.router)
+app.include_router(sessions.router)
+
 
 @app.get("/")
 def home():
-return {"message": "Operations Portal API Running"}
-
-@app.post("/users")
-def create_user(user: UserCreate):
-return {
-"message": "User Created",
-"data": user
-}
-
-@app.post("/sessions")
-def create_session(session: SessionCreate):
-
-```
-db = SessionLocal()
-
-new_session = SessionModel(
-    topic=session.topic,
-    mentor_name=session.mentor_name,
-    batch_name=session.batch_name,
-    session_date=session.session_date,
-    session_time=session.session_time,
-    status=session.status
-)
-
-db.add(new_session)
-db.commit()
-db.refresh(new_session)
-
-db.close()
-
-return {
-    "message": "Session Created Successfully",
-    "id": new_session.id
-}
-@app.get("/sessions")
-def get_sessions():
-
-    db = SessionLocal()
-
-    sessions = db.query(SessionModel).all()
-
-    db.close()
-
-    return sessions
+    return {"message": "Operations Portal API Running"}

@@ -1,15 +1,8 @@
 export default function Home() {
   return (
-    <div style={{padding:'40px', fontFamily:'Arial'}}>
+    <div style={{ padding: "40px", fontFamily: "Arial, sans-serif" }}>
       <h1>Operations Management Portal</h1>
-
-      <ul>
-        <li>Dashboard</li>
-        <li>Session Scheduler</li>
-        <li>Live Reports</li>
-        <li>Feedback Analytics</li>
-        <li>Invoice Generator</li>
-      </ul>
+      <p>Use the user management panel on the main page to view and delete users.</p>
     </div>
-  )
+  );
 }
